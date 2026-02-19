@@ -19,6 +19,18 @@ function formatCurrency(value: number) {
   }).format(value);
 }
 
+function parseRupiah(value: string | null) {
+  if (!value) {
+    return 0;
+  }
+  const normalized = value
+    .replace(/[^\d,.-]/g, "")
+    .replace(/\./g, "")
+    .replace(",", ".");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
 function drawCell(params: {
   page: PDFPageLike;
   text: string;
@@ -85,6 +97,18 @@ export async function GET(request: Request) {
   const teamType =
     teamRaw === "tukang" || teamRaw === "laden" || teamRaw === "spesialis" ? teamRaw : undefined;
   const specialist = searchParams.get("specialist")?.trim() || undefined;
+  const selectedWorkers = Array.from(
+    new Set(
+      searchParams
+        .getAll("worker")
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0),
+    ),
+  );
+  const reportTitleMode = searchParams.get("report_title_mode") === "custom" ? "custom" : "project";
+  const reportTitleCustom = searchParams.get("report_title_custom")?.trim() || "";
+  const reimburseInput = parseRupiah(searchParams.get("reimburse_amount"));
+  const reimburseInputNote = searchParams.get("reimburse_note")?.trim() || "Input Reimburse";
 
   const [recap, projects] = await Promise.all([
     getWageRecap({
@@ -93,12 +117,27 @@ export async function GET(request: Request) {
       projectId,
       teamType,
       specialistTeamName: specialist,
+      workerNames: selectedWorkers,
+      includePaid: true,
+      recapMode: "gabung",
     }),
     getProjects(),
   ]);
   const projectName = projectId
     ? projects.find((project) => project.id === projectId)?.name ?? "Project"
     : "Semua Project";
+  const projectNamesFromRows = Array.from(
+    new Set(
+      recap.rows
+        .map((row) => row.projectName?.trim() || "")
+        .filter((value) => value.length > 0),
+    ),
+  );
+  const titleProjectSource = projectNamesFromRows.length === 1 ? projectNamesFromRows[0] : projectName;
+  const reportTitle =
+    reportTitleMode === "custom" && reportTitleCustom.length > 0
+      ? reportTitleCustom
+      : `RINCIAN UPAH PROJECT ${titleProjectSource.toUpperCase()}`;
 
   const grouped = new Map<
     string,
@@ -171,6 +210,15 @@ export async function GET(request: Request) {
         }));
     }
   }
+  if (reimburseInput > 0) {
+    reimburseRows.push({
+      date: to,
+      description: reimburseInputNote,
+      qty: 1,
+      unitPrice: reimburseInput,
+      total: reimburseInput,
+    });
+  }
 
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -185,7 +233,7 @@ export async function GET(request: Request) {
   let y = page.getHeight() - margin;
 
   const drawMainHeader = () => {
-    page.drawText(`RINCIAN UPAH PROJECT ${projectName.toUpperCase()}`, {
+    page.drawText(reportTitle, {
       x: margin,
       y,
       size: 18,

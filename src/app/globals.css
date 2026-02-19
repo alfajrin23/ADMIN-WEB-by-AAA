@@ -227,6 +227,27 @@ button:disabled {
   flex-shrink: 0;
 }
 
+.footer-signature {
+  color: #0f766e;
+  text-decoration: none;
+  letter-spacing: 0.02em;
+  transition:
+    color 220ms ease,
+    transform 220ms ease,
+    text-shadow 220ms ease;
+  animation: signature-pulse 2.8s ease-in-out infinite;
+}
+
+.footer-signature:hover {
+  color: #115e59;
+  transform: translateY(-1px);
+  text-shadow: 0 6px 14px rgba(15, 118, 110, 0.22);
+}
+
+.footer-signature:active {
+  transform: translateY(0) scale(0.985);
+}
+
 @keyframes icon-bounce-soft {
   0%,
   100% {
@@ -319,12 +340,25 @@ button:disabled {
   }
 }
 
+@keyframes signature-pulse {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.92;
+  }
+  50% {
+    transform: translateY(-1px);
+    opacity: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   button,
   [data-ui-button="true"],
   .motion-display,
   .motion-display-icon,
-  .nav-link-icon {
+  .nav-link-icon,
+  .footer-signature {
     animation: none;
   }
 

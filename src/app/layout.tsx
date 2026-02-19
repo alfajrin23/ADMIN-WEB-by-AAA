@@ -79,6 +79,17 @@ export default function RootLayout({
                 <p className="font-mono text-sm text-slate-500">{today}</p>
               </header>
               <main className="space-y-4">{children}</main>
+              <footer className="panel px-5 py-4">
+                <p className="text-xs text-slate-500">Terima kasih sudah menggunakan Admin Web.</p>
+                <a
+                  href="https://alfajrin23.github.io/Personal-Portofolio/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="footer-signature mt-2 inline-flex text-sm font-semibold"
+                >
+                  Copyright by Al Fajrin A Alamsyah
+                </a>
+              </footer>
             </div>
           </div>
         </div>

@@ -105,6 +105,7 @@ const sampleAttendance: AttendanceRecord[] = [
     reimburseType: null,
     reimburseAmount: 0,
     netPay: 100000,
+    payrollPaid: false,
     attendanceDate: "2026-02-14",
     notes: "Lembur 2 jam",
     createdAt: "2026-02-14T17:00:00.000Z",
@@ -122,6 +123,7 @@ const sampleAttendance: AttendanceRecord[] = [
     reimburseType: null,
     reimburseAmount: 0,
     netPay: 180000,
+    payrollPaid: false,
     attendanceDate: "2026-02-14",
     notes: null,
     createdAt: "2026-02-14T17:20:00.000Z",
@@ -139,6 +141,7 @@ const sampleAttendance: AttendanceRecord[] = [
     reimburseType: null,
     reimburseAmount: 0,
     netPay: 0,
+    payrollPaid: false,
     attendanceDate: "2026-02-13",
     notes: "Izin keluarga",
     createdAt: "2026-02-13T17:20:00.000Z",
@@ -358,6 +361,9 @@ function buildWageWorkerSummary(
         totalDailyWage: 0,
         totalKasbon: 0,
         totalNetPay: 0,
+        totalNetPayUnpaid: 0,
+        latestAttendanceDate: "",
+        payrollPaid: false,
       };
     }
 
@@ -368,6 +374,14 @@ function buildWageWorkerSummary(
     summary.totalDailyWage += row.dailyWage;
     summary.totalKasbon += row.kasbonAmount;
     summary.totalNetPay += row.netPay;
+    if (!row.payrollPaid) {
+      summary.totalNetPayUnpaid += row.netPay;
+    }
+    const attendanceDate = toDateOnly(row.attendanceDate);
+    if (attendanceDate > summary.latestAttendanceDate) {
+      summary.latestAttendanceDate = attendanceDate;
+    }
+    summary.payrollPaid = summary.totalNetPayUnpaid <= 0;
   }
 
   return Object.values(totals).sort((a, b) => {
@@ -440,6 +454,45 @@ function buildProjectExpenseTotals(expenses: ExpenseEntry[]) {
   });
 }
 
+function getLatestPaidUntil(
+  row: AttendanceRecord,
+  resets: Array<{
+    projectId: string;
+    teamType: "tukang" | "laden" | "spesialis";
+    specialistTeamName: string | null;
+    workerName: string | null;
+    paidUntilDate: string;
+  }>,
+) {
+  let latestPaidUntil = "";
+  for (const reset of resets) {
+    if (reset.projectId !== row.projectId) {
+      continue;
+    }
+    if (reset.teamType !== row.teamType) {
+      continue;
+    }
+
+    if (row.teamType === "spesialis" && reset.specialistTeamName) {
+      if (normalizeText(reset.specialistTeamName) !== normalizeText(row.specialistTeamName)) {
+        continue;
+      }
+    }
+
+    if (reset.workerName) {
+      if (normalizeText(reset.workerName) !== normalizeText(row.workerName)) {
+        continue;
+      }
+    }
+
+    if (reset.paidUntilDate > latestPaidUntil) {
+      latestPaidUntil = reset.paidUntilDate;
+    }
+  }
+
+  return latestPaidUntil;
+}
+
 function applyPayrollResets(
   rows: AttendanceRecord[],
   resets: Array<{
@@ -449,36 +502,22 @@ function applyPayrollResets(
     workerName: string | null;
     paidUntilDate: string;
   }>,
+  includePaid = false,
 ) {
-  return rows.filter((row) => {
-    let latestPaidUntil = "";
-    for (const reset of resets) {
-      if (reset.projectId !== row.projectId) {
-        continue;
-      }
-      if (reset.teamType !== row.teamType) {
-        continue;
-      }
-
-      if (row.teamType === "spesialis" && reset.specialistTeamName) {
-        if (normalizeText(reset.specialistTeamName) !== normalizeText(row.specialistTeamName)) {
-          continue;
-        }
-      }
-
-      if (reset.workerName) {
-        if (normalizeText(reset.workerName) !== normalizeText(row.workerName)) {
-          continue;
-        }
-      }
-
-      if (reset.paidUntilDate > latestPaidUntil) {
-        latestPaidUntil = reset.paidUntilDate;
-      }
-    }
-
-    return !latestPaidUntil || toDateOnly(row.attendanceDate) > latestPaidUntil;
+  const mappedRows = rows.map((row) => {
+    const latestPaidUntil = getLatestPaidUntil(row, resets);
+    const payrollPaid = Boolean(latestPaidUntil && toDateOnly(row.attendanceDate) <= latestPaidUntil);
+    return {
+      ...row,
+      payrollPaid,
+    };
   });
+
+  if (includePaid) {
+    return mappedRows;
+  }
+
+  return mappedRows.filter((row) => !row.payrollPaid);
 }
 
 function mapProject(row: Record<string, unknown>): Project {
@@ -561,6 +600,7 @@ function mapAttendance(row: Record<string, unknown>, projectName?: string): Atte
     reimburseType,
     reimburseAmount,
     netPay,
+    payrollPaid: false,
     attendanceDate: String(row.attendance_date ?? new Date().toISOString()),
     notes: typeof row.notes === "string" ? row.notes : null,
     createdAt: String(row.created_at ?? new Date().toISOString()),
@@ -772,6 +812,8 @@ export async function getWageRecap(options?: {
   projectId?: string;
   teamType?: "tukang" | "laden" | "spesialis";
   specialistTeamName?: string;
+  workerNames?: string[];
+  includePaid?: boolean;
   recapMode?: "gabung" | "per_project";
 }): Promise<WageRecap> {
   const from = options?.from ?? getMonthStartDate();
@@ -780,6 +822,11 @@ export async function getWageRecap(options?: {
   const projectId = options?.projectId?.trim() || null;
   const teamType = options?.teamType ?? null;
   const specialistTeamName = options?.specialistTeamName?.trim().toLowerCase() || null;
+  const normalizedWorkerNames =
+    options?.workerNames
+      ?.map((item) => item.trim().toLowerCase())
+      .filter((item) => item.length > 0) ?? [];
+  const includePaid = options?.includePaid ?? false;
   const recapMode = options?.recapMode ?? "per_project";
 
   if (activeDataSource === "excel") {
@@ -796,17 +843,23 @@ export async function getWageRecap(options?: {
 
     let rows = applyPayrollResets(
       db.attendance_records
-      .map((row) => mapAttendance(row, projectMap[row.project_id]))
-      .filter((row) => toDateOnly(row.attendanceDate) >= from)
-      .filter((row) => toDateOnly(row.attendanceDate) <= to)
-      .filter((row) => (projectId ? row.projectId === projectId : true))
-      .filter((row) => (teamType ? row.teamType === teamType : true))
-      .filter((row) =>
-        specialistTeamName
-          ? (row.specialistTeamName ?? "").toLowerCase().includes(specialistTeamName)
-          : true,
-      ),
+        .map((row) => mapAttendance(row, projectMap[row.project_id]))
+        .filter((row) => toDateOnly(row.attendanceDate) >= from)
+        .filter((row) => toDateOnly(row.attendanceDate) <= to)
+        .filter((row) => (projectId ? row.projectId === projectId : true))
+        .filter((row) => (teamType ? row.teamType === teamType : true))
+        .filter((row) =>
+          specialistTeamName
+            ? (row.specialistTeamName ?? "").toLowerCase().includes(specialistTeamName)
+            : true,
+        )
+        .filter((row) =>
+          normalizedWorkerNames.length > 0
+            ? normalizedWorkerNames.includes(row.workerName.trim().toLowerCase())
+            : true,
+        ),
       payrollResets,
+      includePaid,
     ).sort((a, b) => b.attendanceDate.localeCompare(a.attendanceDate));
 
     if (typeof limit === "number") {
@@ -828,6 +881,7 @@ export async function getWageRecap(options?: {
       workerSummaries,
       totalDailyWage: rows.reduce((sum, row) => sum + row.dailyWage, 0),
       totalKasbon: rows.reduce((sum, row) => sum + row.kasbonAmount, 0),
+      totalReimburse: rows.reduce((sum, row) => sum + row.reimburseAmount, 0),
       totalNetPay: rows.reduce((sum, row) => sum + row.netPay, 0),
     };
   }
@@ -846,6 +900,7 @@ export async function getWageRecap(options?: {
         workerSummaries: [],
         totalDailyWage: 0,
         totalKasbon: 0,
+        totalReimburse: 0,
         totalNetPay: 0,
       };
     }
@@ -876,21 +931,55 @@ export async function getWageRecap(options?: {
         workerSummaries: [],
         totalDailyWage: 0,
         totalKasbon: 0,
+        totalReimburse: 0,
         totalNetPay: 0,
       };
     }
 
+    const { data: resetRows } = await supabase
+      .from("payroll_resets")
+      .select("project_id, team_type, specialist_team_name, worker_name, paid_until_date");
+
+    const payrollResets = Array.isArray(resetRows)
+      ? resetRows
+          .map((row) => {
+            const teamTypeValue = String(row.team_type ?? "");
+            if (
+              teamTypeValue !== "tukang" &&
+              teamTypeValue !== "laden" &&
+              teamTypeValue !== "spesialis"
+            ) {
+              return null;
+            }
+            return {
+              projectId: String(row.project_id ?? ""),
+              teamType: teamTypeValue as "tukang" | "laden" | "spesialis",
+              specialistTeamName:
+                typeof row.specialist_team_name === "string" ? row.specialist_team_name : null,
+              workerName: typeof row.worker_name === "string" ? row.worker_name : null,
+              paidUntilDate: String(row.paid_until_date ?? ""),
+            };
+          })
+          .filter((row): row is NonNullable<typeof row> => Boolean(row))
+      : [];
+
     const rows = applyPayrollResets(
       data
-      .map((row) => mapAttendance(row, resolveJoinName(row.projects)))
-      .filter((row) => (projectId ? row.projectId === projectId : true))
-      .filter((row) => (teamType ? row.teamType === teamType : true))
-      .filter((row) =>
-        specialistTeamName
-          ? (row.specialistTeamName ?? "").toLowerCase().includes(specialistTeamName)
-          : true,
-      ),
-      [],
+        .map((row) => mapAttendance(row, resolveJoinName(row.projects)))
+        .filter((row) => (projectId ? row.projectId === projectId : true))
+        .filter((row) => (teamType ? row.teamType === teamType : true))
+        .filter((row) =>
+          specialistTeamName
+            ? (row.specialistTeamName ?? "").toLowerCase().includes(specialistTeamName)
+            : true,
+        )
+        .filter((row) =>
+          normalizedWorkerNames.length > 0
+            ? normalizedWorkerNames.includes(row.workerName.trim().toLowerCase())
+            : true,
+        ),
+      payrollResets,
+      includePaid,
     );
     const projectSummaries = buildWageSummary(rows);
     const teamSummaries = buildWageTeamSummary(rows);
@@ -908,22 +997,29 @@ export async function getWageRecap(options?: {
       workerSummaries,
       totalDailyWage: rows.reduce((sum, row) => sum + row.dailyWage, 0),
       totalKasbon: rows.reduce((sum, row) => sum + row.kasbonAmount, 0),
+      totalReimburse: rows.reduce((sum, row) => sum + row.reimburseAmount, 0),
       totalNetPay: rows.reduce((sum, row) => sum + row.netPay, 0),
     };
   }
 
   let rows = applyPayrollResets(
     sampleAttendance
-    .filter((item) => toDateOnly(item.attendanceDate) >= from)
-    .filter((item) => toDateOnly(item.attendanceDate) <= to)
-    .filter((row) => (projectId ? row.projectId === projectId : true))
-    .filter((row) => (teamType ? row.teamType === teamType : true))
-    .filter((row) =>
-      specialistTeamName
-        ? (row.specialistTeamName ?? "").toLowerCase().includes(specialistTeamName)
-        : true,
-    ),
+      .filter((item) => toDateOnly(item.attendanceDate) >= from)
+      .filter((item) => toDateOnly(item.attendanceDate) <= to)
+      .filter((row) => (projectId ? row.projectId === projectId : true))
+      .filter((row) => (teamType ? row.teamType === teamType : true))
+      .filter((row) =>
+        specialistTeamName
+          ? (row.specialistTeamName ?? "").toLowerCase().includes(specialistTeamName)
+          : true,
+      )
+      .filter((row) =>
+        normalizedWorkerNames.length > 0
+          ? normalizedWorkerNames.includes(row.workerName.trim().toLowerCase())
+          : true,
+      ),
     samplePayrollResets,
+    includePaid,
   ).sort((a, b) => b.attendanceDate.localeCompare(a.attendanceDate));
 
   if (typeof limit === "number") {
@@ -945,6 +1041,7 @@ export async function getWageRecap(options?: {
     workerSummaries,
     totalDailyWage: rows.reduce((sum, row) => sum + row.dailyWage, 0),
     totalKasbon: rows.reduce((sum, row) => sum + row.kasbonAmount, 0),
+    totalReimburse: rows.reduce((sum, row) => sum + row.reimburseAmount, 0),
     totalNetPay: rows.reduce((sum, row) => sum + row.netPay, 0),
   };
 }

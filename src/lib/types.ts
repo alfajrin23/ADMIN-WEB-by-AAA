@@ -52,6 +52,7 @@ export type AttendanceRecord = {
   reimburseType: ReimburseType | null;
   reimburseAmount: number;
   netPay: number;
+  payrollPaid: boolean;
   attendanceDate: string;
   notes: string | null;
   createdAt: string;
@@ -98,6 +99,9 @@ export type WageWorkerSummary = {
   totalDailyWage: number;
   totalKasbon: number;
   totalNetPay: number;
+  totalNetPayUnpaid: number;
+  latestAttendanceDate: string;
+  payrollPaid: boolean;
 };
 
 export type WageRecap = {

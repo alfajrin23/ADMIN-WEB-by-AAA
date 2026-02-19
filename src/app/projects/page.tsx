@@ -19,6 +19,7 @@ import {
   SaveIcon,
   TrashIcon,
 } from "@/components/icons";
+import { ExcelDropInput } from "@/components/excel-drop-input";
 import { ProjectAutocomplete } from "@/components/project-autocomplete";
 import { ProjectsSearchInput } from "@/components/projects-search-input";
 import { RupiahInput } from "@/components/rupiah-input";
@@ -34,7 +35,7 @@ import { getProjectDetail, getProjects } from "@/lib/data";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { activeDataSource, getStorageLabel } from "@/lib/storage";
 
-type ModalType = "project-new" | "expense-new";
+type ModalType = "project-new" | "expense-new" | "excel-import";
 type ProjectView = "list" | "rekap";
 
 type ProjectPageProps = {
@@ -103,7 +104,11 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
 
   const modalParam = typeof params.modal === "string" ? params.modal : "";
   const activeModal: ModalType | null =
-    modalParam === "project-new" || modalParam === "expense-new" ? modalParam : null;
+    modalParam === "project-new" ||
+    modalParam === "expense-new" ||
+    modalParam === "excel-import"
+      ? modalParam
+      : null;
   const closeModalHref = createProjectsHref({
     projectId: selectedProjectId,
     searchText,
@@ -118,6 +123,12 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
   const openExpenseModalHref = createProjectsHref({
     projectId: selectedProjectId,
     modal: "expense-new",
+    searchText,
+    view: activeView,
+  });
+  const openImportModalHref = createProjectsHref({
+    projectId: selectedProjectId,
+    modal: "excel-import",
     searchText,
     view: activeView,
   });
@@ -225,22 +236,16 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
               Excel Rincian Rekapan
             </a>
             {activeDataSource === "excel" ? (
-              <form action={importExcelTemplateAction} className="flex items-center gap-2">
-                <input type="hidden" name="return_to" value={closeModalHref} />
-                <input
-                  type="file"
-                  name="template_file"
-                  accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                  required
-                  className="max-w-[220px] rounded-xl border border-emerald-300 bg-white px-3 py-2 text-xs text-emerald-800 file:mr-2 file:rounded-lg file:border-0 file:bg-emerald-100 file:px-2 file:py-1 file:text-xs file:font-semibold file:text-emerald-800"
-                />
-                <button className="inline-flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100">
-                  <span className="btn-icon icon-wiggle-soft bg-emerald-100 text-emerald-700">
-                    <ImportIcon />
-                  </span>
-                  Import File Excel
-                </button>
-              </form>
+              <Link
+                href={openImportModalHref}
+                data-ui-button="true"
+                className="inline-flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
+              >
+                <span className="btn-icon icon-wiggle-soft bg-emerald-100 text-emerald-700">
+                  <ImportIcon />
+                </span>
+                Import File Excel
+              </Link>
             ) : null}
           </div>
         </div>
@@ -565,7 +570,9 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
               <h2 className="text-lg font-semibold text-slate-900">
                 {activeModal === "project-new"
                   ? "Tambah Project Baru"
-                  : "Input Biaya Project"}
+                  : activeModal === "expense-new"
+                    ? "Input Biaya Project"
+                    : "Import File Excel"}
               </h2>
               <Link
                 href={closeModalHref}
@@ -617,6 +624,23 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                   Simpan Project
                 </button>
               </form>
+            ) : activeModal === "excel-import" ? (
+              activeDataSource !== "excel" ? (
+                <p className="mt-4 text-sm text-slate-500">
+                  Import Excel hanya tersedia saat sumber data aktif adalah Excel.
+                </p>
+              ) : (
+                <form action={importExcelTemplateAction} className="mt-4 space-y-4">
+                  <input type="hidden" name="return_to" value={closeModalHref} />
+                  <ExcelDropInput name="template_file" />
+                  <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600">
+                    <span className="btn-icon icon-wiggle-soft bg-white/20 text-white">
+                      <ImportIcon />
+                    </span>
+                    Proses Import Excel
+                  </button>
+                </form>
+              )
             ) : projects.length === 0 ? (
               <p className="mt-4 text-sm text-slate-500">Belum ada project. Buat project dulu.</p>
             ) : (

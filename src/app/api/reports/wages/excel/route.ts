@@ -1,8 +1,7 @@
 import { Buffer } from "node:buffer";
 import * as XLSX from "xlsx/xlsx.mjs";
-import { getProjects, getWageRecap } from "@/lib/data";
+import { getProjectDetail, getProjects, getWageRecap } from "@/lib/data";
 import { formatCurrency, formatDate } from "@/lib/format";
-import { WORKER_TEAM_LABEL } from "@/lib/constants";
 
 function isDateString(value: string | null) {
   return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
@@ -23,6 +22,13 @@ function parseRupiah(value: string | null) {
     .replace(",", ".");
   const parsed = Number(normalized);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function makeMerge(startRow: number, startCol: number, endRow: number, endCol: number): XLSX.Range {
+  return {
+    s: { r: startRow, c: startCol },
+    e: { r: endRow, c: endCol },
+  };
 }
 
 export async function GET(request: Request) {
@@ -80,106 +86,177 @@ export async function GET(request: Request) {
       ? reportTitleCustom
       : `RINCIAN UPAH PROJECT ${titleProjectSource}`;
 
-  const workerRows = recap.workerSummaries.map((item, index) => ({
-    No: index + 1,
-    Pekerja: item.workerName,
-    Project: item.projectName ?? "Gabungan Project",
-    "Hari Kerja": item.workDays,
-    "Total Gaji": item.totalDailyWage,
-    "Total Kasbon": item.totalKasbon,
-    "Total Harus Dibayar": item.totalNetPay,
-    "Sisa Belum Digaji": item.totalNetPayUnpaid,
-    "Status Gaji": item.payrollPaid ? "Sudah Digaji" : "Belum Digaji",
-    "Update Terakhir": item.latestAttendanceDate ? formatDate(item.latestAttendanceDate) : "-",
-  }));
+  const grouped = new Map<
+    string,
+    {
+      workerName: string;
+      daysWorked: number;
+      totalWage: number;
+      totalKasbon: number;
+      totalPaid: number;
+      notes: string[];
+    }
+  >();
+  for (const row of recap.rows) {
+    const key = `${row.workerName.toLowerCase()}|${row.teamType}|${(row.specialistTeamName ?? "").toLowerCase()}`;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        workerName: row.workerName,
+        daysWorked: 0,
+        totalWage: 0,
+        totalKasbon: 0,
+        totalPaid: 0,
+        notes: [],
+      });
+    }
+    const current = grouped.get(key)!;
+    if (row.status === "hadir") {
+      current.daysWorked += row.workDays;
+    }
+    current.totalWage += row.status === "hadir" ? row.dailyWage * row.workDays : 0;
+    current.totalKasbon += row.kasbonAmount;
+    current.totalPaid += row.netPay;
+    if (row.notes && !current.notes.includes(row.notes)) {
+      current.notes.push(row.notes);
+    }
+  }
 
-  const detailRows = recap.rows.map((item, index) => ({
-    No: index + 1,
-    Tanggal: formatDate(item.attendanceDate),
-    Project: item.projectName ?? "-",
-    Pekerja: item.workerName,
-    Tim:
-      item.teamType === "spesialis"
-        ? `Spesialis - ${item.specialistTeamName ?? "Lainnya"}`
-        : WORKER_TEAM_LABEL[item.teamType],
-    Status: item.status,
-    "Gaji Harian": item.dailyWage,
-    Kasbon: item.kasbonAmount,
-    "Harus Dibayar": item.netPay,
-    "Status Gaji": item.payrollPaid ? "Sudah Digaji" : "Belum Digaji",
-    Catatan: item.notes ?? "-",
-  }));
+  const workerRows = Array.from(grouped.values())
+    .map((item) => ({
+      ...item,
+      dailyRate: item.daysWorked > 0 ? Math.round(item.totalWage / item.daysWorked) : 0,
+    }))
+    .sort((a, b) => a.workerName.localeCompare(b.workerName));
 
-  const summaryRows = [
-    {
-      Keterangan: "Judul Laporan",
-      Nilai: reportTitle,
-    },
-    {
-      Keterangan: "Periode",
-      Nilai: `${from} s/d ${to}`,
-    },
-    {
-      Keterangan: "Project",
-      Nilai: projectName,
-    },
-    {
-      Keterangan: "Total Gaji",
-      Nilai: formatCurrency(recap.totalDailyWage),
-    },
-    {
-      Keterangan: "Total Kasbon",
-      Nilai: formatCurrency(recap.totalKasbon),
-    },
-    {
-      Keterangan: "Total Harus Dibayar",
-      Nilai: formatCurrency(recap.totalNetPay),
-    },
-    {
-      Keterangan: "Reimburse Input",
-      Nilai: reimburseInput > 0 ? formatCurrency(reimburseInput) : "Rp0",
-    },
-    {
-      Keterangan: "Keterangan Reimburse",
-      Nilai: reimburseInput > 0 ? reimburseInputNote : "-",
-    },
-  ];
-  const manualReimburseRows =
-    reimburseInput > 0
-      ? [
-          {
-            Tanggal: formatDate(to),
-            Keterangan: reimburseInputNote,
-            Nominal: reimburseInput,
-          },
-        ]
-      : [{ Keterangan: "Tidak ada reimburse manual", Nominal: 0 }];
+  let reimburseRows: Array<{
+    date: string;
+    description: string;
+    qty: number;
+    unitPrice: number;
+    total: number;
+  }> = [];
+  if (projectId) {
+    const detail = await getProjectDetail(projectId);
+    if (detail) {
+      reimburseRows = detail.expenses
+        .filter((row) => row.expenseDate.slice(0, 10) >= from)
+        .filter((row) => row.expenseDate.slice(0, 10) <= to)
+        .filter(
+          (row) =>
+            row.category !== "upah_kasbon_tukang" &&
+            row.category !== "upah_staff_pelaksana" &&
+            row.category !== "upah_tim_spesialis",
+        )
+        .map((row) => ({
+          date: row.expenseDate.slice(0, 10),
+          description: row.description ?? "-",
+          qty: row.quantity,
+          unitPrice: row.unitPrice,
+          total: row.amount,
+        }));
+    }
+  }
+  if (reimburseInput > 0) {
+    reimburseRows.push({
+      date: to,
+      description: reimburseInputNote,
+      qty: 1,
+      unitPrice: reimburseInput,
+      total: reimburseInput,
+    });
+  }
+
+  const totalUpah = workerRows.reduce((sum, row) => sum + row.totalWage, 0);
+  const totalKasbon = workerRows.reduce((sum, row) => sum + row.totalKasbon, 0);
+  const subtotal = totalUpah;
+  const totalKeseluruhan = subtotal - totalKasbon;
+  const totalReimburse = reimburseRows.reduce((sum, row) => sum + row.total, 0);
+
+  const rows: Array<Array<string | number>> = [];
+  const merges: XLSX.Range[] = [];
+
+  rows.push([reportTitle.toUpperCase()]);
+  merges.push(makeMerge(0, 0, 0, 7));
+  rows.push([`TANGGAL ${to} | PERIODE ${from} s/d ${to}`]);
+  merges.push(makeMerge(1, 0, 1, 7));
+  rows.push([]);
+
+  rows.push([
+    "NO",
+    "NAMA PEKERJA",
+    "HARI KERJA",
+    "UPAH/HARI (Rp)",
+    "JUMLAH UPAH (Rp)",
+    "KASBON (Rp)",
+    "KETERANGAN",
+    "TOTAL DIBAYAR (Rp)",
+  ]);
+
+  if (workerRows.length === 0) {
+    rows.push(["1", "-", "0", formatCurrency(0), formatCurrency(0), formatCurrency(0), "-", formatCurrency(0)]);
+  } else {
+    workerRows.forEach((row, index) => {
+      rows.push([
+        String(index + 1),
+        row.workerName,
+        String(row.daysWorked),
+        formatCurrency(row.dailyRate),
+        formatCurrency(row.totalWage),
+        formatCurrency(row.totalKasbon),
+        row.notes.join(", ") || "-",
+        formatCurrency(row.totalPaid),
+      ]);
+    });
+  }
+
+  const summaryRowStart = rows.length;
+  rows.push(["JUMLAH UPAH", "", "", "", "", "", "", formatCurrency(totalUpah)]);
+  rows.push(["SUBTOTAL", "", "", "", "", "", "", formatCurrency(subtotal)]);
+  rows.push(["KASBON TEAM (JIKA ADA)", "", "", "", "", "", "", formatCurrency(totalKasbon)]);
+  rows.push(["TOTAL KESELURUHAN", "", "", "", "", "", "", formatCurrency(totalKeseluruhan)]);
+  for (let i = 0; i < 4; i += 1) {
+    merges.push(makeMerge(summaryRowStart + i, 0, summaryRowStart + i, 6));
+  }
+
+  rows.push([]);
+  const reimburseTitleRow = rows.length;
+  rows.push(["REIMBURSE"]);
+  merges.push(makeMerge(reimburseTitleRow, 0, reimburseTitleRow, 5));
+  rows.push(["NO", "TANGGAL", "KETERANGAN", "QTY", "HARGA SATUAN", "TOTAL"]);
+
+  if (reimburseRows.length === 0) {
+    rows.push(["1", "-", "Tidak ada reimburse", "0", formatCurrency(0), formatCurrency(0)]);
+  } else {
+    reimburseRows.forEach((row, index) => {
+      rows.push([
+        String(index + 1),
+        formatDate(row.date),
+        row.description,
+        String(row.qty || 0),
+        formatCurrency(row.unitPrice),
+        formatCurrency(row.total),
+      ]);
+    });
+  }
+
+  const reimburseTotalRow = rows.length;
+  rows.push(["TOTAL REIMBURSE", "", "", "", "", formatCurrency(totalReimburse)]);
+  merges.push(makeMerge(reimburseTotalRow, 0, reimburseTotalRow, 4));
 
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(
-    workbook,
-    XLSX.utils.json_to_sheet(summaryRows),
-    "Ringkasan",
-  );
-  XLSX.utils.book_append_sheet(
-    workbook,
-    XLSX.utils.json_to_sheet(
-      workerRows.length > 0 ? workerRows : [{ Keterangan: "Tidak ada data pekerja" }],
-    ),
-    "Rekap Pekerja",
-  );
-  XLSX.utils.book_append_sheet(
-    workbook,
-    XLSX.utils.json_to_sheet(
-      detailRows.length > 0 ? detailRows : [{ Keterangan: "Tidak ada data absensi" }],
-    ),
-    "Detail Absensi",
-  );
-  XLSX.utils.book_append_sheet(
-    workbook,
-    XLSX.utils.json_to_sheet(manualReimburseRows),
-    "Reimburse Manual",
-  );
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  sheet["!merges"] = merges;
+  sheet["!cols"] = [
+    { wch: 6 },
+    { wch: 24 },
+    { wch: 12 },
+    { wch: 16 },
+    { wch: 18 },
+    { wch: 16 },
+    { wch: 40 },
+    { wch: 20 },
+  ];
+  XLSX.utils.book_append_sheet(workbook, sheet, "Rekap Upah");
 
   const bytes = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
   return new Response(Buffer.from(bytes), {

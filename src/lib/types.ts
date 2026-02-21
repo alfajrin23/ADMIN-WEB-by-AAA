@@ -36,6 +36,7 @@ export type ExpenseEntry = {
 
 export type CategoryTotal = {
   category: CostCategory;
+  label: string;
   total: number;
 };
 
@@ -47,6 +48,7 @@ export type AttendanceRecord = {
   teamType: WorkerTeam;
   specialistTeamName: string | null;
   status: AttendanceStatus;
+  workDays: number;
   dailyWage: number;
   kasbonAmount: number;
   reimburseType: ReimburseType | null;

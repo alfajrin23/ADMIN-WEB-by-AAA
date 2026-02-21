@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import { getProjectDetail, getProjects } from "@/lib/data";
+import { mergeExpenseCategoryOptions } from "@/lib/constants";
+import { getExpenseCategories, getProjectDetail, getProjects } from "@/lib/data";
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("id-ID", {
@@ -8,27 +9,6 @@ function formatCurrency(value: number) {
     currency: "IDR",
     maximumFractionDigits: 0,
   }).format(value);
-}
-
-function formatCurrencyOrDash(value: number) {
-  return value > 0 ? formatCurrency(value) : "Rp-";
-}
-
-function splitCategoryCost(category: string, amount: number) {
-  if (category === "material") {
-    return { material: amount, alat: 0, upah: 0, ops: 0 };
-  }
-  if (category === "alat") {
-    return { material: 0, alat: amount, upah: 0, ops: 0 };
-  }
-  if (
-    category === "upah_kasbon_tukang" ||
-    category === "upah_staff_pelaksana" ||
-    category === "upah_tim_spesialis"
-  ) {
-    return { material: 0, alat: 0, upah: amount, ops: 0 };
-  }
-  return { material: 0, alat: 0, upah: 0, ops: amount };
 }
 
 function fitText(
@@ -40,7 +20,6 @@ function fitText(
   if (font.widthOfTextAtSize(text, size) <= maxWidth) {
     return text;
   }
-
   const suffix = "...";
   let trimmed = text;
   while (trimmed.length > 0) {
@@ -56,20 +35,33 @@ function fitText(
 type ProjectSummary = {
   projectId: string;
   projectName: string;
-  material: number;
-  alat: number;
-  lainLain: number;
-  upah: number;
-  listrik: number;
-  subcont: number;
-  perawatan: number;
-  ops: number;
+  totalsByCategory: Record<string, number>;
   total: number;
-  note: string;
 };
+
+function toFileSlug(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+}
+
+function resolveFilePrefix(projectNames: string[]) {
+  const normalized = projectNames.map((item) => toFileSlug(item)).filter((item) => item.length > 0);
+  if (normalized.length === 0) {
+    return "semua-project";
+  }
+  if (normalized.length === 1) {
+    return normalized[0];
+  }
+  return `${normalized[0]}-${normalized.length - 1}-project-lain`;
+}
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
+  const isPreview = searchParams.get("preview") === "1";
   const selectedOnly = searchParams.get("selected_only") === "1";
   const requestedProjectIds = Array.from(
     new Set(
@@ -88,44 +80,39 @@ export async function GET(request: Request) {
     requestedProjectIds.length > 0
       ? allProjects.filter((project) => requestedProjectIds.includes(project.id))
       : allProjects;
-
   if (selectedProjects.length === 0) {
     return new Response("Project tidak ditemukan.", { status: 404 });
   }
 
-  const details = await Promise.all(selectedProjects.map((project) => getProjectDetail(project.id)));
-  const summaries: ProjectSummary[] = [];
+  const [details, expenseCategories] = await Promise.all([
+    Promise.all(selectedProjects.map((project) => getProjectDetail(project.id))),
+    getExpenseCategories(),
+  ]);
+  const detailCategoryValues = details
+    .flatMap((detail) => detail?.expenses.map((expense) => expense.category) ?? []);
+  const categoryOptions = mergeExpenseCategoryOptions(expenseCategories, detailCategoryValues);
 
+  const summaries: ProjectSummary[] = [];
   for (const detail of details) {
     if (!detail) {
       continue;
     }
 
-    const summary: ProjectSummary = {
-      projectId: detail.project.id,
-      projectName: detail.project.name,
-      material: 0,
-      alat: 0,
-      lainLain: 0,
-      upah: 0,
-      listrik: 0,
-      subcont: 0,
-      perawatan: 0,
-      ops: 0,
-      total: 0,
-      note: "",
-    };
-
+    const totalsByCategory = Object.fromEntries(
+      categoryOptions.map((category) => [category.value, 0]),
+    ) as Record<string, number>;
+    let total = 0;
     for (const expense of detail.expenses) {
-      const split = splitCategoryCost(expense.category, expense.amount);
-      summary.material += split.material;
-      summary.alat += split.alat;
-      summary.upah += split.upah;
-      summary.ops += split.ops;
-      summary.total += expense.amount;
+      totalsByCategory[expense.category] = (totalsByCategory[expense.category] ?? 0) + expense.amount;
+      total += expense.amount;
     }
 
-    summaries.push(summary);
+    summaries.push({
+      projectId: detail.project.id,
+      projectName: detail.project.name,
+      totalsByCategory,
+      total,
+    });
   }
 
   if (summaries.length === 0) {
@@ -134,38 +121,39 @@ export async function GET(request: Request) {
 
   summaries.sort((a, b) => b.total - a.total);
 
-  const totals = summaries.reduce(
-    (acc, item) => ({
-      material: acc.material + item.material,
-      alat: acc.alat + item.alat,
-      lainLain: acc.lainLain + item.lainLain,
-      upah: acc.upah + item.upah,
-      listrik: acc.listrik + item.listrik,
-      subcont: acc.subcont + item.subcont,
-      perawatan: acc.perawatan + item.perawatan,
-      ops: acc.ops + item.ops,
-      total: acc.total + item.total,
-    }),
-    {
-      material: 0,
-      alat: 0,
-      lainLain: 0,
-      upah: 0,
-      listrik: 0,
-      subcont: 0,
-      perawatan: 0,
-      ops: 0,
-      total: 0,
-    },
-  );
+  const grandTotalsByCategory = Object.fromEntries(
+    categoryOptions.map((category) => [category.value, 0]),
+  ) as Record<string, number>;
+  let grandTotal = 0;
+  for (const summary of summaries) {
+    for (const category of categoryOptions) {
+      grandTotalsByCategory[category.value] += summary.totalsByCategory[category.value] ?? 0;
+    }
+    grandTotal += summary.total;
+  }
 
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const pageSize: [number, number] = [842, 595];
-  const margin = 28;
+  const pageSize: [number, number] = [1191, 842];
+  const margin = 24;
   const rowHeight = 18;
-  const columns = [24, 150, 58, 52, 52, 64, 52, 52, 56, 56, 70, 100];
+  const pageWidth = pageSize[0];
+  const noWidth = 34;
+  const totalWidth = 110;
+  let projectWidth = 220;
+  const maxTableWidth = pageWidth - margin * 2;
+  let categoryWidth = Math.floor(
+    (maxTableWidth - noWidth - projectWidth - totalWidth) / Math.max(1, categoryOptions.length),
+  );
+  if (categoryWidth < 64) {
+    categoryWidth = 64;
+    projectWidth = Math.max(
+      120,
+      maxTableWidth - noWidth - totalWidth - categoryWidth * Math.max(1, categoryOptions.length),
+    );
+  }
+  const columns = [noWidth, projectWidth, ...categoryOptions.map(() => categoryWidth), totalWidth];
   const xAt = (index: number) => margin + columns.slice(0, index).reduce((sum, col) => sum + col, 0);
 
   let page = pdf.addPage(pageSize);
@@ -181,32 +169,21 @@ export async function GET(request: Request) {
     const x = xAt(params.col);
     const width = columns[params.col];
     const drawFont = params.boldText ? bold : font;
-    if (params.fill) {
-      page.drawRectangle({
-        x,
-        y: y - rowHeight,
-        width,
-        height: rowHeight,
-        color: rgb(params.fill[0], params.fill[1], params.fill[2]),
-        borderColor: rgb(0.22, 0.22, 0.22),
-        borderWidth: 0.8,
-      });
-    } else {
-      page.drawRectangle({
-        x,
-        y: y - rowHeight,
-        width,
-        height: rowHeight,
-        borderColor: rgb(0.22, 0.22, 0.22),
-        borderWidth: 0.8,
-      });
-    }
+    page.drawRectangle({
+      x,
+      y: y - rowHeight,
+      width,
+      height: rowHeight,
+      borderColor: rgb(0.22, 0.22, 0.22),
+      borderWidth: 0.8,
+      color: params.fill ? rgb(params.fill[0], params.fill[1], params.fill[2]) : undefined,
+    });
 
     if (!params.text) {
       return;
     }
 
-    const textSize = 7.6;
+    const textSize = 7.5;
     const content = fitText(params.text, drawFont, textSize, width - 8);
     const textWidth = drawFont.widthOfTextAtSize(content, textSize);
     let textX = x + 4;
@@ -215,6 +192,7 @@ export async function GET(request: Request) {
     } else if (params.align === "right") {
       textX = x + width - textWidth - 4;
     }
+
     page.drawText(content, {
       x: textX,
       y: y - rowHeight + 6,
@@ -225,7 +203,10 @@ export async function GET(request: Request) {
   };
 
   const drawHeader = () => {
-    const title = "REKAPITULASI BIAYA PENGELUARAN PROJECT";
+    const title =
+      summaries.length === 1
+        ? `REKAP BIAYA PROJECT ${summaries[0].projectName.toUpperCase()}`
+        : `REKAP BIAYA PROJECT (${summaries.length} PROJECT)`;
     const titleSize = 14;
     const titleWidth = bold.widthOfTextAtSize(title, titleSize);
     page.drawText(title, {
@@ -238,7 +219,9 @@ export async function GET(request: Request) {
     y -= 20;
 
     const selectedLabel =
-      requestedProjectIds.length > 0 ? `${requestedProjectIds.length} project terpilih` : "Semua project";
+      requestedProjectIds.length > 0
+        ? `${requestedProjectIds.length} project terpilih`
+        : "Semua project";
     page.drawText(`${selectedLabel} | Dicetak ${new Date().toLocaleString("id-ID")}`, {
       x: margin,
       y,
@@ -248,43 +231,12 @@ export async function GET(request: Request) {
     });
     y -= 14;
 
-    const headers = [
-      "NO",
-      "KETERANGAN",
-      "COST MATERIAL",
-      "COST ALAT",
-      "COST LAIN-LAIN",
-      "COST UPAH/KASBON",
-      "COST LISTRIK",
-      "COST SUBCONT",
-      "COST PERAWATAN",
-      "COST OPERASIONAL",
-      "TOTAL COST",
-      "KETERANGAN",
-    ];
+    const headers = ["NO", "PROJECT", ...categoryOptions.map((item) => item.label.toUpperCase()), "TOTAL"];
     headers.forEach((header, index) => {
-      const fill: [number, number, number] =
-        index === 2
-          ? [0.9, 0.86, 0.72]
-          : index === 3
-            ? [0.84, 0.71, 0.85]
-            : index === 4
-              ? [0.9, 0.9, 0.9]
-              : index === 5
-                ? [0.77, 0.77, 0.77]
-                : index === 6
-                  ? [0.82, 0.89, 0.97]
-                  : index === 7
-                    ? [0.89, 0.87, 0.93]
-                    : index === 8
-                      ? [0.88, 0.93, 0.84]
-                      : index === 9
-                        ? [0.56, 0.76, 0.87]
-                        : [0.9, 0.9, 0.9];
       drawCell({
         text: header,
         col: index,
-        fill,
+        fill: [0.9, 0.9, 0.9],
         align: "center",
         boldText: true,
       });
@@ -302,28 +254,20 @@ export async function GET(request: Request) {
 
   drawHeader();
 
-  summaries.forEach((item, index) => {
+  summaries.forEach((summary, index) => {
     ensureSpace(rowHeight);
     const values = [
       String(index + 1),
-      item.projectName,
-      formatCurrencyOrDash(item.material),
-      formatCurrencyOrDash(item.alat),
-      formatCurrencyOrDash(item.lainLain),
-      formatCurrencyOrDash(item.upah),
-      formatCurrencyOrDash(item.listrik),
-      formatCurrencyOrDash(item.subcont),
-      formatCurrencyOrDash(item.perawatan),
-      formatCurrencyOrDash(item.ops),
-      formatCurrency(item.total),
-      item.note,
+      summary.projectName,
+      ...categoryOptions.map((item) => formatCurrency(summary.totalsByCategory[item.value] ?? 0)),
+      formatCurrency(summary.total),
     ];
 
     values.forEach((value, col) => {
       drawCell({
         text: value,
         col,
-        align: col === 0 ? "center" : col >= 2 && col <= 10 ? "right" : "left",
+        align: col === 0 ? "center" : col >= 2 ? "right" : "left",
       });
     });
     y -= rowHeight;
@@ -331,34 +275,27 @@ export async function GET(request: Request) {
 
   ensureSpace(rowHeight);
   const totalValues = [
-    "TOTAL COST PER ITEM",
+    "TOTAL",
     "",
-    formatCurrencyOrDash(totals.material),
-    formatCurrencyOrDash(totals.alat),
-    formatCurrencyOrDash(totals.lainLain),
-    formatCurrencyOrDash(totals.upah),
-    formatCurrencyOrDash(totals.listrik),
-    formatCurrencyOrDash(totals.subcont),
-    formatCurrencyOrDash(totals.perawatan),
-    formatCurrencyOrDash(totals.ops),
-    formatCurrency(totals.total),
-    "",
+    ...categoryOptions.map((item) => formatCurrency(grandTotalsByCategory[item.value] ?? 0)),
+    formatCurrency(grandTotal),
   ];
   totalValues.forEach((value, col) => {
     drawCell({
       text: value,
       col,
       fill: [1, 0.94, 0.25],
-      align: col === 0 ? "left" : col >= 2 && col <= 10 ? "right" : "left",
+      align: col === 0 ? "left" : col >= 2 ? "right" : "left",
       boldText: true,
     });
   });
 
   const bytes = await pdf.save();
+  const filePrefix = resolveFilePrefix(summaries.map((item) => item.projectName));
   return new Response(Buffer.from(bytes), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": "attachment; filename=\"rekap-biaya-semua-project.pdf\"",
+      "Content-Disposition": `${isPreview ? "inline" : "attachment"}; filename=\"${filePrefix}-rekap-biaya.pdf\"`,
     },
   });
 }

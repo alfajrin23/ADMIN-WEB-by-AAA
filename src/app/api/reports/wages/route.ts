@@ -165,9 +165,9 @@ export async function GET(request: Request) {
     }
     const current = grouped.get(key)!;
     if (row.status === "hadir") {
-      current.daysWorked += 1;
+      current.daysWorked += row.workDays;
     }
-    current.totalWage += row.dailyWage;
+    current.totalWage += row.status === "hadir" ? row.dailyWage * row.workDays : 0;
     current.totalKasbon += row.kasbonAmount;
     current.totalPaid += row.netPay;
     if (row.notes && !current.notes.includes(row.notes)) {

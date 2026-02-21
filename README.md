@@ -1,4 +1,4 @@
-# Administrasi Web Proyek (Next.js + Excel Drive)
+# Administrasi Web Proyek (Next.js + Supabase)
 
 Aplikasi administrasi proyek untuk:
 - Rekap pengeluaran biaya per project
@@ -9,11 +9,11 @@ Aplikasi administrasi proyek untuk:
 
 ## Sumber Data
 
-Default aplikasi sekarang menggunakan **Excel** (`.xlsx`), cocok untuk file yang disimpan di Drive.
+Default aplikasi sekarang menggunakan **Supabase** agar aman untuk deployment Vercel.
 
-Didukung juga mode **Supabase** (opsional) jika diperlukan.
+Didukung juga mode **Excel** (`.xlsx`) dan **Firebase (Firestore)**.
 
-## Setup Cepat (Mode Excel)
+## Setup Cepat (Mode Supabase - Rekomendasi)
 
 1. Install dependency:
 
@@ -27,32 +27,7 @@ npm install
 cp .env.example .env.local
 ```
 
-3. Isi `.env.local` (contoh):
-
-```bash
-DATA_SOURCE=excel
-EXCEL_DB_PATH=D:\\Google Drive\\admin-web\\admin-web.xlsx
-EXCEL_TEMPLATE_PATH=D:\\ADMINISTRASI WEB\\admin-web\\data\\admin-web-template.xlsx
-```
-
-4. Jalankan local:
-
-```bash
-npm run dev
-```
-
-Catatan:
-- Jika file Excel belum ada, aplikasi otomatis membuat file baru dengan sheet:
-  - `projects`
-  - `project_expenses`
-  - `attendance_records`
-- Anda bisa salin file template Excel ke `data/admin-web-template.xlsx`, lalu klik tombol
-  **Import dari Excel Template** di halaman `/projects` untuk membuat database awal
-  (project + biaya) dari format file tersebut.
-
-## Setup Supabase (Opsional)
-
-Jika ingin kembali ke Supabase:
+3. Isi `.env.local`:
 
 ```bash
 DATA_SOURCE=supabase
@@ -60,9 +35,105 @@ NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 ```
 
-Lalu jalankan SQL schema pada:
+4. Jalankan SQL schema di Supabase SQL Editor:
 
 `supabase/schema.sql`
+
+5. Jalankan local:
+
+```bash
+npm run dev
+```
+
+Catatan:
+- Kategori biaya sekarang dinamis. User bisa menambah kategori dari form project/biaya dan otomatis tersimpan ke tabel `expense_categories`.
+- Export PDF/Excel rekap biaya otomatis mengikuti kategori terbaru tersebut.
+
+## Setup Excel (Opsional)
+
+Jika ingin memakai file Excel lokal:
+
+```bash
+DATA_SOURCE=excel
+EXCEL_DB_PATH=D:\\Google Drive\\admin-web\\admin-web.xlsx
+EXCEL_TEMPLATE_PATH=D:\\ADMINISTRASI WEB\\admin-web\\data\\admin-web-template.xlsx
+```
+
+## Setup Firebase (Firestore)
+
+Gunakan salah satu cara credential di `.env.local`:
+
+```bash
+DATA_SOURCE=firebase
+FIREBASE_PROJECT_ID=your-firebase-project-id
+FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your-firebase-project-id.iam.gserviceaccount.com
+FIREBASE_PRIVATE_KEY=\"-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n\"
+FIREBASE_DATABASE_ID=(default)
+```
+
+Atau memakai file service account:
+
+```bash
+DATA_SOURCE=firebase
+FIREBASE_DATABASE_ID=(default)
+FIREBASE_SERVICE_ACCOUNT_PATH=C:\\path\\to\\service-account.json
+```
+
+Jika muncul error `5 NOT_FOUND`, biasanya database Firestore belum dibuat atau `FIREBASE_DATABASE_ID` tidak sesuai.
+
+Inisialisasi database Firestore via script:
+
+```bash
+npm run firebase:init -- --location=asia-southeast1
+```
+
+Catatan:
+- `--location` wajib saat database belum ada (irreversible setelah dibuat).
+- Untuk cek saja tanpa create: jalankan `npm run firebase:init` (tanpa `--location`).
+
+## Migrasi ke Firebase (Firestore)
+
+1. Install dependency terbaru:
+
+```bash
+npm install
+```
+
+2. Isi env Firebase (service account) di `.env.local`:
+
+```bash
+FIREBASE_PROJECT_ID=your-firebase-project-id
+FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your-firebase-project-id.iam.gserviceaccount.com
+FIREBASE_PRIVATE_KEY=\"-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n\"
+```
+
+3. Jalankan migrasi dari Excel aktif:
+
+```bash
+npm run migrate:firebase
+```
+
+4. Opsi tambahan:
+
+```bash
+# pakai file sumber khusus
+npm run migrate:firebase -- --source=\"D:\\Google Drive\\admin-web\\admin-web.xlsx\"
+
+# hapus isi koleksi dulu sebelum tulis ulang
+npm run migrate:firebase -- --clear
+```
+
+Script akan membuat/memperbarui koleksi:
+- `projects`
+- `project_expenses`
+- `attendance_records`
+- `payroll_resets`
+
+Setelah migrasi selesai, aktifkan Firebase:
+
+```bash
+DATA_SOURCE=firebase
+```
 
 ## Halaman
 

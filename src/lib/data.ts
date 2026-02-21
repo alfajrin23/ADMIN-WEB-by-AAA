@@ -1,5 +1,14 @@
-import { COST_CATEGORIES, WORKER_TEAMS, WORKER_TEAM_LABEL } from "@/lib/constants";
+import {
+  COST_CATEGORIES,
+  type ExpenseCategoryOption,
+  getCostCategoryLabel,
+  mergeExpenseCategoryOptions,
+  toCategorySlug,
+  WORKER_TEAMS,
+  WORKER_TEAM_LABEL,
+} from "@/lib/constants";
 import { readExcelDatabase } from "@/lib/excel-db";
+import { getFirestoreServerClient } from "@/lib/firebase";
 import { activeDataSource } from "@/lib/storage";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import type {
@@ -100,6 +109,7 @@ const sampleAttendance: AttendanceRecord[] = [
     teamType: "tukang",
     specialistTeamName: null,
     status: "hadir",
+    workDays: 1,
     dailyWage: 250000,
     kasbonAmount: 150000,
     reimburseType: null,
@@ -118,6 +128,7 @@ const sampleAttendance: AttendanceRecord[] = [
     teamType: "laden",
     specialistTeamName: null,
     status: "hadir",
+    workDays: 1,
     dailyWage: 230000,
     kasbonAmount: 50000,
     reimburseType: null,
@@ -136,6 +147,7 @@ const sampleAttendance: AttendanceRecord[] = [
     teamType: "spesialis",
     specialistTeamName: "Tim Baja",
     status: "izin",
+    workDays: 1,
     dailyWage: 0,
     kasbonAmount: 0,
     reimburseType: null,
@@ -158,6 +170,21 @@ const samplePayrollResets: Array<{
 
 function toDateOnly(value: string) {
   return value.slice(0, 10);
+}
+
+function resolveWorkDays(value: unknown) {
+  const parsed = Math.floor(Number(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 1;
+  }
+  return parsed;
+}
+
+function getAttendanceTotalWage(row: AttendanceRecord) {
+  if (row.status !== "hadir") {
+    return 0;
+  }
+  return row.dailyWage * row.workDays;
 }
 
 function normalizeText(value: string | null | undefined) {
@@ -190,12 +217,106 @@ function resolveJoinName(value: unknown) {
   return undefined;
 }
 
-function buildCategoryTotals(expenses: ExpenseEntry[]): CategoryTotal[] {
-  return COST_CATEGORIES.map((category) => ({
-    category: category.value,
-    total: expenses
-      .filter((expense) => expense.category === category.value)
-      .reduce((sum, expense) => sum + expense.amount, 0),
+function isFirebaseNotFoundError(error: unknown) {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+
+  const withCode = error as { code?: unknown; message?: unknown; details?: unknown };
+  const code = withCode.code;
+  const message = typeof withCode.message === "string" ? withCode.message.toUpperCase() : "";
+  const details = typeof withCode.details === "string" ? withCode.details.toUpperCase() : "";
+  return code === 5 || code === "5" || message.includes("NOT_FOUND") || details.includes("NOT_FOUND");
+}
+
+let hasWarnedFirebaseDatabaseMissing = false;
+
+function mapFirebaseRecord(id: string, data: unknown): Record<string, unknown> | null {
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+  return { id, ...(data as Record<string, unknown>) };
+}
+
+async function getFirebaseCollectionRows(collectionName: string): Promise<Record<string, unknown>[]> {
+  const firestore = getFirestoreServerClient();
+  if (!firestore) {
+    return [];
+  }
+
+  try {
+    const snapshot = await firestore.collection(collectionName).get();
+    return snapshot.docs
+      .map((doc) => mapFirebaseRecord(doc.id, doc.data()))
+      .filter((row): row is Record<string, unknown> => Boolean(row));
+  } catch (error) {
+    if (isFirebaseNotFoundError(error)) {
+      if (!hasWarnedFirebaseDatabaseMissing) {
+        hasWarnedFirebaseDatabaseMissing = true;
+        console.warn(
+          "[firebase] Firestore database belum ditemukan. Buat database dulu di Firebase Console (Firestore).",
+        );
+      }
+    } else {
+      console.warn(`[firebase] gagal membaca koleksi "${collectionName}".`, error);
+    }
+    return [];
+  }
+}
+
+async function getFirebaseDocRow(
+  collectionName: string,
+  id: string,
+): Promise<Record<string, unknown> | null> {
+  const firestore = getFirestoreServerClient();
+  if (!firestore) {
+    return null;
+  }
+
+  try {
+    const doc = await firestore.collection(collectionName).doc(id).get();
+    if (!doc.exists) {
+      return null;
+    }
+
+    return mapFirebaseRecord(doc.id, doc.data());
+  } catch (error) {
+    if (isFirebaseNotFoundError(error)) {
+      if (!hasWarnedFirebaseDatabaseMissing) {
+        hasWarnedFirebaseDatabaseMissing = true;
+        console.warn(
+          "[firebase] Firestore database belum ditemukan. Buat database dulu di Firebase Console (Firestore).",
+        );
+      }
+    } else {
+      console.warn(`[firebase] gagal membaca dokumen "${collectionName}/${id}".`, error);
+    }
+    return null;
+  }
+}
+
+function buildCategoryTotals(
+  expenses: ExpenseEntry[],
+  categoryOptions?: ExpenseCategoryOption[],
+): CategoryTotal[] {
+  const totalsByCategory = new Map<string, number>();
+  for (const expense of expenses) {
+    const category = toCategorySlug(expense.category);
+    if (!category) {
+      continue;
+    }
+    totalsByCategory.set(category, (totalsByCategory.get(category) ?? 0) + expense.amount);
+  }
+
+  const mergedOptions =
+    categoryOptions && categoryOptions.length > 0
+      ? mergeExpenseCategoryOptions(categoryOptions, Array.from(totalsByCategory.keys()))
+      : mergeExpenseCategoryOptions(Array.from(totalsByCategory.keys()));
+
+  return mergedOptions.map((item) => ({
+    category: item.value,
+    label: item.label,
+    total: totalsByCategory.get(item.value) ?? 0,
   }));
 }
 
@@ -216,7 +337,7 @@ function buildWageSummary(rows: AttendanceRecord[]) {
     }
 
     const projectTotal = totals[row.projectId];
-    projectTotal.totalDailyWage += row.dailyWage;
+    projectTotal.totalDailyWage += getAttendanceTotalWage(row);
     projectTotal.totalKasbon += row.kasbonAmount;
     projectTotal.totalNetPay += row.netPay;
     projectTotal.workerNames.add(row.workerName);
@@ -262,7 +383,7 @@ function buildWageTeamSummary(rows: AttendanceRecord[]) {
     }
 
     const summary = totals[key];
-    summary.totalDailyWage += row.dailyWage;
+    summary.totalDailyWage += getAttendanceTotalWage(row);
     summary.totalKasbon += row.kasbonAmount;
     summary.totalNetPay += row.netPay;
     summary.workerNames.add(row.workerName);
@@ -308,7 +429,7 @@ function buildWageProjectTeamSummary(rows: AttendanceRecord[]) {
     }
 
     const summary = totals[key];
-    summary.totalDailyWage += row.dailyWage;
+    summary.totalDailyWage += getAttendanceTotalWage(row);
     summary.totalKasbon += row.kasbonAmount;
     summary.totalNetPay += row.netPay;
     summary.workerNames.add(row.workerName);
@@ -369,9 +490,9 @@ function buildWageWorkerSummary(
 
     const summary = totals[key];
     if (row.status === "hadir") {
-      summary.workDays += 1;
+      summary.workDays += row.workDays;
     }
-    summary.totalDailyWage += row.dailyWage;
+    summary.totalDailyWage += getAttendanceTotalWage(row);
     summary.totalKasbon += row.kasbonAmount;
     summary.totalNetPay += row.netPay;
     if (!row.payrollPaid) {
@@ -538,19 +659,12 @@ function mapProject(row: Record<string, unknown>): Project {
 function mapExpense(row: Record<string, unknown>, projectName?: string): ExpenseEntry {
   const rawQty = Number(row.quantity ?? 0);
   const rawUnitPrice = Number(row.unit_price ?? 0);
+  const parsedCategory = toCategorySlug(String(row.category ?? "")) || COST_CATEGORIES[0]?.value || "operasional";
   return {
     id: String(row.id ?? ""),
     projectId: String(row.project_id ?? ""),
     projectName,
-    category:
-      row.category === "material" ||
-      row.category === "upah_kasbon_tukang" ||
-      row.category === "upah_staff_pelaksana" ||
-      row.category === "upah_tim_spesialis" ||
-      row.category === "alat" ||
-      row.category === "operasional"
-        ? row.category
-        : "operasional",
+    category: parsedCategory,
     specialistType: typeof row.specialist_type === "string" ? row.specialist_type : null,
     requesterName: typeof row.requester_name === "string" ? row.requester_name : null,
     description: typeof row.description === "string" ? row.description : null,
@@ -569,6 +683,7 @@ function mapAttendance(row: Record<string, unknown>, projectName?: string): Atte
   const rawWage = Number(row.daily_wage ?? 0);
   const rawKasbon = Number(row.kasbon_amount ?? 0);
   const rawReimburse = Number(row.reimburse_amount ?? 0);
+  const workDays = resolveWorkDays(row.work_days);
   const dailyWage = Number.isFinite(rawWage) ? rawWage : 0;
   const kasbonAmount = Number.isFinite(rawKasbon) ? rawKasbon : 0;
   const reimburseAmount = Number.isFinite(rawReimburse) ? rawReimburse : 0;
@@ -576,7 +691,15 @@ function mapAttendance(row: Record<string, unknown>, projectName?: string): Atte
     row.reimburse_type === "material" || row.reimburse_type === "kekurangan_dana"
       ? row.reimburse_type
       : null;
-  const netPay = Math.max(dailyWage - kasbonAmount + reimburseAmount, 0);
+  const status: AttendanceRecord["status"] =
+    row.status === "hadir" ||
+    row.status === "izin" ||
+    row.status === "sakit" ||
+    row.status === "alpa"
+      ? row.status
+      : "hadir";
+  const totalWage = status === "hadir" ? dailyWage * workDays : 0;
+  const netPay = Math.max(totalWage - kasbonAmount + reimburseAmount, 0);
 
   return {
     id: String(row.id ?? ""),
@@ -588,13 +711,8 @@ function mapAttendance(row: Record<string, unknown>, projectName?: string): Atte
       : "tukang",
     specialistTeamName:
       typeof row.specialist_team_name === "string" ? row.specialist_team_name : null,
-    status:
-      row.status === "hadir" ||
-      row.status === "izin" ||
-      row.status === "sakit" ||
-      row.status === "alpa"
-        ? row.status
-        : "hadir",
+    status,
+    workDays,
     dailyWage,
     kasbonAmount,
     reimburseType,
@@ -637,7 +755,82 @@ export async function getProjects(): Promise<Project[]> {
     return data.map((row) => mapProject(row));
   }
 
+  if (activeDataSource === "firebase") {
+    const rows = await getFirebaseCollectionRows("projects");
+    return rows
+      .map((row) => mapProject(row))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
   return sampleProjects;
+}
+
+export async function getExpenseCategories(): Promise<ExpenseCategoryOption[]> {
+  if (activeDataSource === "excel") {
+    const db = readExcelDatabase();
+    return mergeExpenseCategoryOptions(db.project_expenses.map((row) => row.category));
+  }
+
+  if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return mergeExpenseCategoryOptions();
+    }
+
+    const [{ data: categoryRows, error: categoryError }, { data: expenseRows }] = await Promise.all([
+      supabase.from("expense_categories").select("slug, label").order("created_at", { ascending: true }),
+      supabase.from("project_expenses").select("category"),
+    ]);
+
+    const registeredOptions =
+      !categoryError && Array.isArray(categoryRows)
+        ? categoryRows
+            .map((row) => {
+              const value = toCategorySlug(String(row.slug ?? ""));
+              if (!value) {
+                return null;
+              }
+              const labelRaw = typeof row.label === "string" ? row.label.trim() : "";
+              return {
+                value,
+                label: labelRaw || getCostCategoryLabel(value),
+              };
+            })
+            .filter((row): row is ExpenseCategoryOption => Boolean(row))
+        : [];
+    const expenseValues = (expenseRows ?? [])
+      .map((row) => toCategorySlug(String(row.category ?? "")))
+      .filter((value) => value.length > 0);
+
+    return mergeExpenseCategoryOptions(registeredOptions, expenseValues);
+  }
+
+  if (activeDataSource === "firebase") {
+    const [categoryRows, expenseRows] = await Promise.all([
+      getFirebaseCollectionRows("expense_categories"),
+      getFirebaseCollectionRows("project_expenses"),
+    ]);
+    const registeredOptions = categoryRows
+      .map((row) => {
+        const value = toCategorySlug(String(row.slug ?? row.value ?? ""));
+        if (!value) {
+          return null;
+        }
+        const labelRaw = typeof row.label === "string" ? row.label.trim() : "";
+        return {
+          value,
+          label: labelRaw || getCostCategoryLabel(value),
+        };
+      })
+      .filter((row): row is ExpenseCategoryOption => Boolean(row));
+    const expenseValues = expenseRows
+      .map((row) => toCategorySlug(String(row.category ?? "")))
+      .filter((value) => value.length > 0);
+
+    return mergeExpenseCategoryOptions(registeredOptions, expenseValues);
+  }
+
+  return mergeExpenseCategoryOptions(sampleExpenses.map((item) => item.category));
 }
 
 export async function getProjectById(projectId: string): Promise<Project | null> {
@@ -673,7 +866,7 @@ export async function getExpenseById(expenseId: string): Promise<ExpenseEntry | 
     const { data, error } = await supabase
       .from("project_expenses")
       .select(
-        "id, project_id, category, description, recipient_name, amount, expense_date, created_at, projects(name)",
+        "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at, projects(name)",
       )
       .eq("id", expenseId)
       .maybeSingle();
@@ -682,6 +875,21 @@ export async function getExpenseById(expenseId: string): Promise<ExpenseEntry | 
     }
 
     return mapExpense(data, resolveJoinName(data.projects));
+  }
+
+  if (activeDataSource === "firebase") {
+    const row = await getFirebaseDocRow("project_expenses", expenseId);
+    if (!row) {
+      return null;
+    }
+
+    const projectId = typeof row.project_id === "string" ? row.project_id : "";
+    const projectRow = projectId ? await getFirebaseDocRow("projects", projectId) : null;
+    const projectName = projectRow?.name;
+    return mapExpense(
+      row,
+      typeof projectName === "string" ? projectName : undefined,
+    );
   }
 
   return sampleExpenses.find((item) => item.id === expenseId) ?? null;
@@ -711,7 +919,7 @@ export async function getAttendanceById(attendanceId: string): Promise<Attendanc
     const { data, error } = await supabase
       .from("attendance_records")
       .select(
-        "id, project_id, worker_name, status, daily_wage, kasbon_amount, attendance_date, notes, created_at, projects(name)",
+        "id, project_id, worker_name, team_type, specialist_team_name, status, work_days, daily_wage, kasbon_amount, reimburse_type, reimburse_amount, attendance_date, notes, created_at, projects(name)",
       )
       .eq("id", attendanceId)
       .maybeSingle();
@@ -720,6 +928,21 @@ export async function getAttendanceById(attendanceId: string): Promise<Attendanc
     }
 
     return mapAttendance(data, resolveJoinName(data.projects));
+  }
+
+  if (activeDataSource === "firebase") {
+    const row = await getFirebaseDocRow("attendance_records", attendanceId);
+    if (!row) {
+      return null;
+    }
+
+    const projectId = typeof row.project_id === "string" ? row.project_id : "";
+    const projectRow = projectId ? await getFirebaseDocRow("projects", projectId) : null;
+    const projectName = projectRow?.name;
+    return mapAttendance(
+      row,
+      typeof projectName === "string" ? projectName : undefined,
+    );
   }
 
   return sampleAttendance.find((item) => item.id === attendanceId) ?? null;
@@ -742,11 +965,12 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
       .filter((row) => row.project_id === projectId)
       .map((row) => mapExpense(row, project.name))
       .sort((a, b) => b.expenseDate.localeCompare(a.expenseDate));
+    const categoryOptions = mergeExpenseCategoryOptions(db.project_expenses.map((row) => row.category));
 
     return {
       project,
       expenses,
-      categoryTotals: buildCategoryTotals(expenses),
+      categoryTotals: buildCategoryTotals(expenses, categoryOptions),
     };
   }
 
@@ -766,7 +990,7 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
         supabase
           .from("project_expenses")
           .select(
-            "id, project_id, category, description, recipient_name, amount, expense_date, created_at",
+            "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at",
           )
           .eq("project_id", projectId)
           .order("expense_date", { ascending: false }),
@@ -777,18 +1001,41 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
     }
 
     if (expenseError || !expenseRows) {
+      const categoryOptions = await getExpenseCategories();
       return {
         project: mapProject(projectRow),
         expenses: [],
-        categoryTotals: buildCategoryTotals([]),
+        categoryTotals: buildCategoryTotals([], categoryOptions),
       };
     }
 
     const expenses = expenseRows.map((row) => mapExpense(row, String(projectRow.name ?? "")));
+    const categoryOptions = await getExpenseCategories();
     return {
       project: mapProject(projectRow),
       expenses,
-      categoryTotals: buildCategoryTotals(expenses),
+      categoryTotals: buildCategoryTotals(expenses, categoryOptions),
+    };
+  }
+
+  if (activeDataSource === "firebase") {
+    const projectRow = await getFirebaseDocRow("projects", projectId);
+    if (!projectRow) {
+      return null;
+    }
+
+    const project = mapProject(projectRow);
+    const expenseRows = await getFirebaseCollectionRows("project_expenses");
+    const expenses = expenseRows
+      .filter((row) => String(row.project_id ?? "") === projectId)
+      .map((row) => mapExpense(row, project.name))
+      .sort((a, b) => b.expenseDate.localeCompare(a.expenseDate));
+    const categoryOptions = await getExpenseCategories();
+
+    return {
+      project,
+      expenses,
+      categoryTotals: buildCategoryTotals(expenses, categoryOptions),
     };
   }
 
@@ -798,10 +1045,11 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
   }
 
   const expenses = sampleExpenses.filter((item) => item.projectId === projectId);
+  const categoryOptions = mergeExpenseCategoryOptions(sampleExpenses.map((item) => item.category));
   return {
     project,
     expenses,
-    categoryTotals: buildCategoryTotals(expenses),
+    categoryTotals: buildCategoryTotals(expenses, categoryOptions),
   };
 }
 
@@ -879,7 +1127,7 @@ export async function getWageRecap(options?: {
       teamSummaries,
       projectTeamSummaries,
       workerSummaries,
-      totalDailyWage: rows.reduce((sum, row) => sum + row.dailyWage, 0),
+      totalDailyWage: rows.reduce((sum, row) => sum + getAttendanceTotalWage(row), 0),
       totalKasbon: rows.reduce((sum, row) => sum + row.kasbonAmount, 0),
       totalReimburse: rows.reduce((sum, row) => sum + row.reimburseAmount, 0),
       totalNetPay: rows.reduce((sum, row) => sum + row.netPay, 0),
@@ -908,7 +1156,7 @@ export async function getWageRecap(options?: {
     let query = supabase
       .from("attendance_records")
       .select(
-        "id, project_id, worker_name, status, daily_wage, kasbon_amount, attendance_date, notes, created_at, projects(name)",
+        "id, project_id, worker_name, team_type, specialist_team_name, status, work_days, daily_wage, kasbon_amount, reimburse_type, reimburse_amount, attendance_date, notes, created_at, projects(name)",
       )
       .gte("attendance_date", from)
       .lte("attendance_date", to)
@@ -995,7 +1243,84 @@ export async function getWageRecap(options?: {
       teamSummaries,
       projectTeamSummaries,
       workerSummaries,
-      totalDailyWage: rows.reduce((sum, row) => sum + row.dailyWage, 0),
+      totalDailyWage: rows.reduce((sum, row) => sum + getAttendanceTotalWage(row), 0),
+      totalKasbon: rows.reduce((sum, row) => sum + row.kasbonAmount, 0),
+      totalReimburse: rows.reduce((sum, row) => sum + row.reimburseAmount, 0),
+      totalNetPay: rows.reduce((sum, row) => sum + row.netPay, 0),
+    };
+  }
+
+  if (activeDataSource === "firebase") {
+    const [attendanceRowsRaw, payrollResetRowsRaw, projectRowsRaw] = await Promise.all([
+      getFirebaseCollectionRows("attendance_records"),
+      getFirebaseCollectionRows("payroll_resets"),
+      getFirebaseCollectionRows("projects"),
+    ]);
+
+    const projectMap = Object.fromEntries(
+      projectRowsRaw.map((row) => [String(row.id ?? ""), String(row.name ?? "Project")]),
+    );
+    const payrollResets = payrollResetRowsRaw
+      .map((row) => {
+        const teamTypeValue = String(row.team_type ?? "");
+        if (
+          teamTypeValue !== "tukang" &&
+          teamTypeValue !== "laden" &&
+          teamTypeValue !== "spesialis"
+        ) {
+          return null;
+        }
+        return {
+          projectId: String(row.project_id ?? ""),
+          teamType: teamTypeValue as "tukang" | "laden" | "spesialis",
+          specialistTeamName:
+            typeof row.specialist_team_name === "string" ? row.specialist_team_name : null,
+          workerName: typeof row.worker_name === "string" ? row.worker_name : null,
+          paidUntilDate: String(row.paid_until_date ?? ""),
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => Boolean(row));
+
+    let rows = applyPayrollResets(
+      attendanceRowsRaw
+        .map((row) => mapAttendance(row, projectMap[String(row.project_id ?? "")]))
+        .filter((row) => toDateOnly(row.attendanceDate) >= from)
+        .filter((row) => toDateOnly(row.attendanceDate) <= to)
+        .filter((row) => (projectId ? row.projectId === projectId : true))
+        .filter((row) => (teamType ? row.teamType === teamType : true))
+        .filter((row) =>
+          specialistTeamName
+            ? (row.specialistTeamName ?? "").toLowerCase().includes(specialistTeamName)
+            : true,
+        )
+        .filter((row) =>
+          normalizedWorkerNames.length > 0
+            ? normalizedWorkerNames.includes(row.workerName.trim().toLowerCase())
+            : true,
+        ),
+      payrollResets,
+      includePaid,
+    ).sort((a, b) => b.attendanceDate.localeCompare(a.attendanceDate));
+
+    if (typeof limit === "number") {
+      rows = rows.slice(0, limit);
+    }
+
+    const projectSummaries = buildWageSummary(rows);
+    const teamSummaries = buildWageTeamSummary(rows);
+    const projectTeamSummaries = buildWageProjectTeamSummary(rows);
+    const workerSummaries = buildWageWorkerSummary(rows, recapMode);
+
+    return {
+      from,
+      to,
+      recapMode,
+      rows,
+      projectSummaries,
+      teamSummaries,
+      projectTeamSummaries,
+      workerSummaries,
+      totalDailyWage: rows.reduce((sum, row) => sum + getAttendanceTotalWage(row), 0),
       totalKasbon: rows.reduce((sum, row) => sum + row.kasbonAmount, 0),
       totalReimburse: rows.reduce((sum, row) => sum + row.reimburseAmount, 0),
       totalNetPay: rows.reduce((sum, row) => sum + row.netPay, 0),
@@ -1039,7 +1364,7 @@ export async function getWageRecap(options?: {
     teamSummaries,
     projectTeamSummaries,
     workerSummaries,
-    totalDailyWage: rows.reduce((sum, row) => sum + row.dailyWage, 0),
+    totalDailyWage: rows.reduce((sum, row) => sum + getAttendanceTotalWage(row), 0),
     totalKasbon: rows.reduce((sum, row) => sum + row.kasbonAmount, 0),
     totalReimburse: rows.reduce((sum, row) => sum + row.reimburseAmount, 0),
     totalNetPay: rows.reduce((sum, row) => sum + row.netPay, 0),
@@ -1071,7 +1396,10 @@ export async function getDashboardData(): Promise<DashboardData> {
         .filter((item) => item.expenseDate.startsWith(monthKey))
         .reduce((sum, item) => sum + item.amount, 0),
       totalKasbon: attendance.reduce((sum, item) => sum + item.kasbonAmount, 0),
-      categoryTotals: buildCategoryTotals(expenses),
+      categoryTotals: buildCategoryTotals(
+        expenses,
+        mergeExpenseCategoryOptions(db.project_expenses.map((row) => row.category)),
+      ),
       recentExpenses: expenses
         .slice()
         .sort((a, b) => b.expenseDate.localeCompare(a.expenseDate))
@@ -1096,26 +1424,27 @@ export async function getDashboardData(): Promise<DashboardData> {
       };
     }
 
-    const [{ data: projectRows }, { data: expenseRows }, { data: attendanceRows }, { data: recentRows }] =
+    const [{ data: projectRows }, { data: expenseRows }, { data: attendanceRows }, { data: recentRows }, categoryOptions] =
       await Promise.all([
         supabase.from("projects").select("id, name, code, client_name, start_date, status, created_at"),
         supabase
           .from("project_expenses")
           .select(
-            "id, project_id, category, description, recipient_name, amount, expense_date, created_at",
+            "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at",
           ),
         supabase
           .from("attendance_records")
           .select(
-            "id, project_id, worker_name, status, daily_wage, kasbon_amount, attendance_date, notes, created_at",
+            "id, project_id, worker_name, team_type, specialist_team_name, status, work_days, daily_wage, kasbon_amount, reimburse_type, reimburse_amount, attendance_date, notes, created_at",
           ),
         supabase
           .from("project_expenses")
           .select(
-            "id, project_id, category, description, recipient_name, amount, expense_date, created_at, projects(name)",
+            "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at, projects(name)",
           )
           .order("expense_date", { ascending: false })
           .limit(8),
+        getExpenseCategories(),
       ]);
 
     const projectNameMap = Object.fromEntries(
@@ -1138,7 +1467,45 @@ export async function getDashboardData(): Promise<DashboardData> {
         .filter((item) => item.expenseDate.startsWith(monthKey))
         .reduce((sum, item) => sum + item.amount, 0),
       totalKasbon: attendance.reduce((sum, item) => sum + item.kasbonAmount, 0),
-      categoryTotals: buildCategoryTotals(expenses),
+      categoryTotals: buildCategoryTotals(expenses, categoryOptions),
+      recentExpenses,
+      projectExpenseTotals: buildProjectExpenseTotals(expenses),
+      projectCountByClient: buildProjectCountByClient(projects),
+    };
+  }
+
+  if (activeDataSource === "firebase") {
+    const [projectRows, expenseRows, attendanceRows] = await Promise.all([
+      getFirebaseCollectionRows("projects"),
+      getFirebaseCollectionRows("project_expenses"),
+      getFirebaseCollectionRows("attendance_records"),
+    ]);
+
+    const projectNameMap = Object.fromEntries(
+      projectRows.map((row) => [String(row.id ?? ""), String(row.name ?? "Project")]),
+    );
+    const expenses = expenseRows.map((row) =>
+      mapExpense(row, projectNameMap[String(row.project_id ?? "")]),
+    );
+    const attendance = attendanceRows.map((row) => mapAttendance(row));
+    const projects = projectRows.map((row) => mapProject(row));
+    const recentExpenses = expenses
+      .slice()
+      .sort((a, b) => b.expenseDate.localeCompare(a.expenseDate))
+      .slice(0, 8);
+    const monthKey = new Date().toISOString().slice(0, 7);
+
+    return {
+      totalProjects: projects.length,
+      totalExpense: expenses.reduce((sum, item) => sum + item.amount, 0),
+      monthExpense: expenses
+        .filter((item) => item.expenseDate.startsWith(monthKey))
+        .reduce((sum, item) => sum + item.amount, 0),
+      totalKasbon: attendance.reduce((sum, item) => sum + item.kasbonAmount, 0),
+      categoryTotals: buildCategoryTotals(
+        expenses,
+        mergeExpenseCategoryOptions(expenseRows.map((row) => String(row.category ?? ""))),
+      ),
       recentExpenses,
       projectExpenseTotals: buildProjectExpenseTotals(expenses),
       projectCountByClient: buildProjectCountByClient(projects),
@@ -1155,7 +1522,10 @@ export async function getDashboardData(): Promise<DashboardData> {
     totalExpense: sampleExpenses.reduce((sum, item) => sum + item.amount, 0),
     monthExpense,
     totalKasbon: sampleAttendance.reduce((sum, item) => sum + item.kasbonAmount, 0),
-    categoryTotals: buildCategoryTotals(sampleExpenses),
+    categoryTotals: buildCategoryTotals(
+      sampleExpenses,
+      mergeExpenseCategoryOptions(sampleExpenses.map((item) => item.category)),
+    ),
     recentExpenses: sampleExpenses,
     projectExpenseTotals: buildProjectExpenseTotals(sampleExpenses),
     projectCountByClient: buildProjectCountByClient(sampleProjects),

@@ -1,6 +1,6 @@
 import { ProjectIcon, WalletIcon } from "@/components/icons";
 import { StatCard } from "@/components/stat-card";
-import { COST_CATEGORY_LABEL, COST_CATEGORY_STYLE } from "@/lib/constants";
+import { getCostCategoryStyle } from "@/lib/constants";
 import { getDashboardData } from "@/lib/data";
 import { formatCurrency } from "@/lib/format";
 import { activeDataSource, getStorageLabel } from "@/lib/storage";
@@ -113,9 +113,9 @@ export default async function DashboardPage() {
                   <tr key={item.category} className="border-t border-slate-100">
                     <td className="py-2">
                       <span
-                        className={`rounded-full px-2 py-1 text-xs font-semibold ${COST_CATEGORY_STYLE[item.category]}`}
+                        className={`rounded-full px-2 py-1 text-xs font-semibold ${getCostCategoryStyle(item.category)}`}
                       >
-                        {COST_CATEGORY_LABEL[item.category]}
+                        {item.label}
                       </span>
                     </td>
                     <td className="py-2 text-right font-semibold text-slate-900">

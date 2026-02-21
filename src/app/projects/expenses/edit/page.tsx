@@ -3,8 +3,8 @@ import { notFound } from "next/navigation";
 import { deleteExpenseAction, updateExpenseAction } from "@/app/actions";
 import { SaveIcon, TrashIcon } from "@/components/icons";
 import { RupiahInput } from "@/components/rupiah-input";
-import { COST_CATEGORIES, SPECIALIST_COST_PRESETS } from "@/lib/constants";
-import { getExpenseById, getProjects } from "@/lib/data";
+import { SPECIALIST_COST_PRESETS } from "@/lib/constants";
+import { getExpenseById, getExpenseCategories, getProjects } from "@/lib/data";
 
 type EditExpensePageProps = {
   searchParams: Promise<{ id?: string }>;
@@ -13,7 +13,11 @@ type EditExpensePageProps = {
 export default async function EditExpensePage({ searchParams }: EditExpensePageProps) {
   const params = await searchParams;
   const expenseId = typeof params.id === "string" ? params.id : "";
-  const [expense, projects] = await Promise.all([getExpenseById(expenseId), getProjects()]);
+  const [expense, projects, expenseCategories] = await Promise.all([
+    getExpenseById(expenseId),
+    getProjects(),
+    getExpenseCategories(),
+  ]);
   if (!expense) {
     notFound();
   }
@@ -52,7 +56,7 @@ export default async function EditExpensePage({ searchParams }: EditExpensePageP
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">Kategori</label>
               <select name="category" defaultValue={expense.category} required>
-                {COST_CATEGORIES.map((item) => (
+                {expenseCategories.map((item) => (
                   <option key={item.value} value={item.value}>
                     {item.label}
                   </option>
@@ -63,6 +67,15 @@ export default async function EditExpensePage({ searchParams }: EditExpensePageP
               <label className="mb-1 block text-xs font-medium text-slate-500">Tanggal</label>
               <input type="date" name="expense_date" defaultValue={expense.expenseDate} required />
             </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">
+              Kategori baru (opsional)
+            </label>
+            <input
+              name="category_custom"
+              placeholder="Isi jika ingin mengganti ke kategori baru"
+            />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
@@ -144,7 +157,14 @@ export default async function EditExpensePage({ searchParams }: EditExpensePageP
             <label className="mb-1 block text-xs font-medium text-slate-500">
               Nominal biaya total
             </label>
-            <RupiahInput name="amount" defaultValue={expense.amount} required />
+            <RupiahInput name="amount" defaultValue={Math.abs(expense.amount)} required />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">Mode transaksi</label>
+            <select name="amount_mode" defaultValue={expense.amount < 0 ? "kurangi" : "tambah"}>
+              <option value="tambah">Tambah</option>
+              <option value="kurangi">Kurangi</option>
+            </select>
           </div>
           <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600">
             <span className="btn-icon icon-float-soft bg-white/20 text-white">

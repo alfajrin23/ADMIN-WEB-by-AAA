@@ -86,9 +86,21 @@ export default async function EditAttendancePage({ searchParams }: EditAttendanc
             </div>
           </div>
 
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">Tanggal</label>
-            <input type="date" name="attendance_date" defaultValue={attendance.attendanceDate} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">Tanggal</label>
+              <input type="date" name="attendance_date" defaultValue={attendance.attendanceDate} />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">Hari kerja</label>
+              <input
+                type="number"
+                min={1}
+                max={31}
+                name="work_days"
+                defaultValue={attendance.workDays}
+              />
+            </div>
           </div>
 
           <div>

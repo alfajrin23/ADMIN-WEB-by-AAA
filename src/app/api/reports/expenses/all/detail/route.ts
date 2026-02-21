@@ -2,30 +2,13 @@ import { Buffer } from "node:buffer";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { getProjectDetail, getProjects } from "@/lib/data";
 
-type DetailedExpenseRow = {
-  requesterName: string;
-  description: string;
-  expenseDate: string;
-  quantity: number;
-  unitLabel: string;
-  usageInfo: string;
-  unitPrice: number;
-  material: number;
-  alat: number;
-  upah: number;
-  ops: number;
-  total: number;
-};
-
 function formatCurrency(value: number) {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
+  return `Rp ${new Intl.NumberFormat("id-ID", {
     maximumFractionDigits: 0,
-  }).format(value);
+  }).format(value)}`;
 }
 
-function formatDateCell(value: string) {
+function formatDetailDate(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return value.slice(0, 10);
@@ -50,10 +33,6 @@ function formatDateCell(value: string) {
   return `${day}-${month}-${year}`;
 }
 
-function getMonthKey(value: string) {
-  return value.slice(0, 7);
-}
-
 function formatMonthLabel(value: string) {
   const [yearText, monthText] = value.split("-");
   const monthNumber = Number(monthText);
@@ -75,11 +54,10 @@ function formatMonthLabel(value: string) {
     "NOVEMBER",
     "DESEMBER",
   ];
-  const monthName = months[monthNumber - 1] ?? "BULAN";
-  return `${monthName} ${year}`;
+  return `${months[monthNumber - 1] ?? "BULAN"} ${year}`;
 }
 
-function splitCategoryCost(category: string, amount: number) {
+function splitByCategory(category: string, amount: number) {
   if (category === "material") {
     return { material: amount, alat: 0, upah: 0, ops: 0 };
   }
@@ -96,10 +74,12 @@ function splitCategoryCost(category: string, amount: number) {
   return { material: 0, alat: 0, upah: 0, ops: amount };
 }
 
-type PDFPageLike = Awaited<ReturnType<PDFDocument["addPage"]>>;
-type PDFFontLike = Awaited<ReturnType<PDFDocument["embedFont"]>>;
-
-function fitText(text: string, font: PDFFontLike, size: number, maxWidth: number) {
+function fitText(
+  text: string,
+  font: Awaited<ReturnType<PDFDocument["embedFont"]>>,
+  size: number,
+  maxWidth: number,
+) {
   if (font.widthOfTextAtSize(text, size) <= maxWidth) {
     return text;
   }
@@ -115,64 +95,41 @@ function fitText(text: string, font: PDFFontLike, size: number, maxWidth: number
   return suffix;
 }
 
-function drawCell(params: {
-  page: PDFPageLike;
-  text: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  font: PDFFontLike;
-  size?: number;
-  fill?: [number, number, number];
-  align?: "left" | "center" | "right";
-}) {
-  const size = params.size ?? 7.2;
-  if (params.fill) {
-    params.page.drawRectangle({
-      x: params.x,
-      y: params.y - params.h,
-      width: params.w,
-      height: params.h,
-      color: rgb(params.fill[0], params.fill[1], params.fill[2]),
-      borderColor: rgb(0.2, 0.2, 0.2),
-      borderWidth: 0.7,
-    });
-  } else {
-    params.page.drawRectangle({
-      x: params.x,
-      y: params.y - params.h,
-      width: params.w,
-      height: params.h,
-      borderColor: rgb(0.2, 0.2, 0.2),
-      borderWidth: 0.7,
-    });
-  }
+type ExpenseRow = {
+  expenseDate: string;
+  requesterName: string;
+  description: string;
+  quantity: number;
+  unitLabel: string;
+  usageInfo: string;
+  unitPrice: number;
+  amount: number;
+  category: string;
+};
 
-  if (!params.text) {
-    return;
-  }
+function toFileSlug(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+}
 
-  const fittedText = fitText(params.text, params.font, size, params.w - 6);
-  const textWidth = params.font.widthOfTextAtSize(fittedText, size);
-  let textX = params.x + 3;
-  if (params.align === "center") {
-    textX = params.x + (params.w - textWidth) / 2;
-  } else if (params.align === "right") {
-    textX = params.x + params.w - textWidth - 3;
+function resolveFilePrefix(projectNames: string[]) {
+  const normalized = projectNames.map((item) => toFileSlug(item)).filter((item) => item.length > 0);
+  if (normalized.length === 0) {
+    return "semua-project";
   }
-
-  params.page.drawText(fittedText, {
-    x: textX,
-    y: params.y - params.h + (params.h - size) / 2 + 1,
-    size,
-    font: params.font,
-    color: rgb(0.08, 0.1, 0.12),
-  });
+  if (normalized.length === 1) {
+    return normalized[0];
+  }
+  return `${normalized[0]}-${normalized.length - 1}-project-lain`;
 }
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
+  const isPreview = searchParams.get("preview") === "1";
   const selectedOnly = searchParams.get("selected_only") === "1";
   const requestedProjectIds = Array.from(
     new Set(
@@ -183,7 +140,7 @@ export async function GET(request: Request) {
     ),
   );
   if (selectedOnly && requestedProjectIds.length === 0) {
-    return new Response("Pilih minimal satu project untuk PDF rincian.", { status: 400 });
+    return new Response("Pilih minimal satu project untuk PDF rincian biaya.", { status: 400 });
   }
 
   const allProjects = await getProjects();
@@ -196,140 +153,229 @@ export async function GET(request: Request) {
   }
 
   const details = await Promise.all(selectedProjects.map((project) => getProjectDetail(project.id)));
-  const rowsByProjectId = new Map<string, DetailedExpenseRow[]>();
-
+  const rowsByProject = new Map<string, ExpenseRow[]>();
   for (const detail of details) {
     if (!detail) {
       continue;
     }
 
-    const rows: DetailedExpenseRow[] = detail.expenses
-      .map((expense) => {
-        const split = splitCategoryCost(expense.category, expense.amount);
-        return {
-          requesterName: expense.requesterName ?? "-",
-          description: expense.description ?? "-",
-          expenseDate: expense.expenseDate,
-          quantity: expense.quantity > 0 ? expense.quantity : 0,
-          unitLabel: expense.unitLabel ?? "-",
-          usageInfo: expense.usageInfo ?? "-",
-          unitPrice: expense.unitPrice > 0 ? expense.unitPrice : 0,
-          material: split.material,
-          alat: split.alat,
-          upah: split.upah,
-          ops: split.ops,
-          total: expense.amount,
-        };
-      })
+    const rows = detail.expenses
+      .map((expense) => ({
+        expenseDate: expense.expenseDate.slice(0, 10),
+        requesterName: expense.requesterName ?? "",
+        description: expense.description ?? "",
+        quantity: expense.quantity,
+        unitLabel: expense.unitLabel ?? "",
+        usageInfo: expense.usageInfo ?? "",
+        unitPrice: expense.unitPrice,
+        amount: expense.amount,
+        category: expense.category,
+      }))
       .sort((a, b) => {
         if (a.expenseDate !== b.expenseDate) {
           return a.expenseDate.localeCompare(b.expenseDate);
         }
         return a.requesterName.localeCompare(b.requesterName);
       });
-
-    rowsByProjectId.set(detail.project.id, rows);
+    rowsByProject.set(detail.project.id, rows);
   }
 
-  const hasAnyRows = Array.from(rowsByProjectId.values()).some((rows) => rows.length > 0);
+  const hasAnyRows = Array.from(rowsByProject.values()).some((rows) => rows.length > 0);
   if (!hasAnyRows) {
     return new Response("Belum ada data biaya project.", { status: 404 });
   }
+  const reportProjectNames = selectedProjects
+    .filter((project) => (rowsByProject.get(project.id) ?? []).length > 0)
+    .map((project) => project.name);
 
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const boldFont = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const margin = 20;
   const pageSize: [number, number] = [1191, 842];
-  const margin = 24;
-  const rowHeight = 18;
-  const columns = [24, 94, 58, 150, 30, 36, 170, 72, 80, 68, 80, 74, 88];
-  const xAt = (index: number) => margin + columns.slice(0, index).reduce((sum, col) => sum + col, 0);
-  const widthUntil = (start: number, end: number) =>
-    columns.slice(start, end + 1).reduce((sum, width) => sum + width, 0);
+  const cols = [26, 100, 66, 166, 42, 48, 120, 76, 88, 84, 98, 86, 111];
+  const xAt = (index: number) => margin + cols.slice(0, index).reduce((sum, width) => sum + width, 0);
+  const headerTop = 24;
+  const headerBottom = 20;
+  const rowHeight = 19;
+  const bodySize = 7.2;
+
+  const colorHeader = [0.9, 0.9, 0.9] as const;
+  const colorMaterial = [0.91, 0.86, 0.69] as const;
+  const colorAlat = [0.86, 0.72, 0.86] as const;
+  const colorUpah = [0.79, 0.79, 0.81] as const;
+  const colorOps = [0.57, 0.76, 0.88] as const;
+  const colorTotal = [1, 0.95, 0.2] as const;
 
   let page = pdf.addPage(pageSize);
   let y = page.getHeight() - margin;
-  let currentProjectTitle = "";
+  let currentProjectName = "";
+
+  const drawRect = (x: number, topY: number, width: number, height: number, fill?: readonly [number, number, number]) => {
+    page.drawRectangle({
+      x,
+      y: topY - height,
+      width,
+      height,
+      borderColor: rgb(0.23, 0.23, 0.23),
+      borderWidth: 0.7,
+      color: fill ? rgb(fill[0], fill[1], fill[2]) : undefined,
+    });
+  };
+
+  const drawCellText = (params: {
+    text: string;
+    x: number;
+    topY: number;
+    width: number;
+    height: number;
+    align?: "left" | "center" | "right";
+    boldText?: boolean;
+    size?: number;
+  }) => {
+    const lines = params.text.split("\n");
+    const drawFont = params.boldText ? bold : font;
+    const size = params.size ?? bodySize;
+    const lineGap = 1.5;
+    const textHeight = lines.length * size + Math.max(0, lines.length - 1) * lineGap;
+    let lineY = params.topY - (params.height - textHeight) / 2 - size;
+
+    for (const lineRaw of lines) {
+      const line = fitText(lineRaw, drawFont, size, params.width - 6);
+      const lineWidth = drawFont.widthOfTextAtSize(line, size);
+      let textX = params.x + 3;
+      if (params.align === "center") {
+        textX = params.x + (params.width - lineWidth) / 2;
+      } else if (params.align === "right") {
+        textX = params.x + params.width - lineWidth - 3;
+      }
+      page.drawText(line, {
+        x: textX,
+        y: lineY,
+        size,
+        font: drawFont,
+        color: rgb(0.08, 0.1, 0.12),
+      });
+      lineY -= size + lineGap;
+    }
+  };
 
   const drawHeader = (projectName: string) => {
-    currentProjectTitle = projectName;
-    const title = `RINCIAN REKAP BIAYA PROJECT ${projectName.toUpperCase()}`;
-    const titleSize = 16;
-    const titleWidth = boldFont.widthOfTextAtSize(title, titleSize);
+    currentProjectName = projectName;
+    const title = `PROJECT KMP CIANJUR DS ${projectName.toUpperCase()}`;
+    const titleSize = 22;
+    const titleWidth = bold.widthOfTextAtSize(title, titleSize);
     page.drawText(title, {
       x: (page.getWidth() - titleWidth) / 2,
       y,
       size: titleSize,
-      font: boldFont,
-      color: rgb(0.1, 0.12, 0.15),
+      font: bold,
+      color: rgb(0.08, 0.1, 0.12),
     });
-    y -= 22;
+    y -= 26;
 
     page.drawText(`Dicetak ${new Date().toLocaleString("id-ID")}`, {
       x: margin,
       y,
       size: 8.5,
       font,
-      color: rgb(0.32, 0.36, 0.4),
+      color: rgb(0.3, 0.34, 0.38),
     });
-    y -= 14;
+    y -= 12;
 
-    const headers = [
-      "NO",
-      "PENGAJUAN",
-      "TGL",
-      "KETERANGAN",
-      "QTY",
-      "KET",
-      "INFORMASI PENGGUNAAN",
-      "HARGA",
-      "MATERIAL",
-      "ALAT",
-      "UPAH/KASBON",
-      "OPS",
-      "TOTAL",
+    const mergedTwoRows = [0, 1, 2, 3, 12];
+    const topConfig: Array<{
+      start: number;
+      end: number;
+      text: string;
+      fill?: readonly [number, number, number];
+    }> = [
+      { start: 0, end: 0, text: "NO", fill: colorHeader },
+      { start: 1, end: 1, text: "NAMA\nPENGAJUAN", fill: colorHeader },
+      { start: 2, end: 2, text: "TANGGAL", fill: colorHeader },
+      { start: 3, end: 3, text: "KETERANGAN", fill: colorHeader },
+      { start: 4, end: 7, text: "RINCIAN COST", fill: colorHeader },
+      { start: 8, end: 8, text: "COST\nMATERIAL", fill: colorMaterial },
+      { start: 9, end: 9, text: "ALAT", fill: colorAlat },
+      { start: 10, end: 10, text: "COST\nUPAH/KASBON", fill: colorUpah },
+      { start: 11, end: 11, text: "COST OPS", fill: colorOps },
+      { start: 12, end: 12, text: "PENGELUARAN\nPER MINGGU", fill: colorHeader },
     ];
-    headers.forEach((text, index) => {
-      const fill: [number, number, number] =
-        index === 8
-          ? [0.9, 0.86, 0.72]
-          : index === 9
-            ? [0.84, 0.71, 0.85]
-            : index === 10
-              ? [0.77, 0.77, 0.77]
-              : index === 11
-                ? [0.56, 0.76, 0.87]
-                : [0.9, 0.9, 0.9];
-      drawCell({
-        page,
-        text,
-        x: xAt(index),
-        y,
-        w: columns[index],
-        h: rowHeight,
-        font: boldFont,
-        size: 7,
+
+    for (const item of topConfig) {
+      const x = xAt(item.start);
+      const width = cols.slice(item.start, item.end + 1).reduce((sum, col) => sum + col, 0);
+      const height = mergedTwoRows.includes(item.start) ? headerTop + headerBottom : headerTop;
+      drawRect(x, y, width, height, item.fill);
+      drawCellText({
+        text: item.text,
+        x,
+        topY: y,
+        width,
+        height,
         align: "center",
-        fill,
+        boldText: true,
+        size: 8.4,
       });
-    });
-    y -= rowHeight;
+    }
+
+    const bottomHeaders = [
+      { col: 4, text: "QTY", fill: colorHeader },
+      { col: 5, text: "KET", fill: colorHeader },
+      { col: 6, text: "INFORMASI\nPENGGUNAAN", fill: colorHeader },
+      { col: 7, text: "HARGA", fill: colorHeader },
+      { col: 8, text: "COST", fill: colorMaterial },
+      { col: 9, text: "COST", fill: colorAlat },
+      { col: 10, text: "COST", fill: colorUpah },
+      { col: 11, text: "COST", fill: colorOps },
+    ];
+    for (const item of bottomHeaders) {
+      const x = xAt(item.col);
+      drawRect(x, y - headerTop, cols[item.col], headerBottom, item.fill);
+      drawCellText({
+        text: item.text,
+        x,
+        topY: y - headerTop,
+        width: cols[item.col],
+        height: headerBottom,
+        align: "center",
+        boldText: true,
+        size: 8.2,
+      });
+    }
+
+    y -= headerTop + headerBottom;
   };
 
-  const ensureSpace = (neededHeight: number) => {
-    if (y - neededHeight < margin + 12) {
+  const ensureSpace = (height: number) => {
+    if (y - height < margin + 12) {
       page = pdf.addPage(pageSize);
       y = page.getHeight() - margin;
-      drawHeader(currentProjectTitle);
+      drawHeader(currentProjectName);
     }
   };
 
-  const grandTotals = { material: 0, alat: 0, upah: 0, ops: 0, total: 0 };
-  let renderedProjects = 0;
+  const drawBodyRow = (values: Array<string>, fills?: Partial<Record<number, readonly [number, number, number]>>, boldText = false) => {
+    for (let col = 0; col < cols.length; col += 1) {
+      const x = xAt(col);
+      drawRect(x, y, cols[col], rowHeight, fills?.[col]);
+      drawCellText({
+        text: values[col] ?? "",
+        x,
+        topY: y,
+        width: cols[col],
+        height: rowHeight,
+        align: col <= 2 ? "center" : col >= 7 ? "right" : "left",
+        boldText,
+      });
+    }
+    y -= rowHeight;
+  };
 
+  let renderedProjects = 0;
   for (const project of selectedProjects) {
-    const projectRows = rowsByProjectId.get(project.id) ?? [];
-    if (projectRows.length === 0) {
+    const rows = rowsByProject.get(project.id) ?? [];
+    if (rows.length === 0) {
       continue;
     }
 
@@ -340,366 +386,95 @@ export async function GET(request: Request) {
     drawHeader(project.name);
     renderedProjects += 1;
 
-    const groupedByMonth = new Map<string, DetailedExpenseRow[]>();
-    for (const row of projectRows) {
-      const key = getMonthKey(row.expenseDate);
-      if (!groupedByMonth.has(key)) {
-        groupedByMonth.set(key, []);
+    const groupedByMonth = new Map<string, ExpenseRow[]>();
+    for (const row of rows) {
+      const monthKey = row.expenseDate.slice(0, 7);
+      if (!groupedByMonth.has(monthKey)) {
+        groupedByMonth.set(monthKey, []);
       }
-      groupedByMonth.get(key)?.push(row);
+      groupedByMonth.get(monthKey)?.push(row);
     }
 
-    const projectTotals = { material: 0, alat: 0, upah: 0, ops: 0, total: 0 };
     let rowNo = 1;
-
     for (const [monthKey, monthRows] of groupedByMonth.entries()) {
       const monthTotals = { material: 0, alat: 0, upah: 0, ops: 0, total: 0 };
+
       for (const row of monthRows) {
-        ensureSpace(rowHeight + 2);
-        monthTotals.material += row.material;
-        monthTotals.alat += row.alat;
-        monthTotals.upah += row.upah;
-        monthTotals.ops += row.ops;
-        monthTotals.total += row.total;
-
-        projectTotals.material += row.material;
-        projectTotals.alat += row.alat;
-        projectTotals.upah += row.upah;
-        projectTotals.ops += row.ops;
-        projectTotals.total += row.total;
-
-        grandTotals.material += row.material;
-        grandTotals.alat += row.alat;
-        grandTotals.upah += row.upah;
-        grandTotals.ops += row.ops;
-        grandTotals.total += row.total;
+        ensureSpace(rowHeight);
+        const split = splitByCategory(row.category, row.amount);
+        monthTotals.material += split.material;
+        monthTotals.alat += split.alat;
+        monthTotals.upah += split.upah;
+        monthTotals.ops += split.ops;
+        monthTotals.total += row.amount;
 
         const values = [
           String(rowNo),
           row.requesterName,
-          formatDateCell(row.expenseDate),
+          formatDetailDate(row.expenseDate),
           row.description,
           row.quantity > 0 ? String(row.quantity) : "",
           row.unitLabel,
           row.usageInfo,
-          row.unitPrice > 0 ? formatCurrency(row.unitPrice) : "-",
-          row.material > 0 ? formatCurrency(row.material) : "-",
-          row.alat > 0 ? formatCurrency(row.alat) : "-",
-          row.upah > 0 ? formatCurrency(row.upah) : "-",
-          row.ops > 0 ? formatCurrency(row.ops) : "-",
-          formatCurrency(row.total),
+          row.unitPrice > 0 ? formatCurrency(row.unitPrice) : "",
+          split.material > 0 ? formatCurrency(split.material) : "",
+          split.alat > 0 ? formatCurrency(split.alat) : "",
+          split.upah > 0 ? formatCurrency(split.upah) : "",
+          split.ops > 0 ? formatCurrency(split.ops) : "",
+          row.amount > 0 ? formatCurrency(row.amount) : "",
         ];
-
-        values.forEach((value, index) => {
-          const align =
-            index === 0 || index === 2
-              ? "center"
-              : index >= 4 && index !== 5 && index !== 6
-                ? "right"
-                : "left";
-          drawCell({
-            page,
-            text: value,
-            x: xAt(index),
-            y,
-            w: columns[index],
-            h: rowHeight,
-            font,
-            size: 7.2,
-            align,
-          });
+        drawBodyRow(values, {
+          8: colorMaterial,
+          9: colorAlat,
+          10: colorUpah,
+          11: colorOps,
         });
-
-        y -= rowHeight;
         rowNo += 1;
       }
 
-      ensureSpace(rowHeight + 2);
-      drawCell({
-        page,
-        text: `TOTAL PENGELUARAN COST ${formatMonthLabel(monthKey)}`,
+      ensureSpace(rowHeight);
+      const subtotalLabel = `TOTAL PENGELUARAN COST ${formatMonthLabel(monthKey)}`;
+      const leftWidth = cols.slice(0, 8).reduce((sum, width) => sum + width, 0);
+      drawRect(xAt(0), y, leftWidth, rowHeight, colorTotal);
+      drawCellText({
+        text: subtotalLabel,
         x: xAt(0),
-        y,
-        w: widthUntil(0, 7),
-        h: rowHeight + 2,
-        font: boldFont,
-        size: 7.4,
+        topY: y,
+        width: leftWidth,
+        height: rowHeight,
         align: "left",
-        fill: [1, 0.94, 0.25],
+        boldText: true,
       });
-      drawCell({
-        page,
-        text: monthTotals.material > 0 ? formatCurrency(monthTotals.material) : "Rp-",
-        x: xAt(8),
-        y,
-        w: columns[8],
-        h: rowHeight + 2,
-        font: boldFont,
-        size: 7.2,
-        align: "right",
-        fill: [1, 0.94, 0.25],
+      const subtotalValues = [
+        monthTotals.material,
+        monthTotals.alat,
+        monthTotals.upah,
+        monthTotals.ops,
+        monthTotals.total,
+      ];
+      const subtotalCols = [8, 9, 10, 11, 12];
+      subtotalCols.forEach((col, index) => {
+        drawRect(xAt(col), y, cols[col], rowHeight, colorTotal);
+        drawCellText({
+          text: subtotalValues[index] > 0 ? formatCurrency(subtotalValues[index]) : "-",
+          x: xAt(col),
+          topY: y,
+          width: cols[col],
+          height: rowHeight,
+          align: "right",
+          boldText: true,
+        });
       });
-      drawCell({
-        page,
-        text: monthTotals.alat > 0 ? formatCurrency(monthTotals.alat) : "Rp-",
-        x: xAt(9),
-        y,
-        w: columns[9],
-        h: rowHeight + 2,
-        font: boldFont,
-        size: 7.2,
-        align: "right",
-        fill: [1, 0.94, 0.25],
-      });
-      drawCell({
-        page,
-        text: monthTotals.upah > 0 ? formatCurrency(monthTotals.upah) : "Rp-",
-        x: xAt(10),
-        y,
-        w: columns[10],
-        h: rowHeight + 2,
-        font: boldFont,
-        size: 7.2,
-        align: "right",
-        fill: [1, 0.94, 0.25],
-      });
-      drawCell({
-        page,
-        text: monthTotals.ops > 0 ? formatCurrency(monthTotals.ops) : "Rp-",
-        x: xAt(11),
-        y,
-        w: columns[11],
-        h: rowHeight + 2,
-        font: boldFont,
-        size: 7.2,
-        align: "right",
-        fill: [1, 0.94, 0.25],
-      });
-      drawCell({
-        page,
-        text: monthTotals.total > 0 ? formatCurrency(monthTotals.total) : "Rp-",
-        x: xAt(12),
-        y,
-        w: columns[12],
-        h: rowHeight + 2,
-        font: boldFont,
-        size: 7.2,
-        align: "right",
-        fill: [1, 0.94, 0.25],
-      });
-      y -= rowHeight + 2;
+      y -= rowHeight;
     }
-
-    ensureSpace(rowHeight + 4);
-    drawCell({
-      page,
-      text: `TOTAL KESELURUHAN ${project.name.toUpperCase()}`,
-      x: xAt(0),
-      y,
-      w: widthUntil(0, 7),
-      h: rowHeight + 2,
-      font: boldFont,
-      size: 7.8,
-      align: "left",
-      fill: [0.76, 0.86, 0.93],
-    });
-    drawCell({
-      page,
-      text: projectTotals.material > 0 ? formatCurrency(projectTotals.material) : "Rp-",
-      x: xAt(8),
-      y,
-      w: columns[8],
-      h: rowHeight + 2,
-      font: boldFont,
-      size: 7.2,
-      align: "right",
-      fill: [0.76, 0.86, 0.93],
-    });
-    drawCell({
-      page,
-      text: projectTotals.alat > 0 ? formatCurrency(projectTotals.alat) : "Rp-",
-      x: xAt(9),
-      y,
-      w: columns[9],
-      h: rowHeight + 2,
-      font: boldFont,
-      size: 7.2,
-      align: "right",
-      fill: [0.76, 0.86, 0.93],
-    });
-    drawCell({
-      page,
-      text: projectTotals.upah > 0 ? formatCurrency(projectTotals.upah) : "Rp-",
-      x: xAt(10),
-      y,
-      w: columns[10],
-      h: rowHeight + 2,
-      font: boldFont,
-      size: 7.2,
-      align: "right",
-      fill: [0.76, 0.86, 0.93],
-    });
-    drawCell({
-      page,
-      text: projectTotals.ops > 0 ? formatCurrency(projectTotals.ops) : "Rp-",
-      x: xAt(11),
-      y,
-      w: columns[11],
-      h: rowHeight + 2,
-      font: boldFont,
-      size: 7.2,
-      align: "right",
-      fill: [0.76, 0.86, 0.93],
-    });
-    drawCell({
-      page,
-      text: projectTotals.total > 0 ? formatCurrency(projectTotals.total) : "Rp-",
-      x: xAt(12),
-      y,
-      w: columns[12],
-      h: rowHeight + 2,
-      font: boldFont,
-      size: 7.2,
-      align: "right",
-      fill: [0.76, 0.86, 0.93],
-    });
-  }
-
-  if (renderedProjects > 1) {
-    page = pdf.addPage(pageSize);
-    y = page.getHeight() - margin;
-
-    const title = "RINGKASAN TOTAL SEMUA DESA";
-    const titleWidth = boldFont.widthOfTextAtSize(title, 18);
-    page.drawText(title, {
-      x: (page.getWidth() - titleWidth) / 2,
-      y,
-      size: 18,
-      font: boldFont,
-      color: rgb(0.1, 0.12, 0.15),
-    });
-    y -= 30;
-
-    drawCell({
-      page,
-      text: "COST MATERIAL",
-      x: margin,
-      y,
-      w: 220,
-      h: 24,
-      font: boldFont,
-      fill: [0.9, 0.86, 0.72],
-    });
-    drawCell({
-      page,
-      text: grandTotals.material > 0 ? formatCurrency(grandTotals.material) : "Rp-",
-      x: margin + 220,
-      y,
-      w: 240,
-      h: 24,
-      font: boldFont,
-      align: "right",
-      fill: [0.9, 0.86, 0.72],
-    });
-    y -= 24;
-
-    drawCell({
-      page,
-      text: "COST ALAT",
-      x: margin,
-      y,
-      w: 220,
-      h: 24,
-      font: boldFont,
-      fill: [0.84, 0.71, 0.85],
-    });
-    drawCell({
-      page,
-      text: grandTotals.alat > 0 ? formatCurrency(grandTotals.alat) : "Rp-",
-      x: margin + 220,
-      y,
-      w: 240,
-      h: 24,
-      font: boldFont,
-      align: "right",
-      fill: [0.84, 0.71, 0.85],
-    });
-    y -= 24;
-
-    drawCell({
-      page,
-      text: "COST UPAH/KASBON",
-      x: margin,
-      y,
-      w: 220,
-      h: 24,
-      font: boldFont,
-      fill: [0.77, 0.77, 0.77],
-    });
-    drawCell({
-      page,
-      text: grandTotals.upah > 0 ? formatCurrency(grandTotals.upah) : "Rp-",
-      x: margin + 220,
-      y,
-      w: 240,
-      h: 24,
-      font: boldFont,
-      align: "right",
-      fill: [0.77, 0.77, 0.77],
-    });
-    y -= 24;
-
-    drawCell({
-      page,
-      text: "COST OPS",
-      x: margin,
-      y,
-      w: 220,
-      h: 24,
-      font: boldFont,
-      fill: [0.56, 0.76, 0.87],
-    });
-    drawCell({
-      page,
-      text: grandTotals.ops > 0 ? formatCurrency(grandTotals.ops) : "Rp-",
-      x: margin + 220,
-      y,
-      w: 240,
-      h: 24,
-      font: boldFont,
-      align: "right",
-      fill: [0.56, 0.76, 0.87],
-    });
-    y -= 24;
-
-    drawCell({
-      page,
-      text: "TOTAL KESELURUHAN",
-      x: margin,
-      y,
-      w: 220,
-      h: 24,
-      font: boldFont,
-      fill: [0.76, 0.86, 0.93],
-    });
-    drawCell({
-      page,
-      text: grandTotals.total > 0 ? formatCurrency(grandTotals.total) : "Rp-",
-      x: margin + 220,
-      y,
-      w: 240,
-      h: 24,
-      font: boldFont,
-      align: "right",
-      fill: [0.76, 0.86, 0.93],
-    });
   }
 
   const bytes = await pdf.save();
+  const filePrefix = resolveFilePrefix(reportProjectNames);
   return new Response(Buffer.from(bytes), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": "attachment; filename=\"rincian-rekap-biaya-semua-project.pdf\"",
+      "Content-Disposition": `${isPreview ? "inline" : "attachment"}; filename=\"${filePrefix}-rincian-biaya.pdf\"`,
     },
   });
 }

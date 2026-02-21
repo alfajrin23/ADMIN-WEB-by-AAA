@@ -6,10 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "migrate:firebase": "node scripts/migrate-to-firebase.mjs",
+    "firebase:init": "node scripts/firebase-init-firestore.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.95.3",
+    "firebase-admin": "^13.6.0",
     "next": "16.1.6",
     "pdf-lib": "^1.17.1",
     "react": "19.2.3",

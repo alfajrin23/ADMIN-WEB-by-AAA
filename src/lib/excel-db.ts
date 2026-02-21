@@ -7,6 +7,7 @@ import {
   ATTENDANCE_STATUSES,
   COST_CATEGORIES,
   PROJECT_STATUSES,
+  toCategorySlug,
   WORKER_TEAMS,
 } from "@/lib/constants";
 import { excelDbPath } from "@/lib/storage";
@@ -54,6 +55,7 @@ type AttendanceRow = {
   team_type: WorkerTeam;
   specialist_team_name: string | null;
   status: AttendanceStatus;
+  work_days: number;
   daily_wage: number;
   kasbon_amount: number;
   reimburse_type: ReimburseType | null;
@@ -78,6 +80,50 @@ type ExcelDb = {
   project_expenses: ExpenseRow[];
   attendance_records: AttendanceRow[];
   payroll_resets: PayrollResetRow[];
+};
+
+export type ImportedTemplateWorkbookData = {
+  projects: Array<{
+    id: string;
+    name: string;
+    code: string | null;
+    client_name: string | null;
+    start_date: string | null;
+    status: ProjectStatus;
+  }>;
+  project_expenses: Array<{
+    project_id: string;
+    category: CostCategory;
+    specialist_type: string | null;
+    requester_name: string | null;
+    description: string | null;
+    recipient_name: string | null;
+    quantity: number;
+    unit_label: string | null;
+    usage_info: string | null;
+    unit_price: number;
+    amount: number;
+    expense_date: string;
+  }>;
+};
+
+export type DetailReportWorkbookInput = {
+  projects: Array<{
+    id: string;
+    name: string;
+  }>;
+  project_expenses: Array<{
+    project_id: string;
+    category: CostCategory;
+    requester_name: string | null;
+    description: string | null;
+    quantity: number;
+    unit_label: string | null;
+    usage_info: string | null;
+    unit_price: number;
+    amount: number;
+    expense_date: string;
+  }>;
 };
 
 type DetailColumnMap = {
@@ -111,6 +157,14 @@ const SHEETS: Array<keyof ExcelDb> = [
 function toNumber(value: unknown) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toPositiveInteger(value: unknown, fallback = 1) {
+  const parsed = Math.floor(Number(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
 }
 
 function toStringOrNull(value: unknown) {
@@ -366,12 +420,7 @@ function parseProjects(rawRows: Record<string, unknown>[]): ProjectRow[] {
 
 function parseExpenses(rawRows: Record<string, unknown>[]): ExpenseRow[] {
   return rawRows.map((row) => {
-    const categoryValue = String(row.category);
-    const category: CostCategory = COST_CATEGORIES.some(
-      (item) => item.value === categoryValue,
-    )
-      ? (categoryValue as CostCategory)
-      : "operasional";
+    const category = toCategorySlug(String(row.category ?? "")) || COST_CATEGORIES[0].value;
 
     return {
       id: String(row.id ?? randomUUID()),
@@ -417,6 +466,7 @@ function parseAttendance(rawRows: Record<string, unknown>[]): AttendanceRow[] {
       team_type: teamType,
       specialist_team_name: toStringOrNull(row.specialist_team_name),
       status,
+      work_days: toPositiveInteger(row.work_days, 1),
       daily_wage: toNumber(row.daily_wage),
       kasbon_amount: toNumber(row.kasbon_amount),
       reimburse_type: reimburseType,
@@ -1057,14 +1107,76 @@ function writeWorkbookFile(workbook: XLSX.WorkBook) {
   );
 }
 
-function writeDatabase(data: ExcelDb) {
-  const workbook = XLSX.utils.book_new();
-  const templatePath =
-    process.env.EXCEL_TEMPLATE_PATH?.trim() || path.join(process.cwd(), "data", "admin-web-template.xlsx");
-  const templateWorkbook = fs.existsSync(templatePath)
+function resolveDetailTemplatePath() {
+  const envTemplatePath = process.env.EXCEL_TEMPLATE_PATH?.trim();
+  if (envTemplatePath && fs.existsSync(envTemplatePath)) {
+    return envTemplatePath;
+  }
+
+  const preferredPaths = [
+    path.join(process.cwd(), "data", "admin-web-template.xlsx"),
+    path.join(process.cwd(), "data", "admin-web.xlsx"),
+  ];
+  for (const candidatePath of preferredPaths) {
+    if (fs.existsSync(candidatePath)) {
+      return candidatePath;
+    }
+  }
+
+  return null;
+}
+
+function readDetailTemplateWorkbook() {
+  const templatePath = resolveDetailTemplatePath();
+  return templatePath
     ? XLSX.readFile(templatePath, { cellStyles: true })
     : XLSX.utils.book_new();
+}
 
+function toDetailWorkbookData(input: DetailReportWorkbookInput): ExcelDb {
+  const now = new Date().toISOString();
+  return {
+    projects: input.projects.map((project) => ({
+      id: project.id,
+      name: project.name,
+      code: null,
+      client_name: null,
+      start_date: null,
+      status: "aktif",
+      created_at: now,
+    })),
+    project_expenses: input.project_expenses.map((expense) => ({
+      id: randomUUID(),
+      project_id: expense.project_id,
+      category: expense.category,
+      specialist_type: null,
+      requester_name: expense.requester_name,
+      description: expense.description,
+      recipient_name: null,
+      quantity: expense.quantity,
+      unit_label: expense.unit_label,
+      usage_info: expense.usage_info,
+      unit_price: expense.unit_price,
+      amount: expense.amount,
+      expense_date: expense.expense_date,
+      created_at: now,
+    })),
+    attendance_records: [],
+    payroll_resets: [],
+  };
+}
+
+export function createDetailReportWorkbook(input: DetailReportWorkbookInput) {
+  const workbook = XLSX.utils.book_new();
+  const templateWorkbook = readDetailTemplateWorkbook();
+  const data = toDetailWorkbookData(input);
+  appendProjectDetailSheets(workbook, templateWorkbook, data);
+  return workbook;
+}
+
+function writeDatabase(data: ExcelDb) {
+  const workbook = XLSX.utils.book_new();
+  const templateWorkbook = readDetailTemplateWorkbook();
   appendProjectDetailSheets(workbook, templateWorkbook, data);
 
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(data.projects), "projects");
@@ -1283,6 +1395,7 @@ export function insertExcelAttendance(payload: {
   team_type: WorkerTeam;
   specialist_team_name: string | null;
   status: AttendanceStatus;
+  work_days: number;
   daily_wage: number;
   kasbon_amount: number;
   reimburse_type: ReimburseType | null;
@@ -1298,6 +1411,7 @@ export function insertExcelAttendance(payload: {
     team_type: payload.team_type,
     specialist_team_name: payload.specialist_team_name,
     status: payload.status,
+    work_days: toPositiveInteger(payload.work_days, 1),
     daily_wage: payload.daily_wage,
     kasbon_amount: payload.kasbon_amount,
     reimburse_type: payload.reimburse_type,
@@ -1319,6 +1433,7 @@ export function insertManyExcelAttendance(
     team_type: WorkerTeam;
     specialist_team_name: string | null;
     status: AttendanceStatus;
+    work_days: number;
     daily_wage: number;
     kasbon_amount: number;
     reimburse_type: ReimburseType | null;
@@ -1340,6 +1455,7 @@ export function insertManyExcelAttendance(
     team_type: payload.team_type,
     specialist_team_name: payload.specialist_team_name,
     status: payload.status,
+    work_days: toPositiveInteger(payload.work_days, 1),
     daily_wage: payload.daily_wage,
     kasbon_amount: payload.kasbon_amount,
     reimburse_type: payload.reimburse_type,
@@ -1361,6 +1477,7 @@ export function updateExcelAttendance(payload: {
   team_type: WorkerTeam;
   specialist_team_name: string | null;
   status: AttendanceStatus;
+  work_days: number;
   daily_wage: number;
   kasbon_amount: number;
   reimburse_type: ReimburseType | null;
@@ -1382,6 +1499,7 @@ export function updateExcelAttendance(payload: {
     team_type: payload.team_type,
     specialist_team_name: payload.specialist_team_name,
     status: payload.status,
+    work_days: toPositiveInteger(payload.work_days, 1),
     daily_wage: payload.daily_wage,
     kasbon_amount: payload.kasbon_amount,
     reimburse_type: payload.reimburse_type,
@@ -1446,6 +1564,11 @@ function resolveImportTemplatePath(templatePath?: string) {
     return localTemplatePath;
   }
 
+  const localDatabasePath = path.join(process.cwd(), "data", "admin-web.xlsx");
+  if (fs.existsSync(localDatabasePath)) {
+    return localDatabasePath;
+  }
+
   const downloadsDir = path.join(os.homedir(), "Downloads");
   if (fs.existsSync(downloadsDir)) {
     const preferredNames = [
@@ -1476,9 +1599,74 @@ function resolveImportTemplatePath(templatePath?: string) {
   return null;
 }
 
-function importWorkbookToDatabase(workbook: XLSX.WorkBook) {
+function parseTemplateWorkbookRows(workbook: XLSX.WorkBook) {
   const projects = seedProjectsFromWorkbook(workbook);
   const project_expenses = seedExpensesFromWorkbook(workbook, projects);
+  return {
+    projects,
+    project_expenses,
+  };
+}
+
+function toImportedTemplateData(rows: {
+  projects: ProjectRow[];
+  project_expenses: ExpenseRow[];
+}): ImportedTemplateWorkbookData {
+  return {
+    projects: rows.projects.map((project) => ({
+      id: project.id,
+      name: project.name,
+      code: project.code,
+      client_name: project.client_name,
+      start_date: project.start_date,
+      status: project.status,
+    })),
+    project_expenses: rows.project_expenses.map((expense) => ({
+      project_id: expense.project_id,
+      category: expense.category,
+      specialist_type: expense.specialist_type,
+      requester_name: expense.requester_name,
+      description: expense.description,
+      recipient_name: expense.recipient_name,
+      quantity: expense.quantity,
+      unit_label: expense.unit_label,
+      usage_info: expense.usage_info,
+      unit_price: expense.unit_price,
+      amount: expense.amount,
+      expense_date: expense.expense_date,
+    })),
+  };
+}
+
+export function parseTemplateExcelDataFromBuffer(buffer: Uint8Array) {
+  try {
+    const workbook = XLSX.read(buffer, { type: "array", cellStyles: true });
+    return toImportedTemplateData(parseTemplateWorkbookRows(workbook));
+  } catch (error) {
+    console.error("Baca template Excel (buffer) gagal:", error);
+    return null;
+  }
+}
+
+export function parseTemplateExcelData(templatePath?: string) {
+  const sourcePath = resolveImportTemplatePath(templatePath);
+  if (!sourcePath) {
+    return null;
+  }
+
+  try {
+    const workbook = XLSX.readFile(sourcePath, { cellStyles: true });
+    return toImportedTemplateData(parseTemplateWorkbookRows(workbook));
+  } catch (error) {
+    console.error("Baca template Excel gagal:", error);
+    return null;
+  }
+}
+
+function importWorkbookToDatabase(workbook: XLSX.WorkBook) {
+  const rows = parseTemplateWorkbookRows(workbook);
+  const projects = rows.projects;
+  const project_expenses = rows.project_expenses;
   const attendance_records: AttendanceRow[] = [];
   const payroll_resets: PayrollResetRow[] = [];
 

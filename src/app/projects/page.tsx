@@ -9,29 +9,29 @@ import {
 import {
   CashInIcon,
   CloseIcon,
-  DetailIcon,
   EditIcon,
-  ExcelIcon,
   EyeIcon,
   ImportIcon,
-  PdfIcon,
   PlusIcon,
   SaveIcon,
   TrashIcon,
 } from "@/components/icons";
 import { ExcelDropInput } from "@/components/excel-drop-input";
+import { EnterToNextField } from "@/components/enter-to-next-field";
 import { ProjectAutocomplete } from "@/components/project-autocomplete";
+import { ReportDownloadPreviewButton } from "@/components/report-download-preview-button";
+import { ProjectsSelectionToggle } from "@/components/projects-selection-toggle";
 import { ProjectsSearchInput } from "@/components/projects-search-input";
 import { RupiahInput } from "@/components/rupiah-input";
 import {
   COST_CATEGORIES,
-  COST_CATEGORY_LABEL,
-  COST_CATEGORY_STYLE,
+  getCostCategoryLabel,
+  getCostCategoryStyle,
   PROJECT_STATUSES,
   PROJECT_STATUS_STYLE,
   SPECIALIST_COST_PRESETS,
 } from "@/lib/constants";
-import { getProjectDetail, getProjects } from "@/lib/data";
+import { getExpenseCategories, getProjectDetail, getProjects } from "@/lib/data";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { activeDataSource, getStorageLabel } from "@/lib/storage";
 
@@ -72,8 +72,9 @@ function createProjectsHref(params: {
 
 export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
   const params = await searchParams;
-  const projects = await getProjects();
+  const [projects, expenseCategories] = await Promise.all([getProjects(), getExpenseCategories()]);
   const today = new Date().toISOString().slice(0, 10);
+  const defaultExpenseCategory = expenseCategories[0]?.value ?? COST_CATEGORIES[0].value;
 
   const requestedProjectId =
     typeof params.project === "string" ? params.project : undefined;
@@ -159,14 +160,14 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
       ) : null}
 
       <section className="panel p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="grid gap-4 xl:grid-cols-[1fr_auto]">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Manajemen Project</h2>
             <p className="text-xs text-slate-500">
               Form tambah project dan input biaya sekarang tampil sebagai modal overlay.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap justify-start gap-2 xl:justify-end">
             <Link
               href={openProjectModalHref}
               data-ui-button="true"
@@ -187,55 +188,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
               </span>
               Input Biaya
             </Link>
-            <a
-              href="/api/reports/expenses/all"
-              target="_blank"
-              rel="noopener noreferrer"
-              data-ui-button="true"
-              className="inline-flex items-center gap-2 rounded-xl bg-indigo-700 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-600"
-            >
-              <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
-                <PdfIcon />
-              </span>
-              PDF Rekapan Project
-            </a>
-            <a
-              href="/api/reports/expenses/all/excel"
-              target="_blank"
-              rel="noopener noreferrer"
-              data-ui-button="true"
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600"
-            >
-              <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
-                <ExcelIcon />
-              </span>
-              Excel Rekapan Project
-            </a>
-            <a
-              href="/api/reports/expenses/all/detail"
-              target="_blank"
-              rel="noopener noreferrer"
-              data-ui-button="true"
-              className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-600"
-            >
-              <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
-                <DetailIcon />
-              </span>
-              PDF Rincian Rekapan
-            </a>
-            <a
-              href="/api/reports/expenses/all/detail/excel"
-              target="_blank"
-              rel="noopener noreferrer"
-              data-ui-button="true"
-              className="inline-flex items-center gap-2 rounded-xl bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600"
-            >
-              <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
-                <DetailIcon />
-              </span>
-              Excel Rincian Rekapan
-            </a>
-            {activeDataSource === "excel" ? (
+            {activeDataSource !== "demo" ? (
               <Link
                 href={openImportModalHref}
                 data-ui-button="true"
@@ -244,9 +197,41 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 <span className="btn-icon icon-wiggle-soft bg-emerald-100 text-emerald-700">
                   <ImportIcon />
                 </span>
-                Import File Excel
+                Import Data Excel
               </Link>
             ) : null}
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 xl:col-span-2">
+            <p className="mb-2 text-xs font-semibold text-slate-600">Export Laporan (Preview dulu)</p>
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              <ReportDownloadPreviewButton
+                label="PDF Rekapan Project"
+                iconType="pdf"
+                downloadPath="/api/reports/expenses/all"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-700 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-600"
+              />
+              <ReportDownloadPreviewButton
+                label="Excel Rekapan Project"
+                iconType="excel"
+                downloadPath="/api/reports/expenses/all/excel"
+                previewPath="/api/reports/expenses/all"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600"
+              />
+              <ReportDownloadPreviewButton
+                label="PDF Rincian Biaya"
+                iconType="detail"
+                downloadPath="/api/reports/expenses/all/detail"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-600"
+              />
+              <ReportDownloadPreviewButton
+                label="Excel Rincian Biaya"
+                iconType="excel"
+                downloadPath="/api/reports/expenses/all/detail/excel"
+                previewPath="/api/reports/expenses/all/detail"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600"
+              />
+            </div>
           </div>
         </div>
       </section>
@@ -287,48 +272,46 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
             </p>
           </div>
           <ProjectsSearchInput initialValue={searchText} />
-          <div className="mt-3 flex justify-end">
+          <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
+            <ProjectsSelectionToggle formId="selected-projects-report-form" />
             <form
               id="selected-projects-report-form"
-              action="/api/reports/expenses/all"
-              method="get"
-              target="_blank"
-              className="flex flex-wrap items-center gap-2"
+              className="grid w-full gap-2 sm:grid-cols-2 xl:w-auto xl:grid-cols-4"
             >
-              <input type="hidden" name="selected_only" value="1" />
-              <button className="inline-flex items-center gap-2 rounded-lg bg-indigo-700 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-600">
-                <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
-                  <PdfIcon />
-                </span>
-                PDF Rekapan Terpilih
-              </button>
-              <button
-                formAction="/api/reports/expenses/all/excel"
-                className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600"
-              >
-                <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
-                  <ExcelIcon />
-                </span>
-                Excel Rekapan Terpilih
-              </button>
-              <button
-                formAction="/api/reports/expenses/all/detail"
-                className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-600"
-              >
-                <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
-                  <DetailIcon />
-                </span>
-                PDF Rincian Terpilih
-              </button>
-              <button
-                formAction="/api/reports/expenses/all/detail/excel"
-                className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-600"
-              >
-                <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
-                  <DetailIcon />
-                </span>
-                Excel Rincian Terpilih
-              </button>
+              <ReportDownloadPreviewButton
+                label="PDF Rekapan Terpilih"
+                iconType="pdf"
+                downloadPath="/api/reports/expenses/all"
+                selectedFormId="selected-projects-report-form"
+                selectedOnly
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-700 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-600"
+              />
+              <ReportDownloadPreviewButton
+                label="Excel Rekapan Terpilih"
+                iconType="excel"
+                downloadPath="/api/reports/expenses/all/excel"
+                previewPath="/api/reports/expenses/all"
+                selectedFormId="selected-projects-report-form"
+                selectedOnly
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600"
+              />
+              <ReportDownloadPreviewButton
+                label="PDF Rincian Biaya Terpilih"
+                iconType="detail"
+                downloadPath="/api/reports/expenses/all/detail"
+                selectedFormId="selected-projects-report-form"
+                selectedOnly
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-700 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-600"
+              />
+              <ReportDownloadPreviewButton
+                label="Excel Rincian Biaya Terpilih"
+                iconType="excel"
+                downloadPath="/api/reports/expenses/all/detail/excel"
+                previewPath="/api/reports/expenses/all/detail"
+                selectedFormId="selected-projects-report-form"
+                selectedOnly
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-teal-700 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-600"
+              />
             </form>
           </div>
 
@@ -366,6 +349,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                         name="project"
                         value={project.id}
                         form="selected-projects-report-form"
+                        data-project-selection="true"
                         aria-label={`Pilih ${project.name} untuk laporan`}
                       />
                     </td>
@@ -436,18 +420,12 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
               Rekap {selectedProject?.project.name ?? "Project"}
             </h2>
             {selectedProject ? (
-              <a
-                href={`/api/reports/expenses?project=${selectedProject.project.id}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                data-ui-button="true"
+              <ReportDownloadPreviewButton
+                label="Download PDF Biaya Project"
+                iconType="pdf"
+                downloadPath={`/api/reports/expenses?project=${selectedProject.project.id}`}
                 className="inline-flex items-center gap-2 rounded-lg bg-indigo-700 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-600"
-              >
-                <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
-                  <PdfIcon />
-                </span>
-                Download PDF Biaya Project
-              </a>
+              />
             ) : null}
           </div>
           {!selectedProject ? (
@@ -459,9 +437,9 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                   <div key={item.category} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
                     <p className="text-xs font-medium text-slate-500">
                       <span
-                        className={`rounded-full px-2 py-1 text-[11px] font-semibold ${COST_CATEGORY_STYLE[item.category]}`}
+                        className={`rounded-full px-2 py-1 text-[11px] font-semibold ${getCostCategoryStyle(item.category)}`}
                       >
-                        {COST_CATEGORY_LABEL[item.category]}
+                        {item.label}
                       </span>
                     </p>
                     <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(item.total)}</p>
@@ -489,9 +467,9 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                         <td className="py-2">{item.requesterName ?? "-"}</td>
                         <td className="py-2">
                           <span
-                            className={`rounded-full px-2 py-1 text-xs font-semibold ${COST_CATEGORY_STYLE[item.category]}`}
+                            className={`rounded-full px-2 py-1 text-xs font-semibold ${getCostCategoryStyle(item.category)}`}
                           >
-                            {COST_CATEGORY_LABEL[item.category]}
+                            {getCostCategoryLabel(item.category)}
                           </span>
                           {item.specialistType ? (
                             <p className="mt-1 text-[11px] font-medium text-cyan-700">
@@ -507,8 +485,13 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                           </p>
                         </td>
                         <td className="py-2">{item.recipientName ?? "-"}</td>
-                        <td className="py-2 text-right font-semibold text-slate-900">
-                          {formatCurrency(item.amount)}
+                        <td
+                          className={`py-2 text-right font-semibold ${
+                            item.amount < 0 ? "text-rose-700" : "text-emerald-700"
+                          }`}
+                        >
+                          {item.amount < 0 ? "-" : "+"}
+                          {formatCurrency(Math.abs(item.amount))}
                         </td>
                         <td className="py-2">
                           <div className="flex justify-end gap-3">
@@ -617,6 +600,15 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                   <label className="mb-1 block text-xs font-medium text-slate-500">Tanggal mulai</label>
                   <input type="date" name="start_date" />
                 </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-500">
+                    Kategori tambahan (opsional)
+                  </label>
+                  <input
+                    name="initial_categories"
+                    placeholder="Pisah dengan koma, contoh: transport, akomodasi"
+                  />
+                </div>
                 <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-700">
                   <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
                     <SaveIcon />
@@ -625,13 +617,16 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 </button>
               </form>
             ) : activeModal === "excel-import" ? (
-              activeDataSource !== "excel" ? (
+              activeDataSource === "demo" ? (
                 <p className="mt-4 text-sm text-slate-500">
-                  Import Excel hanya tersedia saat sumber data aktif adalah Excel.
+                  Import Excel tidak tersedia pada mode demo karena tidak ada database aktif.
                 </p>
               ) : (
                 <form action={importExcelTemplateAction} className="mt-4 space-y-4">
                   <input type="hidden" name="return_to" value={closeModalHref} />
+                  <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                    Data hasil import akan masuk ke sumber data aktif: <strong>{getStorageLabel()}</strong>
+                  </p>
                   <ExcelDropInput name="template_file" />
                   <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600">
                     <span className="btn-icon icon-wiggle-soft bg-white/20 text-white">
@@ -644,8 +639,12 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
             ) : projects.length === 0 ? (
               <p className="mt-4 text-sm text-slate-500">Belum ada project. Buat project dulu.</p>
             ) : (
-              <form action={createExpenseAction} className="mt-4 space-y-3">
+              <form id="expense-modal-form" action={createExpenseAction} className="mt-4 space-y-3">
+                <EnterToNextField formId="expense-modal-form" />
                 <input type="hidden" name="return_to" value={closeModalHref} />
+                <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">
+                  Field wajib
+                </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-500">Project</label>
                   <ProjectAutocomplete projects={projects} />
@@ -653,8 +652,8 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
                     <label className="mb-1 block text-xs font-medium text-slate-500">Kategori</label>
-                    <select name="category" defaultValue={COST_CATEGORIES[0].value} required>
-                      {COST_CATEGORIES.map((item) => (
+                    <select name="category" defaultValue={defaultExpenseCategory} required>
+                      {expenseCategories.map((item) => (
                         <option key={item.value} value={item.value}>
                           {item.label}
                         </option>
@@ -673,12 +672,6 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                     </label>
                     <input name="requester_name" required />
                   </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">
-                      Penerima / vendor
-                    </label>
-                    <input name="recipient_name" placeholder="Opsional" />
-                  </div>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-500">Keterangan</label>
@@ -687,6 +680,42 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                     placeholder="Contoh: KAS / MATERIAL / OPERASIONAL"
                     required
                   />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-slate-500">
+                      Mode transaksi
+                    </label>
+                    <select name="amount_mode" defaultValue="tambah">
+                      <option value="tambah">Tambah</option>
+                      <option value="kurangi">Kurangi</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-slate-500">
+                      Nominal biaya total
+                    </label>
+                    <RupiahInput name="amount" required placeholder="Contoh: 1.000.000" />
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700">
+                  Field opsional
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-500">
+                    Kategori baru (opsional)
+                  </label>
+                  <input
+                    name="category_custom"
+                    placeholder="Isi jika ingin menambah kategori baru"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-500">
+                    Penerima / vendor
+                  </label>
+                  <input name="recipient_name" placeholder="Opsional" />
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-500">
@@ -736,9 +765,12 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-500">
-                    Nominal biaya total
+                    Catatan mode
                   </label>
-                  <RupiahInput name="amount" required placeholder="Contoh: 1.000.000" />
+                  <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                    Pilih <strong>Tambah</strong> untuk menambah biaya, pilih <strong>Kurangi</strong>{" "}
+                    untuk pengurangan biaya/correksi.
+                  </p>
                 </div>
                 <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-600">
                   <span className="btn-icon icon-float-soft bg-white/20 text-white">

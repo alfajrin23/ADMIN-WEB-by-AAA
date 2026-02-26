@@ -127,6 +127,18 @@ export type ProjectDetail = {
   categoryTotals: CategoryTotal[];
 };
 
+export type ProjectExpenseSearchResult = {
+  expenseId: string;
+  projectId: string;
+  projectName: string;
+  expenseDate: string;
+  requesterName: string | null;
+  description: string | null;
+  usageInfo: string | null;
+  category: CostCategory;
+  amount: number;
+};
+
 export type DashboardData = {
   totalProjects: number;
   totalExpense: number;
@@ -137,8 +149,10 @@ export type DashboardData = {
   projectExpenseTotals: Array<{
     projectId: string;
     projectName: string;
+    projectStatus: ProjectStatus;
     transactionCount: number;
     totalExpense: number;
+    latestExpenseDate: string;
   }>;
   projectCountByClient: Array<{
     clientName: string;

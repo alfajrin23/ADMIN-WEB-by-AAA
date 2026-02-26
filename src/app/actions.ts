@@ -20,6 +20,7 @@ import {
 import {
   deleteExcelAttendance,
   deleteExcelExpense,
+  deleteManyExcelProjects,
   deleteExcelProject,
   importTemplateExcelDatabase,
   importTemplateExcelDatabaseFromBuffer,
@@ -40,6 +41,17 @@ import { getSupabaseServerClient } from "@/lib/supabase";
 function getString(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" ? value.trim() : "";
+}
+
+function getStringList(formData: FormData, key: string) {
+  return Array.from(
+    new Set(
+      formData
+        .getAll(key)
+        .map((item) => (typeof item === "string" ? item.trim() : ""))
+        .filter((item) => item.length > 0),
+    ),
+  );
 }
 
 function getNumber(formData: FormData, key: string) {
@@ -669,6 +681,57 @@ export async function deleteProjectAction(formData: FormData) {
   }
 }
 
+export async function deleteSelectedProjectsAction(formData: FormData) {
+  const projectIds = getStringList(formData, "project");
+  if (projectIds.length === 0) {
+    return;
+  }
+
+  const returnTo = getReturnTo(formData);
+
+  if (activeDataSource === "excel") {
+    deleteManyExcelProjects(projectIds);
+  } else if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return;
+    }
+
+    await Promise.all([
+      supabase.from("project_expenses").delete().in("project_id", projectIds),
+      supabase.from("attendance_records").delete().in("project_id", projectIds),
+      supabase.from("payroll_resets").delete().in("project_id", projectIds),
+    ]);
+    await supabase.from("projects").delete().in("id", projectIds);
+  } else if (activeDataSource === "firebase") {
+    const firestore = getFirestoreServerClient();
+    if (!firestore) {
+      return;
+    }
+
+    await runFirebaseWriteSafely(async () => {
+      await Promise.all(
+        projectIds.map(async (projectId) => {
+          await Promise.all([
+            deleteFirebaseDocsByField("project_expenses", "project_id", projectId),
+            deleteFirebaseDocsByField("attendance_records", "project_id", projectId),
+            deleteFirebaseDocsByField("payroll_resets", "project_id", projectId),
+          ]);
+          await firestore.collection("projects").doc(projectId).delete();
+        }),
+      );
+    });
+  } else {
+    return;
+  }
+
+  revalidateProjectPages();
+  revalidatePath("/attendance");
+  if (returnTo) {
+    redirect(returnTo);
+  }
+}
+
 function getParsedCategory(formData: FormData) {
   const customCategory = toCategorySlug(getString(formData, "category_custom"));
   if (customCategory) {
@@ -716,15 +779,24 @@ function resolveAmountByMode(formData: FormData, baseAmount: number) {
   return Math.abs(baseAmount);
 }
 
+function getExpenseTargetProjectIds(formData: FormData) {
+  const selectedIds = getStringList(formData, "project_ids");
+  const primaryProjectId = getString(formData, "project_id");
+  if (primaryProjectId) {
+    selectedIds.unshift(primaryProjectId);
+  }
+  return Array.from(new Set(selectedIds));
+}
+
 export async function createExpenseAction(formData: FormData) {
-  const projectId = getString(formData, "project_id");
+  const projectIds = getExpenseTargetProjectIds(formData);
   const requesterName = getString(formData, "requester_name");
   const description = getString(formData, "description");
   const amountInput = getNumber(formData, "amount");
   const amount = resolveAmountByMode(formData, amountInput);
   const parsedCategory = getParsedCategory(formData);
   if (
-    !projectId ||
+    projectIds.length === 0 ||
     !requesterName ||
     !description ||
     !parsedCategory ||
@@ -736,8 +808,7 @@ export async function createExpenseAction(formData: FormData) {
   const returnTo = getReturnTo(formData);
   const specialistType = getSpecialistType(formData, parsedCategory);
 
-  const excelPayload = {
-    project_id: projectId,
+  const basePayload = {
     category: parsedCategory,
     specialist_type: specialistType,
     requester_name: requesterName,
@@ -752,39 +823,51 @@ export async function createExpenseAction(formData: FormData) {
   };
 
   if (activeDataSource === "excel") {
-    insertExcelExpense(excelPayload);
+    for (const projectId of projectIds) {
+      insertExcelExpense({
+        ...basePayload,
+        project_id: projectId,
+      });
+    }
   } else if (activeDataSource === "supabase") {
     const supabase = getSupabaseServerClient();
     if (!supabase) {
       return;
     }
-    await upsertSupabaseCategories(supabase, [excelPayload.category]);
-    await supabase.from("project_expenses").insert({
-      project_id: excelPayload.project_id,
-      category: excelPayload.category,
-      specialist_type: excelPayload.specialist_type,
-      requester_name: excelPayload.requester_name,
-      description: excelPayload.description,
-      recipient_name: excelPayload.recipient_name,
-      quantity: excelPayload.quantity,
-      unit_label: excelPayload.unit_label,
-      usage_info: excelPayload.usage_info,
-      unit_price: excelPayload.unit_price,
-      amount: excelPayload.amount,
-      expense_date: excelPayload.expense_date,
-    });
+    await upsertSupabaseCategories(supabase, [basePayload.category]);
+    await supabase.from("project_expenses").insert(
+      projectIds.map((projectId) => ({
+        project_id: projectId,
+        category: basePayload.category,
+        specialist_type: basePayload.specialist_type,
+        requester_name: basePayload.requester_name,
+        description: basePayload.description,
+        recipient_name: basePayload.recipient_name,
+        quantity: basePayload.quantity,
+        unit_label: basePayload.unit_label,
+        usage_info: basePayload.usage_info,
+        unit_price: basePayload.unit_price,
+        amount: basePayload.amount,
+        expense_date: basePayload.expense_date,
+      })),
+    );
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
     if (!firestore) {
       return;
     }
-    const id = randomUUID();
     await runFirebaseWriteSafely(async () => {
-      await firestore.collection("project_expenses").doc(id).set({
-        id,
-        ...excelPayload,
-        created_at: createTimestamp(),
-      });
+      const batch = firestore.batch();
+      for (const projectId of projectIds) {
+        const id = randomUUID();
+        batch.set(firestore.collection("project_expenses").doc(id), {
+          id,
+          ...basePayload,
+          project_id: projectId,
+          created_at: createTimestamp(),
+        });
+      }
+      await batch.commit();
     });
   } else {
     return;

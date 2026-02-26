@@ -4,8 +4,10 @@ import {
   createProjectAction,
   deleteExpenseAction,
   deleteProjectAction,
+  deleteSelectedProjectsAction,
   importExcelTemplateAction,
 } from "@/app/actions";
+import { ConfirmActionButton } from "@/components/confirm-action-button";
 import {
   CashInIcon,
   CloseIcon,
@@ -18,6 +20,7 @@ import {
 } from "@/components/icons";
 import { ExcelDropInput } from "@/components/excel-drop-input";
 import { EnterToNextField } from "@/components/enter-to-next-field";
+import { ProjectChecklistSearch } from "@/components/project-checklist-search";
 import { ProjectAutocomplete } from "@/components/project-autocomplete";
 import { ReportDownloadPreviewButton } from "@/components/report-download-preview-button";
 import { ProjectsSelectionToggle } from "@/components/projects-selection-toggle";
@@ -31,15 +34,26 @@ import {
   PROJECT_STATUS_STYLE,
   SPECIALIST_COST_PRESETS,
 } from "@/lib/constants";
-import { getExpenseCategories, getProjectDetail, getProjects } from "@/lib/data";
+import {
+  getExpenseCategories,
+  getProjectDetail,
+  getProjects,
+  searchExpenseDetails,
+} from "@/lib/data";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { activeDataSource, getStorageLabel } from "@/lib/storage";
 
-type ModalType = "project-new" | "expense-new" | "excel-import";
+type ModalType = "project-new" | "expense-new" | "excel-import" | "detail-search";
 type ProjectView = "list" | "rekap";
 
 type ProjectPageProps = {
-  searchParams: Promise<{ project?: string; modal?: string; q?: string; view?: string }>;
+  searchParams: Promise<{
+    project?: string;
+    modal?: string;
+    q?: string;
+    detail_q?: string;
+    view?: string;
+  }>;
 };
 
 function normalizeSearchText(value: string | undefined) {
@@ -50,6 +64,7 @@ function createProjectsHref(params: {
   projectId?: string;
   modal?: ModalType;
   searchText?: string;
+  detailSearchQuery?: string;
   view?: ProjectView;
 }) {
   const query = new URLSearchParams();
@@ -65,6 +80,10 @@ function createProjectsHref(params: {
   const trimmedSearch = params.searchText?.trim();
   if (trimmedSearch) {
     query.set("q", trimmedSearch);
+  }
+  const trimmedDetailSearch = params.detailSearchQuery?.trim();
+  if (trimmedDetailSearch) {
+    query.set("detail_q", trimmedDetailSearch);
   }
   const queryText = query.toString();
   return queryText ? `/projects?${queryText}` : "/projects";
@@ -86,6 +105,16 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
     activeView === "rekap" && selectedProjectId
       ? await getProjectDetail(selectedProjectId)
       : null;
+  const recapExpenses = selectedProject
+    ? selectedProject.expenses
+        .slice()
+        .sort((a, b) => {
+          if (a.expenseDate !== b.expenseDate) {
+            return a.expenseDate.localeCompare(b.expenseDate);
+          }
+          return (a.requesterName ?? "").localeCompare(b.requesterName ?? "");
+        })
+    : [];
 
   const searchText = typeof params.q === "string" ? params.q.trim() : "";
   const searchKeyword = normalizeSearchText(searchText);
@@ -104,12 +133,18 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
     : projects;
 
   const modalParam = typeof params.modal === "string" ? params.modal : "";
+  const detailSearchQuery = typeof params.detail_q === "string" ? params.detail_q.trim() : "";
   const activeModal: ModalType | null =
     modalParam === "project-new" ||
     modalParam === "expense-new" ||
-    modalParam === "excel-import"
+    modalParam === "excel-import" ||
+    modalParam === "detail-search"
       ? modalParam
       : null;
+  const detailSearchResults =
+    activeModal === "detail-search" && detailSearchQuery
+      ? await searchExpenseDetails(detailSearchQuery, 240)
+      : [];
   const closeModalHref = createProjectsHref({
     projectId: selectedProjectId,
     searchText,
@@ -130,6 +165,12 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
   const openImportModalHref = createProjectsHref({
     projectId: selectedProjectId,
     modal: "excel-import",
+    searchText,
+    view: activeView,
+  });
+  const openDetailSearchModalHref = createProjectsHref({
+    projectId: selectedProjectId,
+    modal: "detail-search",
     searchText,
     view: activeView,
   });
@@ -187,6 +228,13 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 <CashInIcon />
               </span>
               Input Biaya
+            </Link>
+            <Link
+              href={openDetailSearchModalHref}
+              data-ui-button="true"
+              className="inline-flex items-center gap-2 rounded-xl border border-cyan-300 bg-cyan-50 px-4 py-2 text-sm font-medium text-cyan-700 hover:bg-cyan-100"
+            >
+              Cari Rincian
             </Link>
             {activeDataSource !== "demo" ? (
               <Link
@@ -273,11 +321,30 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
           </div>
           <ProjectsSearchInput initialValue={searchText} />
           <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
-            <ProjectsSelectionToggle formId="selected-projects-report-form" />
+            <div className="flex flex-wrap items-center gap-2">
+              <ProjectsSelectionToggle formId="selected-projects-report-form" />
+              <Link
+                href={openDetailSearchModalHref}
+                data-ui-button="true"
+                className="inline-flex items-center gap-2 rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-2 text-xs font-semibold text-cyan-700 hover:bg-cyan-100"
+              >
+                Cari Rincian Semua Project
+              </Link>
+            </div>
             <form
               id="selected-projects-report-form"
-              className="grid w-full gap-2 sm:grid-cols-2 xl:w-auto xl:grid-cols-4"
+              action={deleteSelectedProjectsAction}
+              className="grid w-full gap-2 sm:grid-cols-2 xl:w-auto xl:grid-cols-5"
             >
+              <input
+                type="hidden"
+                name="return_to"
+                value={createProjectsHref({
+                  projectId: selectedProjectId,
+                  searchText,
+                  view: "list",
+                })}
+              />
               <ReportDownloadPreviewButton
                 label="PDF Rekapan Terpilih"
                 iconType="pdf"
@@ -312,6 +379,16 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 selectedOnly
                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-teal-700 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-600"
               />
+              <ConfirmActionButton
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+                modalDescription="Yakin ingin menghapus semua project yang dipilih beserta data biaya dan absensinya?"
+                confirmLabel="Ya, Hapus Semua"
+              >
+                <span className="btn-icon bg-rose-100 text-rose-700">
+                  <TrashIcon />
+                </span>
+                Hapus Project Terpilih
+              </ConfirmActionButton>
             </form>
           </div>
 
@@ -391,12 +468,15 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                               view: "list",
                             })}
                           />
-                          <button className="inline-flex items-center gap-1 text-xs font-medium text-rose-700 hover:text-rose-900">
+                          <ConfirmActionButton
+                            className="inline-flex items-center gap-1 text-xs font-medium text-rose-700 hover:text-rose-900"
+                            modalDescription={`Yakin ingin menghapus project "${project.name}" beserta semua datanya?`}
+                          >
                             <span className="btn-icon bg-rose-100 text-rose-700">
                               <TrashIcon />
                             </span>
                             Hapus
-                          </button>
+                          </ConfirmActionButton>
                         </form>
                       </div>
                     </td>
@@ -417,7 +497,8 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
         <section className="panel p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-semibold text-slate-900">
-              Rekap {selectedProject?.project.name ?? "Project"}
+              <span className="typing-title">Rekap Proyek</span>
+              <span className="ml-1 text-slate-600">- {selectedProject?.project.name ?? "Project"}</span>
             </h2>
             {selectedProject ? (
               <ReportDownloadPreviewButton
@@ -448,24 +529,28 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[860px] text-sm">
+                <table className="w-full min-w-[980px] border-collapse text-sm">
                   <thead>
-                    <tr className="text-left text-slate-500">
-                      <th className="pb-2 font-medium">Tanggal</th>
-                      <th className="pb-2 font-medium">Pengajuan</th>
-                      <th className="pb-2 font-medium">Kategori</th>
-                      <th className="pb-2 font-medium">Rincian</th>
-                      <th className="pb-2 font-medium">Vendor</th>
-                      <th className="pb-2 text-right font-medium">Nominal</th>
-                      <th className="pb-2 text-right font-medium">Aksi</th>
+                    <tr className="bg-slate-50 text-left text-slate-600">
+                      <th className="w-[130px] border border-slate-200 px-3 py-2 font-medium">Tanggal</th>
+                      <th className="w-[170px] border border-slate-200 px-3 py-2 font-medium">Nama Pengaju</th>
+                      <th className="w-[170px] border border-slate-200 px-3 py-2 font-medium">Kategori</th>
+                      <th className="border border-slate-200 px-3 py-2 font-medium">Rincian</th>
+                      <th className="w-[150px] border border-slate-200 px-3 py-2 font-medium">Vendor</th>
+                      <th className="w-[140px] border border-slate-200 px-3 py-2 text-right font-medium">Nominal</th>
+                      <th className="w-[140px] border border-slate-200 px-3 py-2 text-right font-medium">Aksi</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {selectedProject.expenses.map((item) => (
-                      <tr key={item.id} className="border-t border-slate-100">
-                        <td className="py-2">{formatDate(item.expenseDate)}</td>
-                        <td className="py-2">{item.requesterName ?? "-"}</td>
-                        <td className="py-2">
+                    {recapExpenses.map((item) => (
+                      <tr key={item.id} className="bg-white">
+                        <td className="border border-slate-200 px-3 py-2 align-top">
+                          {formatDate(item.expenseDate)}
+                        </td>
+                        <td className="border border-slate-200 px-3 py-2 align-top">
+                          {item.requesterName ?? "-"}
+                        </td>
+                        <td className="border border-slate-200 px-3 py-2 align-top">
                           <span
                             className={`rounded-full px-2 py-1 text-xs font-semibold ${getCostCategoryStyle(item.category)}`}
                           >
@@ -477,23 +562,25 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                             </p>
                           ) : null}
                         </td>
-                        <td className="py-2">
+                        <td className="border border-slate-200 px-3 py-2 align-top">
                           <p>{item.description ?? "-"}</p>
                           <p className="text-xs text-slate-500">
                             {item.usageInfo ?? "-"} | {item.quantity} {item.unitLabel ?? "unit"} @{" "}
                             {formatCurrency(item.unitPrice)}
                           </p>
                         </td>
-                        <td className="py-2">{item.recipientName ?? "-"}</td>
+                        <td className="border border-slate-200 px-3 py-2 align-top">
+                          {item.recipientName ?? "-"}
+                        </td>
                         <td
-                          className={`py-2 text-right font-semibold ${
+                          className={`border border-slate-200 px-3 py-2 text-right font-semibold ${
                             item.amount < 0 ? "text-rose-700" : "text-emerald-700"
                           }`}
                         >
                           {item.amount < 0 ? "-" : "+"}
                           {formatCurrency(Math.abs(item.amount))}
                         </td>
-                        <td className="py-2">
+                        <td className="border border-slate-200 px-3 py-2 align-top">
                           <div className="flex justify-end gap-3">
                             <Link
                               href={`/projects/expenses/edit?id=${item.id}`}
@@ -515,20 +602,23 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                                   view: "rekap",
                                 })}
                               />
-                              <button className="inline-flex items-center gap-1 text-xs font-medium text-rose-700 hover:text-rose-900">
+                              <ConfirmActionButton
+                                className="inline-flex items-center gap-1 text-xs font-medium text-rose-700 hover:text-rose-900"
+                                modalDescription="Yakin ingin menghapus data biaya ini?"
+                              >
                                 <span className="btn-icon bg-rose-100 text-rose-700">
                                   <TrashIcon />
                                 </span>
                                 Hapus
-                              </button>
+                              </ConfirmActionButton>
                             </form>
                           </div>
                         </td>
                       </tr>
                     ))}
-                    {selectedProject.expenses.length === 0 ? (
+                    {recapExpenses.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="py-4 text-center text-slate-500">
+                        <td colSpan={7} className="border border-slate-200 px-3 py-4 text-center text-slate-500">
                           Belum ada transaksi biaya.
                         </td>
                       </tr>
@@ -551,7 +641,9 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
           <section className="modal-card panel relative z-10 max-h-[calc(100vh-2rem)] w-full max-w-3xl overflow-y-auto p-5">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-slate-900">
-                {activeModal === "project-new"
+                {activeModal === "detail-search"
+                  ? "Cari Rincian Semua Project"
+                  : activeModal === "project-new"
                   ? "Tambah Project Baru"
                   : activeModal === "expense-new"
                     ? "Input Biaya Project"
@@ -569,7 +661,92 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
               </Link>
             </div>
 
-            {activeModal === "project-new" ? (
+            {activeModal === "detail-search" ? (
+              <div className="mt-4 space-y-4">
+                <form method="get" className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                  {selectedProjectId ? <input type="hidden" name="project" value={selectedProjectId} /> : null}
+                  {searchText ? <input type="hidden" name="q" value={searchText} /> : null}
+                  <input type="hidden" name="view" value={activeView} />
+                  <input type="hidden" name="modal" value="detail-search" />
+                  <input
+                    name="detail_q"
+                    defaultValue={detailSearchQuery}
+                    placeholder="Contoh: hebel, baut, mesin bor"
+                    autoFocus
+                    autoComplete="off"
+                  />
+                  <button className="inline-flex items-center justify-center rounded-xl bg-cyan-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-cyan-600">
+                    Cari Rincian
+                  </button>
+                </form>
+
+                {!detailSearchQuery ? (
+                  <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600">
+                    Isi kata kunci rincian untuk mencari data di semua project.
+                  </p>
+                ) : detailSearchResults.length === 0 ? (
+                  <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-4 text-sm text-amber-700">
+                    Data rincian &quot;{detailSearchQuery}&quot; tidak ditemukan di semua project.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-xs text-slate-500">
+                      Ditemukan {detailSearchResults.length} data rincian untuk kata kunci &quot;
+                      {detailSearchQuery}&quot;.
+                    </p>
+                    <div className="overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="w-full min-w-[760px] border-collapse text-sm">
+                        <thead className="bg-slate-50">
+                          <tr className="text-left text-slate-500">
+                            <th className="w-[120px] border border-slate-200 px-3 py-2 font-medium">Tanggal</th>
+                            <th className="w-[180px] border border-slate-200 px-3 py-2 font-medium">Project</th>
+                            <th className="w-[160px] border border-slate-200 px-3 py-2 font-medium">Nama Pengaju</th>
+                            <th className="border border-slate-200 px-3 py-2 font-medium">Keterangan</th>
+                            <th className="w-[140px] border border-slate-200 px-3 py-2 text-right font-medium">Nominal</th>
+                            <th className="w-[120px] border border-slate-200 px-3 py-2 text-right font-medium">Aksi</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detailSearchResults.map((item) => (
+                            <tr key={item.expenseId}>
+                              <td className="border border-slate-200 px-3 py-2 align-top">{formatDate(item.expenseDate)}</td>
+                              <td className="border border-slate-200 px-3 py-2 align-top font-medium text-slate-900">{item.projectName}</td>
+                              <td className="border border-slate-200 px-3 py-2 align-top">{item.requesterName ?? "-"}</td>
+                              <td className="border border-slate-200 px-3 py-2 align-top">
+                                <p>{item.description ?? "-"}</p>
+                                <p className="text-xs text-slate-500">{item.usageInfo ?? "-"}</p>
+                              </td>
+                              <td
+                                className={`border border-slate-200 px-3 py-2 text-right font-semibold ${
+                                  item.amount < 0 ? "text-rose-700" : "text-emerald-700"
+                                }`}
+                              >
+                                {formatCurrency(item.amount)}
+                              </td>
+                              <td className="border border-slate-200 px-3 py-2 text-right align-top">
+                                <Link
+                                  href={createProjectsHref({
+                                    projectId: item.projectId,
+                                    searchText,
+                                    view: "rekap",
+                                  })}
+                                  className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:text-blue-900"
+                                >
+                                  <span className="btn-icon bg-blue-100 text-blue-700">
+                                    <EyeIcon />
+                                  </span>
+                                  Lihat Rekap
+                                </Link>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : activeModal === "project-new" ? (
               <form action={createProjectAction} className="mt-4 space-y-3">
                 <input type="hidden" name="return_to" value={closeModalHref} />
                 <div>
@@ -647,7 +824,20 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-500">Project</label>
-                  <ProjectAutocomplete projects={projects} />
+                  <ProjectAutocomplete projects={projects} initialProjectId={selectedProjectId} />
+                  <details className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                    <summary className="cursor-pointer text-xs font-semibold text-slate-700">
+                      Masukkan data yang sama ke project lain (opsional)
+                    </summary>
+                    <p className="mt-2 text-[11px] text-slate-500">
+                      Data akan disimpan ke project utama di atas, plus project tambahan yang Anda centang.
+                    </p>
+                    <ProjectChecklistSearch
+                      projects={projects}
+                      excludeProjectId={selectedProjectId}
+                      inputName="project_ids"
+                    />
+                  </details>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>

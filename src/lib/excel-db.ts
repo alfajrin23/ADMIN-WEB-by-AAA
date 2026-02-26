@@ -230,6 +230,8 @@ function seedProjectsFromWorkbook(workbook: XLSX.WorkBook): ProjectRow[] {
 }
 
 function parseTemplateDate(value: unknown) {
+  const todayDate = new Date().toISOString().slice(0, 10);
+
   if (typeof value === "number" && Number.isFinite(value)) {
     const parsed = XLSX.SSF.parse_date_code(value);
     if (parsed) {
@@ -239,10 +241,14 @@ function parseTemplateDate(value: unknown) {
     }
   }
 
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+
   if (typeof value === "string") {
     const trimmed = value.trim();
     if (!trimmed) {
-      return new Date().toISOString().slice(0, 10);
+      return todayDate;
     }
 
     const iso = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -256,49 +262,177 @@ function parseTemplateDate(value: unknown) {
       mar: "03",
       apr: "04",
       mei: "05",
+      may: "05",
       jun: "06",
       jul: "07",
       agu: "08",
       ags: "08",
+      aug: "08",
       sep: "09",
       okt: "10",
+      oct: "10",
       nov: "11",
       des: "12",
+      dec: "12",
     };
-    const localized = trimmed.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/);
+    const localized = trimmed.match(/^(\d{1,2})[-/. ]([A-Za-z]{3})[-/. ](\d{2,4})?$/);
     if (localized) {
       const day = String(Number(localized[1])).padStart(2, "0");
       const month = idMonthMap[localized[2].toLowerCase()];
-      const yearRaw = localized[3];
+      const yearRaw = localized[3] ?? String(new Date().getFullYear());
       const year = yearRaw.length === 2 ? `20${yearRaw}` : yearRaw;
       if (month) {
         return `${year}-${month}-${day}`;
       }
     }
+
+    const localDate = trimmed.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/);
+    if (localDate) {
+      const day = String(Number(localDate[1])).padStart(2, "0");
+      const month = String(Number(localDate[2])).padStart(2, "0");
+      const yearRaw = localDate[3];
+      const year = yearRaw.length === 2 ? `20${yearRaw}` : yearRaw;
+      return `${year}-${month}-${day}`;
+    }
+
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
   }
 
-  return new Date().toISOString().slice(0, 10);
+  return todayDate;
+}
+
+function parseTemplateDateOrNull(value: unknown) {
+  if (value == null) {
+    return null;
+  }
+  if (typeof value === "string" && value.trim().length === 0) {
+    return null;
+  }
+  return parseTemplateDate(value);
+}
+
+function parseTemplateNumeric(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value !== "string") {
+    return 0;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return 0;
+  }
+
+  let normalized = trimmed
+    .replace(/rp/gi, "")
+    .replace(/[^\d,.\-]/g, "")
+    .replace(/(?!^)-/g, "");
+  if (!normalized) {
+    return 0;
+  }
+
+  const lastComma = normalized.lastIndexOf(",");
+  const lastDot = normalized.lastIndexOf(".");
+  if (lastComma >= 0 && lastDot >= 0) {
+    if (lastComma > lastDot) {
+      normalized = normalized.replace(/\./g, "").replace(",", ".");
+    } else {
+      normalized = normalized.replace(/,/g, "");
+    }
+  } else if (lastComma >= 0) {
+    const fractionDigits = normalized.length - lastComma - 1;
+    normalized =
+      fractionDigits > 0 && fractionDigits <= 2
+        ? normalized.replace(",", ".")
+        : normalized.replace(/,/g, "");
+  } else if (lastDot >= 0) {
+    const fractionDigits = normalized.length - lastDot - 1;
+    const dotCount = normalized.split(".").length - 1;
+    if (dotCount > 1 || fractionDigits === 3) {
+      normalized = normalized.replace(/\./g, "");
+    }
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function parseTemplateCost(value: unknown) {
-  const parsed = Number(value);
+  const parsed = parseTemplateNumeric(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function resolveTemplateCategoryByHeader(headerText: string): CostCategory | null {
+  const upper = headerText.toUpperCase();
+  if (
+    upper.includes("TOTAL COST") ||
+    upper.includes("PENGELUARAN PER") ||
+    upper.includes("TOTAL COST PER DESA")
+  ) {
+    return null;
+  }
+  if (upper.includes("COST MATERIAL")) {
+    return "material";
+  }
+  if (upper.includes("ALAT") || upper.includes("COST ALAT")) {
+    return "alat";
+  }
+  if (upper.includes("UPAH") || upper.includes("KASBON")) {
+    return upper.includes("SPESIALIS") ? "upah_tim_spesialis" : "upah_kasbon_tukang";
+  }
+  if (
+    upper.includes("OPS") ||
+    upper.includes("OPERASIONAL") ||
+    upper.includes("LAIN-LAIN") ||
+    upper.includes("LISTRIK") ||
+    upper.includes("SUBCONT") ||
+    upper.includes("PERAWATAN")
+  ) {
+    return "operasional";
+  }
+  return null;
+}
+
+function getTemplateCategoryColumns(sheet: XLSX.WorkSheet) {
+  const range = XLSX.utils.decode_range(sheet["!ref"] ?? "A1:Z12");
+  const columns: Array<{ column: number; category: CostCategory }> = [];
+
+  for (let col = 8; col <= range.e.c; col += 1) {
+    const headerTop = getCellText(sheet, col, 2);
+    const headerBottom = getCellText(sheet, col, 3);
+    const category = resolveTemplateCategoryByHeader(`${headerTop} ${headerBottom}`.trim());
+    if (!category) {
+      continue;
+    }
+    columns.push({ column: col, category });
+  }
+
+  if (columns.length > 0) {
+    return columns;
+  }
+
+  return [
+    { column: 8, category: "material" },
+    { column: 9, category: "alat" },
+    { column: 10, category: "upah_kasbon_tukang" },
+    { column: 11, category: "operasional" },
+  ];
+}
+
+function isTemplateSubtotalRow(row: unknown[], description: string | null) {
+  const marker = `${String(row[0] ?? "")} ${description ?? ""}`.toUpperCase();
+  return marker.includes("TOTAL PENGELUARAN");
 }
 
 function seedExpensesFromWorkbook(workbook: XLSX.WorkBook, projects: ProjectRow[]) {
   const projectBySheet = new Map(projects.map((project) => [project.name.toUpperCase(), project.id]));
   const expenses: ExpenseRow[] = [];
-
-  const categoryColumns: Array<{ column: number; category: CostCategory }> = [
-    { column: 8, category: "material" },
-    { column: 9, category: "alat" },
-    { column: 10, category: "operasional" },
-    { column: 11, category: "upah_kasbon_tukang" },
-    { column: 12, category: "operasional" },
-    { column: 13, category: "upah_tim_spesialis" },
-    { column: 14, category: "operasional" },
-    { column: 15, category: "operasional" },
-  ];
+  const todayDate = new Date().toISOString().slice(0, 10);
 
   for (const sheetName of workbook.SheetNames) {
     if (!isTemplateProjectSheet(workbook, sheetName)) {
@@ -314,49 +448,75 @@ function seedExpensesFromWorkbook(workbook: XLSX.WorkBook, projects: ProjectRow[
       continue;
     }
 
+    const headerColumns = getHeaderColumns(sheet);
+    const categoryColumns = getTemplateCategoryColumns(sheet);
     const rows = XLSX.utils.sheet_to_json<Array<unknown>>(sheet, { header: 1, defval: null });
+    let lastRequesterName: string | null = null;
+    let lastExpenseDate: string | null = null;
+
     for (let rowIndex = 3; rowIndex < rows.length; rowIndex += 1) {
       const row = rows[rowIndex] ?? [];
-      const no = row[0];
-      const description = toStringOrNull(row[3]);
-      const usageInfo = toStringOrNull(row[6]);
-      if (
-        typeof description === "string" &&
-        description.toUpperCase().includes("TOTAL PENGELUARAN")
-      ) {
+      const no = row[headerColumns.no];
+      const rawRequesterName = toStringOrNull(row[headerColumns.requester]);
+      const rawExpenseDate = parseTemplateDateOrNull(row[headerColumns.date]);
+      const description = toStringOrNull(row[headerColumns.description]);
+      const usageInfo = toStringOrNull(row[headerColumns.usage]);
+      if (isTemplateSubtotalRow(row, description)) {
         continue;
       }
 
-      const hasTransactionNumber = typeof no === "number" && Number.isFinite(no);
-      const hasUsageOrDescription = Boolean(description || usageInfo);
-      if (!hasTransactionNumber && !hasUsageOrDescription) {
-        continue;
+      const qty = parseTemplateNumeric(row[headerColumns.qty]);
+      const unitPrice = parseTemplateNumeric(row[headerColumns.unitPrice]);
+      const unitLabel = toStringOrNull(row[headerColumns.unit]);
+      const hasTransactionNumber = parseTemplateNumeric(no) > 0;
+      const requesterName =
+        rawRequesterName ?? (!hasTransactionNumber ? lastRequesterName : null);
+      const expenseDate = rawExpenseDate ?? lastExpenseDate ?? todayDate;
+      const hasUsageOrDescription = Boolean(description || usageInfo || requesterName);
+      const hasPrimaryData = Boolean(
+        hasTransactionNumber ||
+          description ||
+          usageInfo ||
+          rawRequesterName ||
+          rawExpenseDate,
+      );
+
+      if (rawRequesterName && hasPrimaryData) {
+        lastRequesterName = rawRequesterName;
       }
+      if (rawExpenseDate && hasPrimaryData) {
+        lastExpenseDate = rawExpenseDate;
+      }
+
+      let hasAnyAmount = false;
 
       for (const item of categoryColumns) {
         const amount = parseTemplateCost(row[item.column]);
         if (amount <= 0) {
           continue;
         }
+        hasAnyAmount = true;
 
-        const qty = toNumber(row[4]);
-        const unitPrice = toNumber(row[7]);
         expenses.push({
           id: randomUUID(),
           project_id: projectId,
           category: item.category,
           specialist_type: null,
-          requester_name: toStringOrNull(row[1]),
+          requester_name: requesterName,
           description,
           recipient_name: null,
           quantity: qty,
-          unit_label: toStringOrNull(row[5]),
+          unit_label: unitLabel,
           usage_info: usageInfo,
           unit_price: unitPrice,
           amount,
-          expense_date: parseTemplateDate(row[2]),
+          expense_date: expenseDate,
           created_at: new Date().toISOString(),
         });
+      }
+
+      if (!hasAnyAmount && !hasTransactionNumber && !hasUsageOrDescription) {
+        continue;
       }
     }
   }
@@ -1332,6 +1492,27 @@ export function deleteExcelProject(projectId: string) {
   db.payroll_resets = db.payroll_resets.filter((row) => row.project_id !== projectId);
   writeDatabase(db);
   return true;
+}
+
+export function deleteManyExcelProjects(projectIds: string[]) {
+  const targets = new Set(projectIds.map((item) => item.trim()).filter((item) => item.length > 0));
+  if (targets.size === 0) {
+    return 0;
+  }
+
+  const db = readExcelDatabase();
+  const beforeCount = db.projects.length;
+  db.projects = db.projects.filter((row) => !targets.has(row.id));
+  const deletedCount = beforeCount - db.projects.length;
+  if (deletedCount <= 0) {
+    return 0;
+  }
+
+  db.project_expenses = db.project_expenses.filter((row) => !targets.has(row.project_id));
+  db.attendance_records = db.attendance_records.filter((row) => !targets.has(row.project_id));
+  db.payroll_resets = db.payroll_resets.filter((row) => !targets.has(row.project_id));
+  writeDatabase(db);
+  return deletedCount;
 }
 
 export function updateExcelExpense(payload: {

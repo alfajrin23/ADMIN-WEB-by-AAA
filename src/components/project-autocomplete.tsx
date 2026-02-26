@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 
 type ProjectOption = {
   id: string;
@@ -9,11 +9,22 @@ type ProjectOption = {
 
 type ProjectAutocompleteProps = {
   projects: ProjectOption[];
+  initialProjectId?: string;
 };
 
-export function ProjectAutocomplete({ projects }: ProjectAutocompleteProps) {
+export function ProjectAutocomplete({ projects, initialProjectId }: ProjectAutocompleteProps) {
   const listId = useId();
-  const [query, setQuery] = useState("");
+  const initialProjectName = useMemo(() => {
+    if (!initialProjectId) {
+      return "";
+    }
+    return projects.find((project) => project.id === initialProjectId)?.name ?? "";
+  }, [projects, initialProjectId]);
+  const [query, setQuery] = useState(initialProjectName);
+
+  useEffect(() => {
+    setQuery(initialProjectName);
+  }, [initialProjectName]);
 
   const selectedId = useMemo(() => {
     const matched = projects.find((project) => project.name.toLowerCase() === query.toLowerCase());

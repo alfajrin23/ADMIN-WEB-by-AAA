@@ -18,6 +18,7 @@ import type {
   ExpenseEntry,
   Project,
   ProjectDetail,
+  ProjectExpenseSearchResult,
   WageProjectSummary,
   WageProjectTeamSummary,
   WageRecap,
@@ -541,33 +542,63 @@ function buildProjectCountByClient(projects: Project[]) {
   });
 }
 
-function buildProjectExpenseTotals(expenses: ExpenseEntry[]) {
+function getProjectStatusRank(status: Project["status"] | undefined) {
+  if (status === "selesai") {
+    return 0;
+  }
+  if (status === "aktif") {
+    return 1;
+  }
+  if (status === "tertunda") {
+    return 2;
+  }
+  return 3;
+}
+
+function buildProjectExpenseTotals(expenses: ExpenseEntry[], projects: Project[] = []) {
+  const projectNameById = new Map(projects.map((project) => [project.id, project.name]));
+  const projectStatusById = new Map(projects.map((project) => [project.id, project.status]));
   const totals: Record<
     string,
     {
       projectId: string;
       projectName: string;
+      projectStatus: Project["status"];
       transactionCount: number;
       totalExpense: number;
+      latestExpenseDate: string;
     }
   > = {};
 
   for (const expense of expenses) {
     const key = expense.projectId || "unknown-project";
+    const expenseDate = toDateOnly(expense.expenseDate);
     if (!totals[key]) {
+      const projectName =
+        expense.projectName?.trim() || projectNameById.get(expense.projectId) || "Project";
+      const projectStatus = projectStatusById.get(expense.projectId) ?? "aktif";
       totals[key] = {
         projectId: expense.projectId || "",
-        projectName: expense.projectName?.trim() || "Project",
+        projectName,
+        projectStatus,
         transactionCount: 0,
         totalExpense: 0,
+        latestExpenseDate: expenseDate,
       };
     }
 
     totals[key].transactionCount += 1;
     totals[key].totalExpense += expense.amount;
+    if (expenseDate > totals[key].latestExpenseDate) {
+      totals[key].latestExpenseDate = expenseDate;
+    }
   }
 
   return Object.values(totals).sort((a, b) => {
+    const statusRankDiff = getProjectStatusRank(a.projectStatus) - getProjectStatusRank(b.projectStatus);
+    if (statusRankDiff !== 0) {
+      return statusRankDiff;
+    }
     if (b.totalExpense !== a.totalExpense) {
       return b.totalExpense - a.totalExpense;
     }
@@ -964,7 +995,7 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
     const expenses = db.project_expenses
       .filter((row) => row.project_id === projectId)
       .map((row) => mapExpense(row, project.name))
-      .sort((a, b) => b.expenseDate.localeCompare(a.expenseDate));
+      .sort((a, b) => a.expenseDate.localeCompare(b.expenseDate));
     const categoryOptions = mergeExpenseCategoryOptions(db.project_expenses.map((row) => row.category));
 
     return {
@@ -993,7 +1024,7 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
             "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at",
           )
           .eq("project_id", projectId)
-          .order("expense_date", { ascending: false }),
+          .order("expense_date", { ascending: true }),
       ]);
 
     if (projectError || !projectRow) {
@@ -1029,7 +1060,7 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
     const expenses = expenseRows
       .filter((row) => String(row.project_id ?? "") === projectId)
       .map((row) => mapExpense(row, project.name))
-      .sort((a, b) => b.expenseDate.localeCompare(a.expenseDate));
+      .sort((a, b) => a.expenseDate.localeCompare(b.expenseDate));
     const categoryOptions = await getExpenseCategories();
 
     return {
@@ -1044,13 +1075,148 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
     return null;
   }
 
-  const expenses = sampleExpenses.filter((item) => item.projectId === projectId);
+  const expenses = sampleExpenses
+    .filter((item) => item.projectId === projectId)
+    .slice()
+    .sort((a, b) => a.expenseDate.localeCompare(b.expenseDate));
   const categoryOptions = mergeExpenseCategoryOptions(sampleExpenses.map((item) => item.category));
   return {
     project,
     expenses,
     categoryTotals: buildCategoryTotals(expenses, categoryOptions),
   };
+}
+
+function buildExpenseSearchHaystack(row: {
+  requesterName?: string | null;
+  description?: string | null;
+  usageInfo?: string | null;
+  recipientName?: string | null;
+  category?: string | null;
+  projectName?: string | null;
+}) {
+  return [
+    row.description ?? "",
+    row.usageInfo ?? "",
+    row.requesterName ?? "",
+    row.recipientName ?? "",
+    row.projectName ?? "",
+    row.category ? getCostCategoryLabel(row.category) : "",
+    row.category ?? "",
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+function mapExpenseSearchResult(row: ExpenseEntry, projectName: string): ProjectExpenseSearchResult {
+  return {
+    expenseId: row.id,
+    projectId: row.projectId,
+    projectName,
+    expenseDate: row.expenseDate.slice(0, 10),
+    requesterName: row.requesterName,
+    description: row.description,
+    usageInfo: row.usageInfo,
+    category: row.category,
+    amount: row.amount,
+  };
+}
+
+function sortExpenseSearchResults(a: ProjectExpenseSearchResult, b: ProjectExpenseSearchResult) {
+  if (a.expenseDate !== b.expenseDate) {
+    return b.expenseDate.localeCompare(a.expenseDate);
+  }
+  if (a.projectName !== b.projectName) {
+    return a.projectName.localeCompare(b.projectName);
+  }
+  return (a.description ?? "").localeCompare(b.description ?? "");
+}
+
+export async function searchExpenseDetails(
+  queryText: string,
+  limit = 200,
+): Promise<ProjectExpenseSearchResult[]> {
+  const normalizedQuery = queryText.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return [];
+  }
+
+  if (activeDataSource === "excel") {
+    const db = readExcelDatabase();
+    const projectMap = Object.fromEntries(db.projects.map((project) => [project.id, project.name]));
+    return db.project_expenses
+      .map((row) => mapExpense(row, projectMap[row.project_id]))
+      .filter((row) => buildExpenseSearchHaystack(row).includes(normalizedQuery))
+      .map((row) => mapExpenseSearchResult(row, row.projectName?.trim() || "Project"))
+      .sort(sortExpenseSearchResults)
+      .slice(0, limit);
+  }
+
+  if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return [];
+    }
+
+    const keyword = normalizedQuery.replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+    if (!keyword) {
+      return [];
+    }
+    const likePattern = `%${keyword}%`;
+    const { data, error } = await supabase
+      .from("project_expenses")
+      .select(
+        "id, project_id, requester_name, description, recipient_name, usage_info, category, amount, expense_date, projects(name)",
+      )
+      .or(
+        [
+          `description.ilike.${likePattern}`,
+          `usage_info.ilike.${likePattern}`,
+          `requester_name.ilike.${likePattern}`,
+          `recipient_name.ilike.${likePattern}`,
+        ].join(","),
+      )
+      .order("expense_date", { ascending: false })
+      .limit(limit);
+
+    if (error || !data) {
+      return [];
+    }
+
+    return data
+      .map((row) => {
+        const mapped = mapExpense(row, resolveJoinName(row.projects));
+        return mapExpenseSearchResult(
+          mapped,
+          resolveJoinName(row.projects)?.trim() || mapped.projectName?.trim() || "Project",
+        );
+      })
+      .sort(sortExpenseSearchResults)
+      .slice(0, limit);
+  }
+
+  if (activeDataSource === "firebase") {
+    const [projectRows, expenseRows] = await Promise.all([
+      getFirebaseCollectionRows("projects"),
+      getFirebaseCollectionRows("project_expenses"),
+    ]);
+    const projectMap = Object.fromEntries(
+      projectRows.map((row) => [String(row.id ?? ""), String(row.name ?? "Project")]),
+    );
+
+    return expenseRows
+      .map((row) => mapExpense(row, projectMap[String(row.project_id ?? "")]))
+      .filter((row) => buildExpenseSearchHaystack(row).includes(normalizedQuery))
+      .map((row) => mapExpenseSearchResult(row, row.projectName?.trim() || "Project"))
+      .sort(sortExpenseSearchResults)
+      .slice(0, limit);
+  }
+
+  return sampleExpenses
+    .filter((row) => buildExpenseSearchHaystack(row).includes(normalizedQuery))
+    .map((row) => mapExpenseSearchResult(row, row.projectName?.trim() || "Project"))
+    .sort(sortExpenseSearchResults)
+    .slice(0, limit);
 }
 
 export async function getWageRecap(options?: {
@@ -1404,7 +1570,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         .slice()
         .sort((a, b) => b.expenseDate.localeCompare(a.expenseDate))
         .slice(0, 8),
-      projectExpenseTotals: buildProjectExpenseTotals(expenses),
+      projectExpenseTotals: buildProjectExpenseTotals(expenses, projects),
       projectCountByClient: buildProjectCountByClient(projects),
     };
   }
@@ -1469,7 +1635,7 @@ export async function getDashboardData(): Promise<DashboardData> {
       totalKasbon: attendance.reduce((sum, item) => sum + item.kasbonAmount, 0),
       categoryTotals: buildCategoryTotals(expenses, categoryOptions),
       recentExpenses,
-      projectExpenseTotals: buildProjectExpenseTotals(expenses),
+      projectExpenseTotals: buildProjectExpenseTotals(expenses, projects),
       projectCountByClient: buildProjectCountByClient(projects),
     };
   }
@@ -1507,7 +1673,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         mergeExpenseCategoryOptions(expenseRows.map((row) => String(row.category ?? ""))),
       ),
       recentExpenses,
-      projectExpenseTotals: buildProjectExpenseTotals(expenses),
+      projectExpenseTotals: buildProjectExpenseTotals(expenses, projects),
       projectCountByClient: buildProjectCountByClient(projects),
     };
   }
@@ -1527,7 +1693,7 @@ export async function getDashboardData(): Promise<DashboardData> {
       mergeExpenseCategoryOptions(sampleExpenses.map((item) => item.category)),
     ),
     recentExpenses: sampleExpenses,
-    projectExpenseTotals: buildProjectExpenseTotals(sampleExpenses),
+    projectExpenseTotals: buildProjectExpenseTotals(sampleExpenses, sampleProjects),
     projectCountByClient: buildProjectCountByClient(sampleProjects),
   };
 }

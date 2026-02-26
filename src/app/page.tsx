@@ -1,4 +1,5 @@
 import { ProjectIcon, WalletIcon } from "@/components/icons";
+import { ProjectExpenseTotalsTable } from "@/components/project-expense-totals-table";
 import { StatCard } from "@/components/stat-card";
 import { getCostCategoryStyle } from "@/lib/constants";
 import { getDashboardData } from "@/lib/data";
@@ -95,13 +96,13 @@ export default async function DashboardPage() {
         )}
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[1.15fr_1fr]">
+      <section className="grid gap-4 xl:grid-cols-[1fr_1.35fr]">
         <article className="motion-display panel p-5">
           <h2 className="text-lg font-semibold text-slate-900">
             Rekap Biaya per Kategori
           </h2>
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[420px] text-sm">
+          <div className="mt-4">
+            <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-slate-500">
                   <th className="pb-2 font-medium">Kategori</th>
@@ -130,35 +131,7 @@ export default async function DashboardPage() {
 
         <article className="motion-display panel p-5">
           <h2 className="text-lg font-semibold text-slate-900">Total Pengeluaran per Project</h2>
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[420px] text-sm">
-              <thead>
-                <tr className="text-left text-slate-500">
-                  <th className="pb-2 font-medium">Project</th>
-                  <th className="pb-2 text-right font-medium">Transaksi</th>
-                  <th className="pb-2 text-right font-medium">Total Pengeluaran</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dashboard.projectExpenseTotals.map((item) => (
-                  <tr key={item.projectId || item.projectName} className="border-t border-slate-100">
-                    <td className="py-2 font-medium text-slate-900">{item.projectName}</td>
-                    <td className="py-2 text-right">{item.transactionCount}</td>
-                    <td className="py-2 text-right font-semibold text-slate-900">
-                      {formatCurrency(item.totalExpense)}
-                    </td>
-                  </tr>
-                ))}
-                {dashboard.projectExpenseTotals.length === 0 ? (
-                  <tr>
-                    <td colSpan={3} className="py-4 text-center text-slate-500">
-                      Belum ada data pengeluaran project.
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
+          <ProjectExpenseTotalsTable rows={dashboard.projectExpenseTotals} />
         </article>
       </section>
     </div>

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { deleteAttendanceAction, updateAttendanceAction } from "@/app/actions";
+import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { SaveIcon, TrashIcon } from "@/components/icons";
 import { RupiahInput } from "@/components/rupiah-input";
 import { ATTENDANCE_STATUSES, WORKER_TEAMS } from "@/lib/constants";
@@ -127,12 +128,15 @@ export default async function EditAttendancePage({ searchParams }: EditAttendanc
         <form action={deleteAttendanceAction} className="mt-3">
           <input type="hidden" name="attendance_id" value={attendance.id} />
           <input type="hidden" name="return_to" value="/attendance" />
-          <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-medium text-rose-700 hover:bg-rose-100">
+          <ConfirmActionButton
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-medium text-rose-700 hover:bg-rose-100"
+            modalDescription="Yakin ingin menghapus data absensi ini?"
+          >
             <span className="btn-icon icon-wiggle-soft bg-rose-100 text-rose-700">
               <TrashIcon />
             </span>
             Hapus Absensi
-          </button>
+          </ConfirmActionButton>
         </form>
       </section>
     </div>

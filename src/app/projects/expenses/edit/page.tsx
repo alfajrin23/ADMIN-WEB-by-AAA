@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { deleteExpenseAction, updateExpenseAction } from "@/app/actions";
+import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { SaveIcon, TrashIcon } from "@/components/icons";
 import { RupiahInput } from "@/components/rupiah-input";
 import { SPECIALIST_COST_PRESETS } from "@/lib/constants";
@@ -181,12 +182,15 @@ export default async function EditExpensePage({ searchParams }: EditExpensePageP
             name="return_to"
             value={`/projects?view=rekap&project=${expense.projectId}`}
           />
-          <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-medium text-rose-700 hover:bg-rose-100">
+          <ConfirmActionButton
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-medium text-rose-700 hover:bg-rose-100"
+            modalDescription="Yakin ingin menghapus biaya ini?"
+          >
             <span className="btn-icon icon-wiggle-soft bg-rose-100 text-rose-700">
               <TrashIcon />
             </span>
             Hapus Biaya Ini
-          </button>
+          </ConfirmActionButton>
         </form>
       </section>
     </div>

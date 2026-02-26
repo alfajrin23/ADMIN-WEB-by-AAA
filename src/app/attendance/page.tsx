@@ -15,6 +15,7 @@ import {
   SaveIcon,
   TrashIcon,
 } from "@/components/icons";
+import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { RupiahInput } from "@/components/rupiah-input";
 import { ATTENDANCE_STATUSES, WORKER_TEAM_LABEL, WORKER_TEAMS } from "@/lib/constants";
 import { getProjects, getWageRecap } from "@/lib/data";
@@ -312,12 +313,15 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                               <form action={deleteAttendanceAction}>
                                 <input type="hidden" name="attendance_id" value={item.id} />
                                 <input type="hidden" name="return_to" value={returnToAttendance} />
-                                <button className="inline-flex items-center gap-1 text-xs font-medium text-rose-700 hover:text-rose-900">
+                                <ConfirmActionButton
+                                  className="inline-flex items-center gap-1 text-xs font-medium text-rose-700 hover:text-rose-900"
+                                  modalDescription="Yakin ingin menghapus data absensi ini?"
+                                >
                                   <span className="btn-icon bg-rose-100 text-rose-700">
                                     <TrashIcon />
                                   </span>
                                   Hapus
-                                </button>
+                                </ConfirmActionButton>
                               </form>
                             </div>
                           </td>

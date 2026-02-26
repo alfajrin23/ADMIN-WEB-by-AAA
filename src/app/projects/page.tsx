@@ -8,6 +8,7 @@ import {
   importExcelTemplateAction,
 } from "@/app/actions";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
+import { ExpenseDetailSearchResults } from "@/components/expense-detail-search-results";
 import {
   CashInIcon,
   CloseIcon,
@@ -694,55 +695,10 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                       Ditemukan {detailSearchResults.length} data untuk kata kunci &quot;
                       {detailSearchQuery}&quot;.
                     </p>
-                    <div className="overflow-x-auto rounded-xl border border-slate-200">
-                      <table className="w-full min-w-[760px] border-collapse text-sm">
-                        <thead className="bg-slate-50">
-                          <tr className="text-left text-slate-500">
-                            <th className="w-[120px] border border-slate-200 px-3 py-2 font-medium">Tanggal</th>
-                            <th className="w-[180px] border border-slate-200 px-3 py-2 font-medium">Project</th>
-                            <th className="w-[160px] border border-slate-200 px-3 py-2 font-medium">Nama Pengaju</th>
-                            <th className="border border-slate-200 px-3 py-2 font-medium">Keterangan</th>
-                            <th className="w-[140px] border border-slate-200 px-3 py-2 text-right font-medium">Nominal</th>
-                            <th className="w-[120px] border border-slate-200 px-3 py-2 text-right font-medium">Aksi</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {detailSearchResults.map((item) => (
-                            <tr key={item.expenseId}>
-                              <td className="border border-slate-200 px-3 py-2 align-top">{formatDate(item.expenseDate)}</td>
-                              <td className="border border-slate-200 px-3 py-2 align-top font-medium text-slate-900">{item.projectName}</td>
-                              <td className="border border-slate-200 px-3 py-2 align-top">{item.requesterName ?? "-"}</td>
-                              <td className="border border-slate-200 px-3 py-2 align-top">
-                                <p>{item.description ?? "-"}</p>
-                                <p className="text-xs text-slate-500">{item.usageInfo ?? "-"}</p>
-                              </td>
-                              <td
-                                className={`border border-slate-200 px-3 py-2 text-right font-semibold ${
-                                  item.amount < 0 ? "text-rose-700" : "text-emerald-700"
-                                }`}
-                              >
-                                {formatCurrency(item.amount)}
-                              </td>
-                              <td className="border border-slate-200 px-3 py-2 text-right align-top">
-                                <Link
-                                  href={createProjectsHref({
-                                    projectId: item.projectId,
-                                    searchText,
-                                    view: "rekap",
-                                  })}
-                                  className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:text-blue-900"
-                                >
-                                  <span className="btn-icon bg-blue-100 text-blue-700">
-                                    <EyeIcon />
-                                  </span>
-                                  Lihat Rekap
-                                </Link>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    <ExpenseDetailSearchResults
+                      results={detailSearchResults}
+                      projectSearchText={searchText}
+                    />
                   </div>
                 )}
               </div>

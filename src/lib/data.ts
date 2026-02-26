@@ -1094,7 +1094,11 @@ function buildExpenseSearchHaystack(row: {
   recipientName?: string | null;
   category?: string | null;
   projectName?: string | null;
+  amount?: number | null;
 }) {
+  const amountValue = Number(row.amount ?? 0);
+  const normalizedAmount = Number.isFinite(amountValue) ? Math.round(Math.abs(amountValue)) : 0;
+  const groupedAmount = normalizedAmount.toLocaleString("id-ID");
   return [
     row.description ?? "",
     row.usageInfo ?? "",
@@ -1103,9 +1107,41 @@ function buildExpenseSearchHaystack(row: {
     row.projectName ?? "",
     row.category ? getCostCategoryLabel(row.category) : "",
     row.category ?? "",
+    String(amountValue),
+    String(normalizedAmount),
+    groupedAmount,
+    `rp ${groupedAmount}`,
+    `rp${groupedAmount}`,
   ]
     .join(" ")
     .toLowerCase();
+}
+
+function getSearchDigits(value: string) {
+  return value.replace(/\D/g, "");
+}
+
+function matchExpenseSearchQuery(
+  row: {
+    requesterName?: string | null;
+    description?: string | null;
+    usageInfo?: string | null;
+    recipientName?: string | null;
+    category?: string | null;
+    projectName?: string | null;
+    amount?: number | null;
+  },
+  normalizedQuery: string,
+  queryDigits: string,
+) {
+  if (buildExpenseSearchHaystack(row).includes(normalizedQuery)) {
+    return true;
+  }
+  if (!queryDigits) {
+    return false;
+  }
+  const amountDigits = getSearchDigits(String(Math.round(Math.abs(Number(row.amount ?? 0)))));
+  return amountDigits.includes(queryDigits);
 }
 
 function mapExpenseSearchResult(row: ExpenseEntry, projectName: string): ProjectExpenseSearchResult {
@@ -1136,17 +1172,18 @@ export async function searchExpenseDetails(
   queryText: string,
   limit = 200,
 ): Promise<ProjectExpenseSearchResult[]> {
-  const normalizedQuery = queryText.trim().toLowerCase();
+  const normalizedQuery = queryText.trim().toLowerCase().replace(/\s+/g, " ");
   if (!normalizedQuery) {
     return [];
   }
+  const queryDigits = getSearchDigits(normalizedQuery);
 
   if (activeDataSource === "excel") {
     const db = readExcelDatabase();
     const projectMap = Object.fromEntries(db.projects.map((project) => [project.id, project.name]));
     return db.project_expenses
       .map((row) => mapExpense(row, projectMap[row.project_id]))
-      .filter((row) => buildExpenseSearchHaystack(row).includes(normalizedQuery))
+      .filter((row) => matchExpenseSearchQuery(row, normalizedQuery, queryDigits))
       .map((row) => mapExpenseSearchResult(row, row.projectName?.trim() || "Project"))
       .sort(sortExpenseSearchResults)
       .slice(0, limit);
@@ -1158,26 +1195,14 @@ export async function searchExpenseDetails(
       return [];
     }
 
-    const keyword = normalizedQuery.replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
-    if (!keyword) {
-      return [];
-    }
-    const likePattern = `%${keyword}%`;
+    const fetchLimit = Math.min(Math.max(limit * 12, 1200), 5000);
     const { data, error } = await supabase
       .from("project_expenses")
       .select(
         "id, project_id, requester_name, description, recipient_name, usage_info, category, amount, expense_date, projects(name)",
       )
-      .or(
-        [
-          `description.ilike.${likePattern}`,
-          `usage_info.ilike.${likePattern}`,
-          `requester_name.ilike.${likePattern}`,
-          `recipient_name.ilike.${likePattern}`,
-        ].join(","),
-      )
       .order("expense_date", { ascending: false })
-      .limit(limit);
+      .limit(fetchLimit);
 
     if (error || !data) {
       return [];
@@ -1186,11 +1211,13 @@ export async function searchExpenseDetails(
     return data
       .map((row) => {
         const mapped = mapExpense(row, resolveJoinName(row.projects));
-        return mapExpenseSearchResult(
+        return {
           mapped,
-          resolveJoinName(row.projects)?.trim() || mapped.projectName?.trim() || "Project",
-        );
+          projectName: resolveJoinName(row.projects)?.trim() || mapped.projectName?.trim() || "Project",
+        };
       })
+      .filter((item) => matchExpenseSearchQuery(item.mapped, normalizedQuery, queryDigits))
+      .map((item) => mapExpenseSearchResult(item.mapped, item.projectName))
       .sort(sortExpenseSearchResults)
       .slice(0, limit);
   }
@@ -1206,14 +1233,14 @@ export async function searchExpenseDetails(
 
     return expenseRows
       .map((row) => mapExpense(row, projectMap[String(row.project_id ?? "")]))
-      .filter((row) => buildExpenseSearchHaystack(row).includes(normalizedQuery))
+      .filter((row) => matchExpenseSearchQuery(row, normalizedQuery, queryDigits))
       .map((row) => mapExpenseSearchResult(row, row.projectName?.trim() || "Project"))
       .sort(sortExpenseSearchResults)
       .slice(0, limit);
   }
 
   return sampleExpenses
-    .filter((row) => buildExpenseSearchHaystack(row).includes(normalizedQuery))
+    .filter((row) => matchExpenseSearchQuery(row, normalizedQuery, queryDigits))
     .map((row) => mapExpenseSearchResult(row, row.projectName?.trim() || "Project"))
     .sort(sortExpenseSearchResults)
     .slice(0, limit);

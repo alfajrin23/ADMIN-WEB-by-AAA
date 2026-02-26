@@ -671,7 +671,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                   <input
                     name="detail_q"
                     defaultValue={detailSearchQuery}
-                    placeholder="Contoh: hebel, baut, mesin bor"
+                    placeholder="Contoh: hebel, proyek gudang, 1.500.000"
                     autoFocus
                     autoComplete="off"
                   />
@@ -682,16 +682,16 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
 
                 {!detailSearchQuery ? (
                   <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600">
-                    Isi kata kunci rincian untuk mencari data di semua project.
+                    Isi kata kunci rincian, nama project, atau nominal untuk mencari data di semua project.
                   </p>
                 ) : detailSearchResults.length === 0 ? (
                   <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-4 text-sm text-amber-700">
-                    Data rincian &quot;{detailSearchQuery}&quot; tidak ditemukan di semua project.
+                    Data untuk kata kunci &quot;{detailSearchQuery}&quot; tidak ditemukan di semua project.
                   </p>
                 ) : (
                   <div className="space-y-2">
                     <p className="text-xs text-slate-500">
-                      Ditemukan {detailSearchResults.length} data rincian untuk kata kunci &quot;
+                      Ditemukan {detailSearchResults.length} data untuk kata kunci &quot;
                       {detailSearchQuery}&quot;.
                     </p>
                     <div className="overflow-x-auto rounded-xl border border-slate-200">

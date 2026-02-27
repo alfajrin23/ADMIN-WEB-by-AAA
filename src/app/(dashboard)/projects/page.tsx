@@ -54,6 +54,7 @@ type ProjectPageProps = {
     modal?: string;
     q?: string;
     detail_q?: string;
+    success?: string;
     view?: string;
   }>;
 };
@@ -149,6 +150,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
 
   const modalParam = typeof params.modal === "string" ? params.modal : "";
   const detailSearchQuery = typeof params.detail_q === "string" ? params.detail_q.trim() : "";
+  const success = typeof params.success === "string" ? params.success : "";
   const requestedModal: ModalType | null =
     modalParam === "project-new" ||
     modalParam === "expense-new" ||
@@ -182,6 +184,12 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
     view: activeView,
   });
   const openExpenseModalHref = createProjectsHref({
+    projectId: currentProjectQueryId,
+    modal: "expense-new",
+    searchText,
+    view: activeView,
+  });
+  const expenseModalReturnHref = createProjectsHref({
     projectId: currentProjectQueryId,
     modal: "expense-new",
     searchText,
@@ -234,6 +242,11 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
       {blockedModalMessage ? (
         <section className="panel border-amber-300 bg-amber-50 p-4">
           <p className="text-sm text-amber-700">{blockedModalMessage}</p>
+        </section>
+      ) : null}
+      {success ? (
+        <section className="panel border-emerald-300 bg-emerald-50 p-4">
+          <p className="text-sm text-emerald-700">{success}</p>
         </section>
       ) : null}
 
@@ -836,7 +849,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
             ) : (
               <form id="expense-modal-form" action={createExpenseAction} className="mt-4 space-y-3">
                 <EnterToNextField formId="expense-modal-form" />
-                <input type="hidden" name="return_to" value={closeModalHref} />
+                <input type="hidden" name="return_to" value={expenseModalReturnHref} />
                 <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">
                   Field wajib
                 </div>
@@ -891,13 +904,11 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">
-                      Mode transaksi
-                    </label>
-                    <select name="amount_mode" defaultValue="tambah">
-                      <option value="tambah">Tambah</option>
-                      <option value="kurangi">Kurangi</option>
-                    </select>
+                    <input type="hidden" name="amount_mode" value="tambah" />
+                    <label className="mb-1 block text-xs font-medium text-slate-500">Mode transaksi</label>
+                    <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                      Otomatis <strong>Tambah</strong>.
+                    </p>
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-medium text-slate-500">
@@ -910,27 +921,58 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700">
                   Field opsional
                 </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-500">
-                    Kategori baru (opsional)
-                  </label>
-                  <input
-                    name="category_custom"
-                    placeholder="Isi jika ingin menambah kategori baru"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-500">
-                    Penerima / vendor
-                  </label>
-                  <input name="recipient_name" placeholder="Opsional" />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-500">
-                    Informasi penggunaan
-                  </label>
-                  <input name="usage_info" placeholder="Contoh: OPS bensin lapangan" />
-                </div>
+                <details className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                  <summary className="cursor-pointer text-xs font-semibold text-slate-700">
+                    Rincian Baru (opsional)
+                  </summary>
+                  <div className="mt-3 space-y-3">
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-500">
+                        Kategori baru (opsional)
+                      </label>
+                      <input
+                        name="category_custom"
+                        placeholder="Isi jika ingin menambah kategori baru"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-500">
+                        Penerima / vendor
+                      </label>
+                      <input name="recipient_name" placeholder="Opsional" />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-500">
+                        Informasi penggunaan
+                      </label>
+                      <input name="usage_info" placeholder="Contoh: OPS bensin lapangan" />
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-slate-500">
+                          Spesialis (preset)
+                        </label>
+                        <select name="specialist_type" defaultValue="">
+                          <option value="">Pilih jika kategori Upah Tim Spesialis</option>
+                          {SPECIALIST_COST_PRESETS.map((item) => (
+                            <option key={item.value} value={item.value}>
+                              {item.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-slate-500">
+                          Spesialis (custom)
+                        </label>
+                        <input
+                          name="specialist_type_custom"
+                          placeholder="Contoh: Plumbing, Finishing, Mekanikal"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </details>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div>
                     <label className="mb-1 block text-xs font-medium text-slate-500">Qty</label>
@@ -947,37 +989,12 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                     <RupiahInput name="unit_price" placeholder="0" />
                   </div>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">
-                      Spesialis (preset)
-                    </label>
-                    <select name="specialist_type" defaultValue="">
-                      <option value="">Pilih jika kategori Upah Tim Spesialis</option>
-                      {SPECIALIST_COST_PRESETS.map((item) => (
-                        <option key={item.value} value={item.value}>
-                          {item.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">
-                      Spesialis (custom)
-                    </label>
-                    <input
-                      name="specialist_type_custom"
-                      placeholder="Contoh: Plumbing, Finishing, Mekanikal"
-                    />
-                  </div>
-                </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-500">
                     Catatan mode
                   </label>
                   <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                    Pilih <strong>Tambah</strong> untuk menambah biaya, pilih <strong>Kurangi</strong>{" "}
-                    untuk pengurangan biaya/correksi.
+                    Mode transaksi untuk form ini otomatis <strong>Tambah</strong>.
                   </p>
                 </div>
                 <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-600">

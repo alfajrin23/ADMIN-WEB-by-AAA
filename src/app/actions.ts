@@ -78,6 +78,14 @@ function getReturnTo(formData: FormData) {
   return value.startsWith("/") ? value : null;
 }
 
+function withReturnMessage(returnTo: string, key: string, message: string) {
+  const [rawPath, rawQuery = ""] = returnTo.split("?");
+  const params = new URLSearchParams(rawQuery);
+  params.set(key, message);
+  const query = params.toString();
+  return query ? `${rawPath}?${query}` : rawPath;
+}
+
 function isChecked(formData: FormData, key: string) {
   const value = formData.get(key);
   return value === "1" || value === "on" || value === "true";
@@ -968,7 +976,11 @@ export async function createExpenseAction(formData: FormData) {
     },
   });
   if (returnTo) {
-    redirect(returnTo);
+    const successMessage =
+      projectIds.length > 1
+        ? `Biaya berhasil disimpan ke ${projectIds.length} project.`
+        : "Biaya berhasil disimpan.";
+    redirect(withReturnMessage(returnTo, "success", successMessage));
   }
 }
 

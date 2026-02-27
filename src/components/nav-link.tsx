@@ -8,13 +8,14 @@ type NavLinkProps = {
   children: ReactNode;
   href: string;
   icon?: ReactNode;
-  tone?: "overview" | "projects" | "attendance";
+  tone?: "overview" | "projects" | "attendance" | "logs";
 };
 
 const toneClass = {
   overview: "from-blue-600 to-cyan-500",
   projects: "from-emerald-600 to-teal-500",
   attendance: "from-amber-600 to-orange-500",
+  logs: "from-indigo-600 to-violet-500",
 };
 
 export function NavLink({ children, href, icon, tone = "overview" }: NavLinkProps) {

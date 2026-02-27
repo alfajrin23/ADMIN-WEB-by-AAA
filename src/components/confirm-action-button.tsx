@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useState, type MouseEvent, type ReactNode } from "react";
 import { CloseIcon } from "@/components/icons";
 
 type ConfirmActionButtonProps = {
@@ -27,6 +27,20 @@ export function ConfirmActionButton({
   const titleId = useId();
   const descId = useId();
 
+  const handleClose = useCallback(() => {
+    setIsOpen(false);
+    setTargetForm(null);
+  }, []);
+
+  const handleConfirm = useCallback(() => {
+    const form = targetForm;
+    handleClose();
+    if (!form) {
+      return;
+    }
+    form.requestSubmit();
+  }, [handleClose, targetForm]);
+
   useEffect(() => {
     if (!isOpen) {
       return;
@@ -34,14 +48,20 @@ export function ConfirmActionButton({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setIsOpen(false);
-        setTargetForm(null);
+        event.preventDefault();
+        handleClose();
+        return;
       }
+      if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+      }
+      event.preventDefault();
+      handleConfirm();
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen]);
+  }, [handleClose, handleConfirm, isOpen]);
 
   const handleOpen = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -50,20 +70,6 @@ export function ConfirmActionButton({
     }
     setTargetForm(event.currentTarget.form);
     setIsOpen(true);
-  };
-
-  const handleClose = () => {
-    setIsOpen(false);
-    setTargetForm(null);
-  };
-
-  const handleConfirm = () => {
-    const form = targetForm;
-    handleClose();
-    if (!form) {
-      return;
-    }
-    form.requestSubmit();
   };
 
   return (

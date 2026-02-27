@@ -20,6 +20,7 @@ import { RupiahInput } from "@/components/rupiah-input";
 import { ATTENDANCE_STATUSES, WORKER_TEAM_LABEL, WORKER_TEAMS } from "@/lib/constants";
 import { getProjects, getWageRecap } from "@/lib/data";
 import { formatCurrency, formatDate } from "@/lib/format";
+import { canManageData, requireAuthUser } from "@/lib/auth";
 import { activeDataSource, getStorageLabel } from "@/lib/storage";
 
 type ModalType = "rekap-export" | "attendance-new" | "payroll-confirm";
@@ -85,6 +86,8 @@ function createAttendanceHref(params: {
 }
 
 export default async function AttendancePage({ searchParams }: AttendancePageProps) {
+  const user = await requireAuthUser();
+  const canEdit = canManageData(user.role);
   const params = await searchParams;
   const today = new Date().toISOString().slice(0, 10);
   const from = isDateString(params.from) ? String(params.from) : getMonthStartDate();
@@ -93,10 +96,16 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
   const selectedWorkers = parseWorkers(params.worker);
   const selectedAttendanceId = typeof params.attendance === "string" ? params.attendance : "";
   const modalParam = typeof params.modal === "string" ? params.modal : "";
-  const activeModal: ModalType | null =
+  const requestedModal: ModalType | null =
     modalParam === "rekap-export" || modalParam === "attendance-new" || modalParam === "payroll-confirm"
       ? modalParam
       : null;
+  let activeModal = requestedModal;
+  let blockedModalMessage = "";
+  if (!canEdit && (requestedModal === "attendance-new" || requestedModal === "payroll-confirm")) {
+    activeModal = null;
+    blockedModalMessage = "Role viewer hanya bisa melihat data. Edit/tambah absensi dinonaktifkan.";
+  }
 
   const [projects, wageRecap] = await Promise.all([
     getProjects(),
@@ -167,6 +176,11 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
           <p className="text-sm text-emerald-700">Sumber data aktif: {getStorageLabel()}</p>
         </section>
       ) : null}
+      {blockedModalMessage ? (
+        <section className="panel border-amber-300 bg-amber-50 p-4">
+          <p className="text-sm text-amber-700">{blockedModalMessage}</p>
+        </section>
+      ) : null}
 
       <section className="panel p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -177,16 +191,18 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Link
-              href={openAttendanceModalHref}
-              data-ui-button="true"
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600"
-            >
-              <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
-                <PlusIcon />
-              </span>
-              Input Absensi
-            </Link>
+            {canEdit ? (
+              <Link
+                href={openAttendanceModalHref}
+                data-ui-button="true"
+                className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600"
+              >
+                <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
+                  <PlusIcon />
+                </span>
+                Input Absensi
+              </Link>
+            ) : null}
             <form
               id="attendance-recap-selection-form"
               action="/attendance"
@@ -281,7 +297,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                           </td>
                           <td className="py-2">
                             <div className="flex items-center justify-end gap-3">
-                              {!item.payrollPaid ? (
+                              {canEdit && !item.payrollPaid ? (
                                 <Link
                                   href={openPayrollModalHref}
                                   className="inline-flex items-center gap-1 text-xs font-medium text-indigo-700 hover:text-indigo-900"
@@ -301,28 +317,32 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                                 </span>
                                 Lihat
                               </Link>
-                              <Link
-                                href={`/attendance/edit?id=${item.id}`}
-                                className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:text-emerald-900"
-                              >
-                                <span className="btn-icon bg-emerald-100 text-emerald-700">
-                                  <EditIcon />
-                                </span>
-                                Edit
-                              </Link>
-                              <form action={deleteAttendanceAction}>
-                                <input type="hidden" name="attendance_id" value={item.id} />
-                                <input type="hidden" name="return_to" value={returnToAttendance} />
-                                <ConfirmActionButton
-                                  className="inline-flex items-center gap-1 text-xs font-medium text-rose-700 hover:text-rose-900"
-                                  modalDescription="Yakin ingin menghapus data absensi ini?"
-                                >
-                                  <span className="btn-icon bg-rose-100 text-rose-700">
-                                    <TrashIcon />
-                                  </span>
-                                  Hapus
-                                </ConfirmActionButton>
-                              </form>
+                              {canEdit ? (
+                                <>
+                                  <Link
+                                    href={`/attendance/edit?id=${item.id}`}
+                                    className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:text-emerald-900"
+                                  >
+                                    <span className="btn-icon bg-emerald-100 text-emerald-700">
+                                      <EditIcon />
+                                    </span>
+                                    Edit
+                                  </Link>
+                                  <form action={deleteAttendanceAction}>
+                                    <input type="hidden" name="attendance_id" value={item.id} />
+                                    <input type="hidden" name="return_to" value={returnToAttendance} />
+                                    <ConfirmActionButton
+                                      className="inline-flex items-center gap-1 text-xs font-medium text-rose-700 hover:text-rose-900"
+                                      modalDescription="Yakin ingin menghapus data absensi ini?"
+                                    >
+                                      <span className="btn-icon bg-rose-100 text-rose-700">
+                                        <TrashIcon />
+                                      </span>
+                                      Hapus
+                                    </ConfirmActionButton>
+                                  </form>
+                                </>
+                              ) : null}
                             </div>
                           </td>
                         </tr>

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { updateProjectAction } from "@/app/actions";
 import { SaveIcon } from "@/components/icons";
+import { requireEditorUser } from "@/lib/auth";
 import { PROJECT_STATUSES } from "@/lib/constants";
 import { getProjectById } from "@/lib/data";
 
@@ -10,6 +11,7 @@ type EditProjectPageProps = {
 };
 
 export default async function EditProjectPage({ searchParams }: EditProjectPageProps) {
+  await requireEditorUser();
   const params = await searchParams;
   const projectId = typeof params.id === "string" ? params.id : "";
   const project = await getProjectById(projectId);

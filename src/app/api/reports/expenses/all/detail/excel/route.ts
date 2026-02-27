@@ -181,7 +181,33 @@ export async function GET(request: Request) {
     "COST OPS": grandTotals.ops,
     "PENGELUARAN TOTAL": grandTotals.total,
   });
-  const summarySheet = XLSX.utils.json_to_sheet(summaryRows);
+  const summaryHeaders = [
+    "PROJECT",
+    "COST MATERIAL",
+    "ALAT",
+    "COST UPAH/KASBON",
+    "COST OPS",
+    "PENGELUARAN TOTAL",
+  ];
+  const summarySheetRows: Array<Array<string | number>> = [
+    ["REKAP KESELURUHAN RINCIAN BIAYA"],
+    [`Dicetak ${new Date().toLocaleString("id-ID")}`],
+    [],
+    summaryHeaders,
+    ...summaryRows.map((row) => [
+      String(row.PROJECT ?? ""),
+      Number(row["COST MATERIAL"] ?? 0),
+      Number(row.ALAT ?? 0),
+      Number(row["COST UPAH/KASBON"] ?? 0),
+      Number(row["COST OPS"] ?? 0),
+      Number(row["PENGELUARAN TOTAL"] ?? 0),
+    ]),
+  ];
+  const summarySheet = XLSX.utils.aoa_to_sheet(summarySheetRows);
+  summarySheet["!merges"] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } },
+  ];
   summarySheet["!cols"] = [
     { wch: 34 },
     { wch: 16 },
@@ -190,7 +216,7 @@ export async function GET(request: Request) {
     { wch: 14 },
     { wch: 20 },
   ];
-  appendUniqueSheet(workbook, summarySheet, "Ringkasan Rincian");
+  appendUniqueSheet(workbook, summarySheet, "Rekap Keseluruhan");
 
   const infoSheet = XLSX.utils.aoa_to_sheet([
     ["LAPORAN", "RINCIAN BIAYA PROJECT"],

@@ -4,6 +4,7 @@ import { deleteAttendanceAction, updateAttendanceAction } from "@/app/actions";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { SaveIcon, TrashIcon } from "@/components/icons";
 import { RupiahInput } from "@/components/rupiah-input";
+import { requireEditorUser } from "@/lib/auth";
 import { ATTENDANCE_STATUSES, WORKER_TEAMS } from "@/lib/constants";
 import { getAttendanceById, getProjects } from "@/lib/data";
 
@@ -12,6 +13,7 @@ type EditAttendancePageProps = {
 };
 
 export default async function EditAttendancePage({ searchParams }: EditAttendancePageProps) {
+  await requireEditorUser();
   const params = await searchParams;
   const attendanceId = typeof params.id === "string" ? params.id : "";
   const [attendance, projects] = await Promise.all([

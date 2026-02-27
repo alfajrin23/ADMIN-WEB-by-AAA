@@ -42,6 +42,7 @@ import {
   searchExpenseDetails,
 } from "@/lib/data";
 import { formatCurrency, formatDate } from "@/lib/format";
+import { canImportData, canManageData, requireAuthUser } from "@/lib/auth";
 import { activeDataSource, getStorageLabel } from "@/lib/storage";
 
 type ModalType = "project-new" | "expense-new" | "excel-import" | "detail-search";
@@ -91,21 +92,34 @@ function createProjectsHref(params: {
 }
 
 export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
+  const user = await requireAuthUser();
+  const canEdit = canManageData(user.role);
+  const canImport = canImportData(user.role);
   const params = await searchParams;
   const [projects, expenseCategories] = await Promise.all([getProjects(), getExpenseCategories()]);
   const today = new Date().toISOString().slice(0, 10);
   const defaultExpenseCategory = expenseCategories[0]?.value ?? COST_CATEGORIES[0].value;
 
-  const requestedProjectId =
-    typeof params.project === "string" ? params.project : undefined;
-  const selectedProjectId =
-    projects.find((item) => item.id === requestedProjectId)?.id ?? projects[0]?.id;
+  const requestedProjectId = typeof params.project === "string" ? params.project : undefined;
+  const hasRequestedProjectId =
+    typeof requestedProjectId === "string" &&
+    projects.some((item) => item.id === requestedProjectId);
+  const currentProjectQueryId = hasRequestedProjectId ? requestedProjectId : undefined;
+  const selectedProjectId = currentProjectQueryId ?? projects[0]?.id;
   const viewParam = typeof params.view === "string" ? params.view : "";
   const activeView: ProjectView = viewParam === "rekap" ? "rekap" : "list";
   const selectedProject =
     activeView === "rekap" && selectedProjectId
       ? await getProjectDetail(selectedProjectId)
       : null;
+  const scopedReportProjectIds =
+    activeView === "rekap" && selectedProject?.project.id && currentProjectQueryId
+      ? [selectedProject.project.id]
+      : undefined;
+  const reportScopeLabel =
+    scopedReportProjectIds && selectedProject
+      ? `Filter laporan aktif: ${selectedProject.project.name}`
+      : "Filter laporan aktif: Semua project";
   const recapExpenses = selectedProject
     ? selectedProject.expenses
         .slice()
@@ -135,55 +149,72 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
 
   const modalParam = typeof params.modal === "string" ? params.modal : "";
   const detailSearchQuery = typeof params.detail_q === "string" ? params.detail_q.trim() : "";
-  const activeModal: ModalType | null =
+  const requestedModal: ModalType | null =
     modalParam === "project-new" ||
     modalParam === "expense-new" ||
     modalParam === "excel-import" ||
     modalParam === "detail-search"
       ? modalParam
       : null;
+  let activeModal = requestedModal;
+  let blockedModalMessage = "";
+  if (!canEdit && (requestedModal === "project-new" || requestedModal === "expense-new")) {
+    activeModal = null;
+    blockedModalMessage = "Role viewer hanya bisa melihat data. Tambah/edit dinonaktifkan.";
+  }
+  if (!canImport && requestedModal === "excel-import") {
+    activeModal = null;
+    blockedModalMessage = "Import Excel hanya tersedia untuk role developer.";
+  }
   const detailSearchResults =
     activeModal === "detail-search" && detailSearchQuery
       ? await searchExpenseDetails(detailSearchQuery, 240)
       : [];
   const closeModalHref = createProjectsHref({
-    projectId: selectedProjectId,
+    projectId: currentProjectQueryId,
     searchText,
     view: activeView,
   });
   const openProjectModalHref = createProjectsHref({
-    projectId: selectedProjectId,
+    projectId: currentProjectQueryId,
     modal: "project-new",
     searchText,
     view: activeView,
   });
   const openExpenseModalHref = createProjectsHref({
-    projectId: selectedProjectId,
+    projectId: currentProjectQueryId,
     modal: "expense-new",
     searchText,
     view: activeView,
   });
   const openImportModalHref = createProjectsHref({
-    projectId: selectedProjectId,
+    projectId: currentProjectQueryId,
     modal: "excel-import",
     searchText,
     view: activeView,
   });
   const openDetailSearchModalHref = createProjectsHref({
-    projectId: selectedProjectId,
+    projectId: currentProjectQueryId,
     modal: "detail-search",
     searchText,
     view: activeView,
   });
   const listViewHref = createProjectsHref({
-    projectId: selectedProjectId,
+    projectId: currentProjectQueryId,
     searchText,
     view: "list",
   });
   const recapViewHref = createProjectsHref({
-    projectId: selectedProjectId,
+    projectId: currentProjectQueryId,
     searchText,
     view: "rekap",
+  });
+  const detailSearchReturnHref = createProjectsHref({
+    projectId: currentProjectQueryId,
+    modal: "detail-search",
+    searchText,
+    detailSearchQuery,
+    view: activeView,
   });
 
   return (
@@ -200,6 +231,11 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
           <p className="text-sm text-emerald-700">Sumber data aktif: {getStorageLabel()}</p>
         </section>
       ) : null}
+      {blockedModalMessage ? (
+        <section className="panel border-amber-300 bg-amber-50 p-4">
+          <p className="text-sm text-amber-700">{blockedModalMessage}</p>
+        </section>
+      ) : null}
 
       <section className="panel p-5">
         <div className="grid gap-4 xl:grid-cols-[1fr_auto]">
@@ -210,26 +246,30 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
             </p>
           </div>
           <div className="flex flex-wrap justify-start gap-2 xl:justify-end">
-            <Link
-              href={openProjectModalHref}
-              data-ui-button="true"
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
-            >
-              <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
-                <PlusIcon />
-              </span>
-              Tambah Project
-            </Link>
-            <Link
-              href={openExpenseModalHref}
-              data-ui-button="true"
-              className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-600"
-            >
-              <span className="btn-icon icon-float-soft bg-white/20 text-white">
-                <CashInIcon />
-              </span>
-              Input Biaya
-            </Link>
+            {canEdit ? (
+              <>
+                <Link
+                  href={openProjectModalHref}
+                  data-ui-button="true"
+                  className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+                >
+                  <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
+                    <PlusIcon />
+                  </span>
+                  Tambah Project
+                </Link>
+                <Link
+                  href={openExpenseModalHref}
+                  data-ui-button="true"
+                  className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-600"
+                >
+                  <span className="btn-icon icon-float-soft bg-white/20 text-white">
+                    <CashInIcon />
+                  </span>
+                  Input Biaya
+                </Link>
+              </>
+            ) : null}
             <Link
               href={openDetailSearchModalHref}
               data-ui-button="true"
@@ -237,7 +277,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
             >
               Cari Rincian
             </Link>
-            {activeDataSource !== "demo" ? (
+            {activeDataSource !== "demo" && canImport ? (
               <Link
                 href={openImportModalHref}
                 data-ui-button="true"
@@ -253,11 +293,13 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
 
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 xl:col-span-2">
             <p className="mb-2 text-xs font-semibold text-slate-600">Export Laporan (Preview dulu)</p>
+            <p className="mb-2 text-[11px] text-slate-500">{reportScopeLabel}</p>
             <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
               <ReportDownloadPreviewButton
                 label="PDF Rekapan Project"
                 iconType="pdf"
                 downloadPath="/api/reports/expenses/all"
+                projectIds={scopedReportProjectIds}
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-700 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-600"
               />
               <ReportDownloadPreviewButton
@@ -265,12 +307,14 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 iconType="excel"
                 downloadPath="/api/reports/expenses/all/excel"
                 previewPath="/api/reports/expenses/all"
+                projectIds={scopedReportProjectIds}
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600"
               />
               <ReportDownloadPreviewButton
                 label="PDF Rincian Biaya"
                 iconType="detail"
                 downloadPath="/api/reports/expenses/all/detail"
+                projectIds={scopedReportProjectIds}
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-600"
               />
               <ReportDownloadPreviewButton
@@ -278,6 +322,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 iconType="excel"
                 downloadPath="/api/reports/expenses/all/detail/excel"
                 previewPath="/api/reports/expenses/all/detail"
+                projectIds={scopedReportProjectIds}
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600"
               />
             </div>
@@ -341,7 +386,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 type="hidden"
                 name="return_to"
                 value={createProjectsHref({
-                  projectId: selectedProjectId,
+                  projectId: currentProjectQueryId,
                   searchText,
                   view: "list",
                 })}
@@ -380,16 +425,18 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 selectedOnly
                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-teal-700 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-600"
               />
-              <ConfirmActionButton
-                className="inline-flex items-center justify-center gap-2 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100"
-                modalDescription="Yakin ingin menghapus semua project yang dipilih beserta data biaya dan absensinya?"
-                confirmLabel="Ya, Hapus Semua"
-              >
-                <span className="btn-icon bg-rose-100 text-rose-700">
-                  <TrashIcon />
-                </span>
-                Hapus Project Terpilih
-              </ConfirmActionButton>
+              {canEdit ? (
+                <ConfirmActionButton
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+                  modalDescription="Yakin ingin menghapus semua project yang dipilih beserta data biaya dan absensinya?"
+                  confirmLabel="Ya, Hapus Semua"
+                >
+                  <span className="btn-icon bg-rose-100 text-rose-700">
+                    <TrashIcon />
+                  </span>
+                  Hapus Project Terpilih
+                </ConfirmActionButton>
+              ) : null}
             </form>
           </div>
 
@@ -446,39 +493,43 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                           </span>
                           Lihat
                         </Link>
-                        <Link
-                          href={`/projects/edit?id=${project.id}`}
-                          className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:text-emerald-900"
-                        >
-                          <span className="btn-icon bg-emerald-100 text-emerald-700">
-                            <EditIcon />
-                          </span>
-                          Edit
-                        </Link>
-                        <form action={deleteProjectAction}>
-                          <input type="hidden" name="project_id" value={project.id} />
-                          <input
-                            type="hidden"
-                            name="return_to"
-                            value={createProjectsHref({
-                              projectId:
-                                selectedProjectId && selectedProjectId !== project.id
-                                  ? selectedProjectId
-                                  : undefined,
-                              searchText,
-                              view: "list",
-                            })}
-                          />
-                          <ConfirmActionButton
-                            className="inline-flex items-center gap-1 text-xs font-medium text-rose-700 hover:text-rose-900"
-                            modalDescription={`Yakin ingin menghapus project "${project.name}" beserta semua datanya?`}
-                          >
-                            <span className="btn-icon bg-rose-100 text-rose-700">
-                              <TrashIcon />
-                            </span>
-                            Hapus
-                          </ConfirmActionButton>
-                        </form>
+                        {canEdit ? (
+                          <>
+                            <Link
+                              href={`/projects/edit?id=${project.id}`}
+                              className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:text-emerald-900"
+                            >
+                              <span className="btn-icon bg-emerald-100 text-emerald-700">
+                                <EditIcon />
+                              </span>
+                              Edit
+                            </Link>
+                            <form action={deleteProjectAction}>
+                              <input type="hidden" name="project_id" value={project.id} />
+                              <input
+                                type="hidden"
+                                  name="return_to"
+                                  value={createProjectsHref({
+                                    projectId:
+                                      currentProjectQueryId && currentProjectQueryId !== project.id
+                                        ? currentProjectQueryId
+                                        : undefined,
+                                    searchText,
+                                    view: "list",
+                                  })}
+                                />
+                              <ConfirmActionButton
+                                className="inline-flex items-center gap-1 text-xs font-medium text-rose-700 hover:text-rose-900"
+                                modalDescription={`Yakin ingin menghapus project "${project.name}" beserta semua datanya?`}
+                              >
+                                <span className="btn-icon bg-rose-100 text-rose-700">
+                                  <TrashIcon />
+                                </span>
+                                Hapus
+                              </ConfirmActionButton>
+                            </form>
+                          </>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -583,36 +634,42 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                         </td>
                         <td className="border border-slate-200 px-3 py-2 align-top">
                           <div className="flex justify-end gap-3">
-                            <Link
-                              href={`/projects/expenses/edit?id=${item.id}`}
-                              className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:text-emerald-900"
-                            >
-                              <span className="btn-icon bg-emerald-100 text-emerald-700">
-                                <EditIcon />
-                              </span>
-                              Edit
-                            </Link>
-                            <form action={deleteExpenseAction}>
-                              <input type="hidden" name="expense_id" value={item.id} />
-                              <input
-                                type="hidden"
-                                name="return_to"
-                                value={createProjectsHref({
-                                  projectId: selectedProject.project.id,
-                                  searchText,
-                                  view: "rekap",
-                                })}
-                              />
-                              <ConfirmActionButton
-                                className="inline-flex items-center gap-1 text-xs font-medium text-rose-700 hover:text-rose-900"
-                                modalDescription="Yakin ingin menghapus data biaya ini?"
-                              >
-                                <span className="btn-icon bg-rose-100 text-rose-700">
-                                  <TrashIcon />
-                                </span>
-                                Hapus
-                              </ConfirmActionButton>
-                            </form>
+                            {canEdit ? (
+                              <>
+                                <Link
+                                  href={`/projects/expenses/edit?id=${item.id}`}
+                                  className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:text-emerald-900"
+                                >
+                                  <span className="btn-icon bg-emerald-100 text-emerald-700">
+                                    <EditIcon />
+                                  </span>
+                                  Edit
+                                </Link>
+                                <form action={deleteExpenseAction}>
+                                  <input type="hidden" name="expense_id" value={item.id} />
+                                  <input
+                                    type="hidden"
+                                    name="return_to"
+                                    value={createProjectsHref({
+                                      projectId: selectedProject.project.id,
+                                      searchText,
+                                      view: "rekap",
+                                    })}
+                                  />
+                                  <ConfirmActionButton
+                                    className="inline-flex items-center gap-1 text-xs font-medium text-rose-700 hover:text-rose-900"
+                                    modalDescription="Yakin ingin menghapus data biaya ini?"
+                                  >
+                                    <span className="btn-icon bg-rose-100 text-rose-700">
+                                      <TrashIcon />
+                                    </span>
+                                    Hapus
+                                  </ConfirmActionButton>
+                                </form>
+                              </>
+                            ) : (
+                              <span className="text-xs font-medium text-slate-500">Viewer</span>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -665,7 +722,9 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
             {activeModal === "detail-search" ? (
               <div className="mt-4 space-y-4">
                 <form method="get" className="grid gap-2 sm:grid-cols-[1fr_auto]">
-                  {selectedProjectId ? <input type="hidden" name="project" value={selectedProjectId} /> : null}
+                  {currentProjectQueryId ? (
+                    <input type="hidden" name="project" value={currentProjectQueryId} />
+                  ) : null}
                   {searchText ? <input type="hidden" name="q" value={searchText} /> : null}
                   <input type="hidden" name="view" value={activeView} />
                   <input type="hidden" name="modal" value="detail-search" />
@@ -698,6 +757,9 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                     <ExpenseDetailSearchResults
                       results={detailSearchResults}
                       projectSearchText={searchText}
+                      canEdit={canEdit}
+                      expenseCategories={expenseCategories}
+                      bulkEditReturnTo={detailSearchReturnHref}
                     />
                   </div>
                 )}

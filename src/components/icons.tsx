@@ -331,3 +331,41 @@ export function ImportIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function LogsIcon(props: IconProps) {
+  return (
+    <svg
+      width="100%"
+      height="100%"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      {...props}
+    >
+      <rect x="3" y="4" width="18" height="17" rx="2" />
+      <path d="M7 8h10M7 12h10M7 16h6" />
+      <path d="M16.5 16h.01" />
+    </svg>
+  );
+}
+
+export function LogoutIcon(props: IconProps) {
+  return (
+    <svg
+      width="100%"
+      height="100%"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      {...props}
+    >
+      <path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4" />
+      <path d="M10 16 6 12l4-4" />
+      <path d="M6 12h10" />
+      <path d="M4 4h6" />
+      <path d="M4 20h6" />
+    </svg>
+  );
+}

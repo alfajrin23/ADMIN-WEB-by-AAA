@@ -107,6 +107,14 @@ type ExpenseRow = {
   category: string;
 };
 
+type SummaryTotals = {
+  material: number;
+  alat: number;
+  upah: number;
+  ops: number;
+  total: number;
+};
+
 function toFileSlug(value: string) {
   return value
     .trim()
@@ -184,7 +192,10 @@ export async function GET(request: Request) {
   if (!hasAnyRows) {
     return new Response("Belum ada data biaya project.", { status: 404 });
   }
-  const reportProjectNames = selectedProjects
+  const reportProjects = selectedProjects.filter(
+    (project) => (rowsByProject.get(project.id) ?? []).length > 0,
+  );
+  const reportProjectNames = reportProjects
     .filter((project) => (rowsByProject.get(project.id) ?? []).length > 0)
     .map((project) => project.name);
 
@@ -373,7 +384,10 @@ export async function GET(request: Request) {
   };
 
   let renderedProjects = 0;
-  for (const project of selectedProjects) {
+  const summaryRows: Array<{ projectName: string } & SummaryTotals> = [];
+  const grandTotals: SummaryTotals = { material: 0, alat: 0, upah: 0, ops: 0, total: 0 };
+
+  for (const project of reportProjects) {
     const rows = rowsByProject.get(project.id) ?? [];
     if (rows.length === 0) {
       continue;
@@ -395,6 +409,7 @@ export async function GET(request: Request) {
       groupedByMonth.get(monthKey)?.push(row);
     }
 
+    const projectTotals: SummaryTotals = { material: 0, alat: 0, upah: 0, ops: 0, total: 0 };
     let rowNo = 1;
     for (const [monthKey, monthRows] of groupedByMonth.entries()) {
       const monthTotals = { material: 0, alat: 0, upah: 0, ops: 0, total: 0 };
@@ -407,6 +422,11 @@ export async function GET(request: Request) {
         monthTotals.upah += split.upah;
         monthTotals.ops += split.ops;
         monthTotals.total += row.amount;
+        projectTotals.material += split.material;
+        projectTotals.alat += split.alat;
+        projectTotals.upah += split.upah;
+        projectTotals.ops += split.ops;
+        projectTotals.total += row.amount;
 
         const values = [
           String(rowNo),
@@ -467,6 +487,95 @@ export async function GET(request: Request) {
       });
       y -= rowHeight;
     }
+
+    summaryRows.push({
+      projectName: project.name,
+      ...projectTotals,
+    });
+    grandTotals.material += projectTotals.material;
+    grandTotals.alat += projectTotals.alat;
+    grandTotals.upah += projectTotals.upah;
+    grandTotals.ops += projectTotals.ops;
+    grandTotals.total += projectTotals.total;
+  }
+
+  if (summaryRows.length > 0) {
+    page = pdf.addPage(pageSize);
+    y = page.getHeight() - margin;
+
+    const summaryTitle = "REKAP KESELURUHAN RINCIAN BIAYA";
+    const summaryTitleSize = 16;
+    const summaryTitleWidth = bold.widthOfTextAtSize(summaryTitle, summaryTitleSize);
+    page.drawText(summaryTitle, {
+      x: (page.getWidth() - summaryTitleWidth) / 2,
+      y,
+      size: summaryTitleSize,
+      font: bold,
+      color: rgb(0.08, 0.1, 0.12),
+    });
+    y -= 24;
+
+    const recapCols = [34, 380, 130, 110, 150, 110, 180];
+    const recapXAt = (index: number) =>
+      margin + recapCols.slice(0, index).reduce((sum, width) => sum + width, 0);
+
+    const drawRecapRow = (
+      values: string[],
+      fill?: readonly [number, number, number],
+      boldText = false,
+    ) => {
+      const recapRowHeight = 20;
+      if (y - recapRowHeight < margin + 12) {
+        page = pdf.addPage(pageSize);
+        y = page.getHeight() - margin;
+      }
+
+      for (let col = 0; col < recapCols.length; col += 1) {
+        const x = recapXAt(col);
+        drawRect(x, y, recapCols[col], recapRowHeight, fill);
+        drawCellText({
+          text: values[col] ?? "",
+          x,
+          topY: y,
+          width: recapCols[col],
+          height: recapRowHeight,
+          align: col === 0 ? "center" : col >= 2 ? "right" : "left",
+          boldText,
+          size: 8,
+        });
+      }
+      y -= recapRowHeight;
+    };
+
+    drawRecapRow(
+      ["NO", "PROJECT", "MATERIAL", "ALAT", "UPAH/KASBON", "OPS", "TOTAL"],
+      colorHeader,
+      true,
+    );
+    summaryRows.forEach((summary, index) => {
+      drawRecapRow([
+        String(index + 1),
+        summary.projectName,
+        formatCurrency(summary.material),
+        formatCurrency(summary.alat),
+        formatCurrency(summary.upah),
+        formatCurrency(summary.ops),
+        formatCurrency(summary.total),
+      ]);
+    });
+    drawRecapRow(
+      [
+        "",
+        "TOTAL KESELURUHAN",
+        formatCurrency(grandTotals.material),
+        formatCurrency(grandTotals.alat),
+        formatCurrency(grandTotals.upah),
+        formatCurrency(grandTotals.ops),
+        formatCurrency(grandTotals.total),
+      ],
+      colorTotal,
+      true,
+    );
   }
 
   const bytes = await pdf.save();

@@ -229,6 +229,26 @@ function seedProjectsFromWorkbook(workbook: XLSX.WorkBook): ProjectRow[] {
   );
 }
 
+function toIsoDateIfValid(yearText: string, monthText: string, dayText: string) {
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+    return null;
+  }
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
 function parseTemplateDate(value: unknown) {
   const todayDate = new Date().toISOString().slice(0, 10);
 
@@ -253,7 +273,10 @@ function parseTemplateDate(value: unknown) {
 
     const iso = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
     if (iso) {
-      return `${iso[1]}-${iso[2]}-${iso[3]}`;
+      const resolved = toIsoDateIfValid(iso[1], iso[2], iso[3]);
+      if (resolved) {
+        return resolved;
+      }
     }
 
     const idMonthMap: Record<string, string> = {
@@ -282,7 +305,10 @@ function parseTemplateDate(value: unknown) {
       const yearRaw = localized[3] ?? String(new Date().getFullYear());
       const year = yearRaw.length === 2 ? `20${yearRaw}` : yearRaw;
       if (month) {
-        return `${year}-${month}-${day}`;
+        const resolved = toIsoDateIfValid(year, month, day);
+        if (resolved) {
+          return resolved;
+        }
       }
     }
 
@@ -292,7 +318,10 @@ function parseTemplateDate(value: unknown) {
       const month = String(Number(localDate[2])).padStart(2, "0");
       const yearRaw = localDate[3];
       const year = yearRaw.length === 2 ? `20${yearRaw}` : yearRaw;
-      return `${year}-${month}-${day}`;
+      const resolved = toIsoDateIfValid(year, month, day);
+      if (resolved) {
+        return resolved;
+      }
     }
 
     const parsed = new Date(trimmed);
@@ -430,7 +459,9 @@ function isTemplateSubtotalRow(row: unknown[], description: string | null) {
 }
 
 function seedExpensesFromWorkbook(workbook: XLSX.WorkBook, projects: ProjectRow[]) {
-  const projectBySheet = new Map(projects.map((project) => [project.name.toUpperCase(), project.id]));
+  const projectBySheet = new Map(
+    projects.map((project) => [project.name.trim().toUpperCase(), project.id]),
+  );
   const expenses: ExpenseRow[] = [];
   const todayDate = new Date().toISOString().slice(0, 10);
 
@@ -438,7 +469,7 @@ function seedExpensesFromWorkbook(workbook: XLSX.WorkBook, projects: ProjectRow[
     if (!isTemplateProjectSheet(workbook, sheetName)) {
       continue;
     }
-    const projectId = projectBySheet.get(sheetName.toUpperCase());
+    const projectId = projectBySheet.get(sheetName.trim().toUpperCase());
     if (!projectId) {
       continue;
     }
@@ -900,9 +931,6 @@ function selectOpsColumn(map: DetailColumnMap) {
   }
   if (map.subcont != null) {
     return map.subcont;
-  }
-  if (map.perawatan != null) {
-    return map.perawatan;
   }
   return null;
 }
@@ -1558,6 +1586,34 @@ export function updateExcelExpense(payload: {
   return updated;
 }
 
+export function updateManyExcelExpenses(
+  expenseIds: string[],
+  payload: Partial<Omit<ExpenseRow, "id" | "created_at">>,
+) {
+  const targets = new Set(expenseIds.map((item) => item.trim()).filter((item) => item.length > 0));
+  if (targets.size === 0) {
+    return 0;
+  }
+
+  const db = readExcelDatabase();
+  let updatedCount = 0;
+  db.project_expenses = db.project_expenses.map((row) => {
+    if (!targets.has(row.id)) {
+      return row;
+    }
+    updatedCount += 1;
+    return {
+      ...row,
+      ...payload,
+    };
+  });
+
+  if (updatedCount > 0) {
+    writeDatabase(db);
+  }
+  return updatedCount;
+}
+
 export function deleteExcelExpense(expenseId: string) {
   const db = readExcelDatabase();
   const nextRows = db.project_expenses.filter((row) => row.id !== expenseId);
@@ -1781,11 +1837,45 @@ function resolveImportTemplatePath(templatePath?: string) {
 }
 
 function parseTemplateWorkbookRows(workbook: XLSX.WorkBook) {
-  const projects = seedProjectsFromWorkbook(workbook);
-  const project_expenses = seedExpensesFromWorkbook(workbook, projects);
+  const internalProjects = parseProjects(getSheetRows(workbook, "projects"));
+  const internalExpenses = parseExpenses(getSheetRows(workbook, "project_expenses"));
+  const internalProjectIdSet = new Set(internalProjects.map((project) => project.id));
+  const normalizedInternalExpenses =
+    internalProjectIdSet.size > 0
+      ? internalExpenses.filter((expense) => internalProjectIdSet.has(expense.project_id))
+      : internalExpenses.filter((expense) => expense.project_id.trim().length > 0);
+
+  const templateProjects = seedProjectsFromWorkbook(workbook);
+  const templateExpenses = seedExpensesFromWorkbook(workbook, templateProjects);
+
+  const hasInternal = internalProjects.length > 0 || normalizedInternalExpenses.length > 0;
+  const hasTemplate = templateProjects.length > 0 || templateExpenses.length > 0;
+
+  if (hasInternal && hasTemplate) {
+    const internalScore = normalizedInternalExpenses.length * 100_000 + internalProjects.length;
+    const templateScore = templateExpenses.length * 100_000 + templateProjects.length;
+    if (templateScore > internalScore) {
+      return {
+        projects: templateProjects,
+        project_expenses: templateExpenses,
+      };
+    }
+    return {
+      projects: internalProjects,
+      project_expenses: normalizedInternalExpenses,
+    };
+  }
+
+  if (hasInternal) {
+    return {
+      projects: internalProjects,
+      project_expenses: normalizedInternalExpenses,
+    };
+  }
+
   return {
-    projects,
-    project_expenses,
+    projects: templateProjects,
+    project_expenses: templateExpenses,
   };
 }
 

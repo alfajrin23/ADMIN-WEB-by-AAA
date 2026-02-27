@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CloseIcon, DetailIcon, DownloadIcon, ExcelIcon, PdfIcon } from "@/components/icons";
 
 type ReportIconType = "pdf" | "excel" | "detail";
@@ -13,6 +13,7 @@ type ReportDownloadPreviewButtonProps = {
   previewPath?: string;
   selectedFormId?: string;
   selectedOnly?: boolean;
+  projectIds?: string[];
 };
 
 function getSelectedProjectIds(formId: string) {
@@ -25,8 +26,35 @@ function getSelectedProjectIds(formId: string) {
     .filter((value) => value.length > 0);
 }
 
-function buildUrl(basePath: string, options: { selectedFormId?: string; selectedOnly?: boolean }) {
+function normalizeProjectIds(projectIds: string[] | undefined) {
+  return Array.from(
+    new Set(
+      (projectIds ?? [])
+        .map((projectId) => projectId.trim())
+        .filter((projectId) => projectId.length > 0),
+    ),
+  );
+}
+
+function buildUrl(
+  basePath: string,
+  options: { selectedFormId?: string; selectedOnly?: boolean; projectIds?: string[] },
+) {
   const url = new URL(basePath, window.location.origin);
+  const fixedProjectIds = normalizeProjectIds(options.projectIds);
+  if (fixedProjectIds.length > 0) {
+    url.searchParams.delete("selected_only");
+    url.searchParams.delete("project");
+    url.searchParams.set("selected_only", "1");
+    for (const projectId of fixedProjectIds) {
+      url.searchParams.append("project", projectId);
+    }
+    return {
+      href: `${url.pathname}${url.search}`,
+      hasSelection: true,
+    };
+  }
+
   if (!options.selectedOnly) {
     return {
       href: `${url.pathname}${url.search}`,
@@ -44,6 +72,8 @@ function buildUrl(basePath: string, options: { selectedFormId?: string; selected
     };
   }
 
+  url.searchParams.delete("selected_only");
+  url.searchParams.delete("project");
   url.searchParams.set("selected_only", "1");
   for (const projectId of selectedIds) {
     url.searchParams.append("project", projectId);
@@ -76,20 +106,46 @@ export function ReportDownloadPreviewButton({
   previewPath,
   selectedFormId,
   selectedOnly = false,
+  projectIds,
 }: ReportDownloadPreviewButtonProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [downloadHref, setDownloadHref] = useState("");
   const [previewHref, setPreviewHref] = useState("");
   const isExcel = useMemo(() => iconType === "excel", [iconType]);
 
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setIsOpen(false);
+        return;
+      }
+      if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+      }
+      event.preventDefault();
+      if (!downloadHref) {
+        return;
+      }
+      window.open(downloadHref, "_blank", "noopener,noreferrer");
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [downloadHref, isOpen]);
+
   const handleOpenPreview = () => {
-    const download = buildUrl(downloadPath, { selectedFormId, selectedOnly });
+    const download = buildUrl(downloadPath, { selectedFormId, selectedOnly, projectIds });
     if (!download.hasSelection) {
       window.alert("Pilih minimal satu project terlebih dahulu.");
       return;
     }
     const previewBase = previewPath ?? downloadPath;
-    const preview = buildUrl(previewBase, { selectedFormId, selectedOnly });
+    const preview = buildUrl(previewBase, { selectedFormId, selectedOnly, projectIds });
     setDownloadHref(download.href);
     setPreviewHref(withPreviewQuery(preview.href));
     setIsOpen(true);

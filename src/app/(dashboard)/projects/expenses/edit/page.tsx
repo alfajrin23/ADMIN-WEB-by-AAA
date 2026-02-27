@@ -4,6 +4,7 @@ import { deleteExpenseAction, updateExpenseAction } from "@/app/actions";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { SaveIcon, TrashIcon } from "@/components/icons";
 import { RupiahInput } from "@/components/rupiah-input";
+import { requireEditorUser } from "@/lib/auth";
 import { SPECIALIST_COST_PRESETS } from "@/lib/constants";
 import { getExpenseById, getExpenseCategories, getProjects } from "@/lib/data";
 
@@ -12,6 +13,7 @@ type EditExpensePageProps = {
 };
 
 export default async function EditExpensePage({ searchParams }: EditExpensePageProps) {
+  await requireEditorUser();
   const params = await searchParams;
   const expenseId = typeof params.id === "string" ? params.id : "";
   const [expense, projects, expenseCategories] = await Promise.all([

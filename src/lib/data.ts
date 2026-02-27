@@ -2,6 +2,7 @@ import {
   COST_CATEGORIES,
   type ExpenseCategoryOption,
   getCostCategoryLabel,
+  isHiddenCostCategory,
   mergeExpenseCategoryOptions,
   toCategorySlug,
   WORKER_TEAMS,
@@ -710,6 +711,14 @@ function mapExpense(row: Record<string, unknown>, projectName?: string): Expense
   };
 }
 
+function isVisibleExpense(entry: ExpenseEntry) {
+  return !isHiddenCostCategory(entry.category);
+}
+
+function filterVisibleExpenses(entries: ExpenseEntry[]) {
+  return entries.filter((entry) => isVisibleExpense(entry));
+}
+
 function mapAttendance(row: Record<string, unknown>, projectName?: string): AttendanceRecord {
   const rawWage = Number(row.daily_wage ?? 0);
   const rawKasbon = Number(row.kasbon_amount ?? 0);
@@ -995,6 +1004,7 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
     const expenses = db.project_expenses
       .filter((row) => row.project_id === projectId)
       .map((row) => mapExpense(row, project.name))
+      .filter((row) => isVisibleExpense(row))
       .sort((a, b) => a.expenseDate.localeCompare(b.expenseDate));
     const categoryOptions = mergeExpenseCategoryOptions(db.project_expenses.map((row) => row.category));
 
@@ -1040,7 +1050,9 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
       };
     }
 
-    const expenses = expenseRows.map((row) => mapExpense(row, String(projectRow.name ?? "")));
+    const expenses = expenseRows
+      .map((row) => mapExpense(row, String(projectRow.name ?? "")))
+      .filter((row) => isVisibleExpense(row));
     const categoryOptions = await getExpenseCategories();
     return {
       project: mapProject(projectRow),
@@ -1060,6 +1072,7 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
     const expenses = expenseRows
       .filter((row) => String(row.project_id ?? "") === projectId)
       .map((row) => mapExpense(row, project.name))
+      .filter((row) => isVisibleExpense(row))
       .sort((a, b) => a.expenseDate.localeCompare(b.expenseDate));
     const categoryOptions = await getExpenseCategories();
 
@@ -1078,6 +1091,7 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
   const expenses = sampleExpenses
     .filter((item) => item.projectId === projectId)
     .slice()
+    .filter((item) => isVisibleExpense(item))
     .sort((a, b) => a.expenseDate.localeCompare(b.expenseDate));
   const categoryOptions = mergeExpenseCategoryOptions(sampleExpenses.map((item) => item.category));
   return {
@@ -1183,6 +1197,7 @@ export async function searchExpenseDetails(
     const projectMap = Object.fromEntries(db.projects.map((project) => [project.id, project.name]));
     return db.project_expenses
       .map((row) => mapExpense(row, projectMap[row.project_id]))
+      .filter((row) => isVisibleExpense(row))
       .filter((row) => matchExpenseSearchQuery(row, normalizedQuery, queryDigits))
       .map((row) => mapExpenseSearchResult(row, row.projectName?.trim() || "Project"))
       .sort(sortExpenseSearchResults)
@@ -1216,6 +1231,7 @@ export async function searchExpenseDetails(
           projectName: resolveJoinName(row.projects)?.trim() || mapped.projectName?.trim() || "Project",
         };
       })
+      .filter((item) => isVisibleExpense(item.mapped))
       .filter((item) => matchExpenseSearchQuery(item.mapped, normalizedQuery, queryDigits))
       .map((item) => mapExpenseSearchResult(item.mapped, item.projectName))
       .sort(sortExpenseSearchResults)
@@ -1233,6 +1249,7 @@ export async function searchExpenseDetails(
 
     return expenseRows
       .map((row) => mapExpense(row, projectMap[String(row.project_id ?? "")]))
+      .filter((row) => isVisibleExpense(row))
       .filter((row) => matchExpenseSearchQuery(row, normalizedQuery, queryDigits))
       .map((row) => mapExpenseSearchResult(row, row.projectName?.trim() || "Project"))
       .sort(sortExpenseSearchResults)
@@ -1240,6 +1257,7 @@ export async function searchExpenseDetails(
   }
 
   return sampleExpenses
+    .filter((row) => isVisibleExpense(row))
     .filter((row) => matchExpenseSearchQuery(row, normalizedQuery, queryDigits))
     .map((row) => mapExpenseSearchResult(row, row.projectName?.trim() || "Project"))
     .sort(sortExpenseSearchResults)
@@ -1577,7 +1595,9 @@ export async function getDashboardData(): Promise<DashboardData> {
   if (activeDataSource === "excel") {
     const db = readExcelDatabase();
     const projectMap = Object.fromEntries(db.projects.map((project) => [project.id, project.name]));
-    const expenses = db.project_expenses.map((row) => mapExpense(row, projectMap[row.project_id]));
+    const expenses = filterVisibleExpenses(
+      db.project_expenses.map((row) => mapExpense(row, projectMap[row.project_id])),
+    );
     const attendance = db.attendance_records.map((row) => mapAttendance(row));
     const monthKey = new Date().toISOString().slice(0, 7);
     const projects = db.projects.map((row) => mapProject(row));
@@ -1643,12 +1663,12 @@ export async function getDashboardData(): Promise<DashboardData> {
     const projectNameMap = Object.fromEntries(
       (projectRows ?? []).map((row) => [String(row.id), String(row.name ?? "Project")]),
     );
-    const expenses = (expenseRows ?? []).map((row) =>
-      mapExpense(row, projectNameMap[String(row.project_id)]),
+    const expenses = filterVisibleExpenses(
+      (expenseRows ?? []).map((row) => mapExpense(row, projectNameMap[String(row.project_id)])),
     );
     const attendance = (attendanceRows ?? []).map((row) => mapAttendance(row));
-    const recentExpenses = (recentRows ?? []).map((row) =>
-      mapExpense(row, resolveJoinName(row.projects)),
+    const recentExpenses = filterVisibleExpenses(
+      (recentRows ?? []).map((row) => mapExpense(row, resolveJoinName(row.projects))),
     );
     const projects = (projectRows ?? []).map((row) => mapProject(row));
     const monthKey = new Date().toISOString().slice(0, 7);
@@ -1677,8 +1697,8 @@ export async function getDashboardData(): Promise<DashboardData> {
     const projectNameMap = Object.fromEntries(
       projectRows.map((row) => [String(row.id ?? ""), String(row.name ?? "Project")]),
     );
-    const expenses = expenseRows.map((row) =>
-      mapExpense(row, projectNameMap[String(row.project_id ?? "")]),
+    const expenses = filterVisibleExpenses(
+      expenseRows.map((row) => mapExpense(row, projectNameMap[String(row.project_id ?? "")])),
     );
     const attendance = attendanceRows.map((row) => mapAttendance(row));
     const projects = projectRows.map((row) => mapProject(row));
@@ -1706,21 +1726,23 @@ export async function getDashboardData(): Promise<DashboardData> {
   }
 
   const thisMonth = new Date().toISOString().slice(0, 7);
+  const sampleVisibleExpenses = filterVisibleExpenses(sampleExpenses);
   const monthExpense = sampleExpenses
     .filter((item) => item.expenseDate.startsWith(thisMonth))
+    .filter((item) => isVisibleExpense(item))
     .reduce((sum, item) => sum + item.amount, 0);
 
   return {
     totalProjects: sampleProjects.length,
-    totalExpense: sampleExpenses.reduce((sum, item) => sum + item.amount, 0),
+    totalExpense: sampleVisibleExpenses.reduce((sum, item) => sum + item.amount, 0),
     monthExpense,
     totalKasbon: sampleAttendance.reduce((sum, item) => sum + item.kasbonAmount, 0),
     categoryTotals: buildCategoryTotals(
-      sampleExpenses,
-      mergeExpenseCategoryOptions(sampleExpenses.map((item) => item.category)),
+      sampleVisibleExpenses,
+      mergeExpenseCategoryOptions(sampleVisibleExpenses.map((item) => item.category)),
     ),
-    recentExpenses: sampleExpenses,
-    projectExpenseTotals: buildProjectExpenseTotals(sampleExpenses, sampleProjects),
+    recentExpenses: sampleVisibleExpenses,
+    projectExpenseTotals: buildProjectExpenseTotals(sampleVisibleExpenses, sampleProjects),
     projectCountByClient: buildProjectCountByClient(sampleProjects),
   };
 }

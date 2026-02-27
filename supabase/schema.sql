@@ -239,3 +239,79 @@ create policy "payroll_resets_delete_all"
 on public.payroll_resets
 for delete
 using (true);
+
+create table if not exists public.app_users (
+  id uuid primary key default gen_random_uuid(),
+  full_name text not null,
+  username text not null unique,
+  password_hash text not null,
+  role text not null default 'viewer' check (role in ('dev', 'staff', 'viewer')),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.activity_logs (
+  id uuid primary key default gen_random_uuid(),
+  actor_id uuid references public.app_users(id) on delete set null,
+  actor_name text not null,
+  actor_username text,
+  actor_role text not null check (actor_role in ('dev', 'staff', 'viewer')),
+  action_type text not null,
+  module text not null,
+  entity_id text,
+  entity_name text,
+  description text not null,
+  payload jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_app_users_username on public.app_users(username);
+create index if not exists idx_app_users_role on public.app_users(role);
+create index if not exists idx_activity_logs_created_at on public.activity_logs(created_at desc);
+create index if not exists idx_activity_logs_actor_id on public.activity_logs(actor_id);
+
+alter table public.app_users enable row level security;
+alter table public.activity_logs enable row level security;
+
+drop policy if exists "app_users_select_all" on public.app_users;
+create policy "app_users_select_all"
+on public.app_users
+for select
+using (true);
+drop policy if exists "app_users_insert_all" on public.app_users;
+create policy "app_users_insert_all"
+on public.app_users
+for insert
+with check (true);
+drop policy if exists "app_users_update_all" on public.app_users;
+create policy "app_users_update_all"
+on public.app_users
+for update
+using (true)
+with check (true);
+drop policy if exists "app_users_delete_all" on public.app_users;
+create policy "app_users_delete_all"
+on public.app_users
+for delete
+using (true);
+
+drop policy if exists "activity_logs_select_all" on public.activity_logs;
+create policy "activity_logs_select_all"
+on public.activity_logs
+for select
+using (true);
+drop policy if exists "activity_logs_insert_all" on public.activity_logs;
+create policy "activity_logs_insert_all"
+on public.activity_logs
+for insert
+with check (true);
+drop policy if exists "activity_logs_update_all" on public.activity_logs;
+create policy "activity_logs_update_all"
+on public.activity_logs
+for update
+using (true)
+with check (true);
+drop policy if exists "activity_logs_delete_all" on public.activity_logs;
+create policy "activity_logs_delete_all"
+on public.activity_logs
+for delete
+using (true);

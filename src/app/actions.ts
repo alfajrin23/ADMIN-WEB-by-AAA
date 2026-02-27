@@ -3,6 +3,8 @@
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { createActivityLog } from "@/lib/activity-logs";
+import { canImportData, canManageData, requireAuthUser } from "@/lib/auth";
 import {
   type AttendanceStatus,
   ATTENDANCE_STATUSES,
@@ -13,6 +15,7 @@ import {
   PROJECT_STATUSES,
   type ReimburseType,
   REIMBURSE_TYPES,
+  isHiddenCostCategory,
   toCategorySlug,
   type WorkerTeam,
   WORKER_TEAMS,
@@ -32,6 +35,7 @@ import {
   insertExcelProject,
   updateExcelAttendance,
   updateExcelExpense,
+  updateManyExcelExpenses,
   updateExcelProject,
 } from "@/lib/excel-db";
 import { getFirestoreServerClient } from "@/lib/firebase";
@@ -74,9 +78,30 @@ function getReturnTo(formData: FormData) {
   return value.startsWith("/") ? value : null;
 }
 
+function isChecked(formData: FormData, key: string) {
+  const value = formData.get(key);
+  return value === "1" || value === "on" || value === "true";
+}
+
 function revalidateProjectPages() {
   revalidatePath("/");
   revalidatePath("/projects");
+}
+
+async function requireEditorActionUser() {
+  const user = await requireAuthUser();
+  if (!canManageData(user.role)) {
+    redirect("/");
+  }
+  return user;
+}
+
+async function requireDevActionUser() {
+  const user = await requireAuthUser();
+  if (!canImportData(user.role)) {
+    redirect("/");
+  }
+  return user;
 }
 
 function createTimestamp() {
@@ -519,6 +544,7 @@ async function importTemplateDataToFirebase(parsed: ParsedTemplateImportData) {
 }
 
 export async function createProjectAction(formData: FormData) {
+  const actor = await requireEditorActionUser();
   const name = getString(formData, "name");
   if (!name) {
     return;
@@ -567,12 +593,28 @@ export async function createProjectAction(formData: FormData) {
 
   revalidateProjectPages();
   revalidatePath("/attendance");
+  revalidatePath("/logs");
+  await createActivityLog({
+    actor,
+    actionType: "create",
+    module: "project",
+    entityName: payload.name,
+    description: `Menambah project "${payload.name}".`,
+    payload: {
+      code: payload.code,
+      client_name: payload.client_name,
+      start_date: payload.start_date,
+      status: payload.status,
+      initial_categories: initialCategories,
+    },
+  });
   if (returnTo) {
     redirect(returnTo);
   }
 }
 
 export async function updateProjectAction(formData: FormData) {
+  const actor = await requireEditorActionUser();
   const id = getString(formData, "project_id");
   const name = getString(formData, "name");
   if (!id || !name) {
@@ -635,12 +677,28 @@ export async function updateProjectAction(formData: FormData) {
 
   revalidateProjectPages();
   revalidatePath("/attendance");
+  revalidatePath("/logs");
+  await createActivityLog({
+    actor,
+    actionType: "update",
+    module: "project",
+    entityId: payload.id,
+    entityName: payload.name,
+    description: `Memperbarui project "${payload.name}".`,
+    payload: {
+      code: payload.code,
+      client_name: payload.client_name,
+      start_date: payload.start_date,
+      status: payload.status,
+    },
+  });
   if (returnTo) {
     redirect(returnTo);
   }
 }
 
 export async function deleteProjectAction(formData: FormData) {
+  const actor = await requireEditorActionUser();
   const projectId = getString(formData, "project_id");
   if (!projectId) {
     return;
@@ -676,12 +734,21 @@ export async function deleteProjectAction(formData: FormData) {
 
   revalidateProjectPages();
   revalidatePath("/attendance");
+  revalidatePath("/logs");
+  await createActivityLog({
+    actor,
+    actionType: "delete",
+    module: "project",
+    entityId: projectId,
+    description: "Menghapus project beserta data turunannya.",
+  });
   if (returnTo) {
     redirect(returnTo);
   }
 }
 
 export async function deleteSelectedProjectsAction(formData: FormData) {
+  const actor = await requireEditorActionUser();
   const projectIds = getStringList(formData, "project");
   if (projectIds.length === 0) {
     return;
@@ -727,6 +794,16 @@ export async function deleteSelectedProjectsAction(formData: FormData) {
 
   revalidateProjectPages();
   revalidatePath("/attendance");
+  revalidatePath("/logs");
+  await createActivityLog({
+    actor,
+    actionType: "delete_bulk",
+    module: "project",
+    description: `Menghapus ${projectIds.length} project terpilih.`,
+    payload: {
+      project_ids: projectIds,
+    },
+  });
   if (returnTo) {
     redirect(returnTo);
   }
@@ -734,12 +811,12 @@ export async function deleteSelectedProjectsAction(formData: FormData) {
 
 function getParsedCategory(formData: FormData) {
   const customCategory = toCategorySlug(getString(formData, "category_custom"));
-  if (customCategory) {
+  if (customCategory && !isHiddenCostCategory(customCategory)) {
     return customCategory;
   }
 
   const selectedCategory = toCategorySlug(getString(formData, "category"));
-  if (selectedCategory) {
+  if (selectedCategory && !isHiddenCostCategory(selectedCategory)) {
     return selectedCategory;
   }
 
@@ -789,6 +866,7 @@ function getExpenseTargetProjectIds(formData: FormData) {
 }
 
 export async function createExpenseAction(formData: FormData) {
+  const actor = await requireEditorActionUser();
   const projectIds = getExpenseTargetProjectIds(formData);
   const requesterName = getString(formData, "requester_name");
   const description = getString(formData, "description");
@@ -874,12 +952,28 @@ export async function createExpenseAction(formData: FormData) {
   }
 
   revalidateProjectPages();
+  revalidatePath("/logs");
+  await createActivityLog({
+    actor,
+    actionType: "create",
+    module: "expense",
+    description: `Menambah data biaya ke ${projectIds.length} project.`,
+    payload: {
+      project_ids: projectIds,
+      category: basePayload.category,
+      requester_name: basePayload.requester_name,
+      description: basePayload.description,
+      amount: basePayload.amount,
+      expense_date: basePayload.expense_date,
+    },
+  });
   if (returnTo) {
     redirect(returnTo);
   }
 }
 
 export async function updateExpenseAction(formData: FormData) {
+  const actor = await requireEditorActionUser();
   const expenseId = getString(formData, "expense_id");
   const projectId = getString(formData, "project_id");
   const amountInput = getNumber(formData, "amount");
@@ -962,12 +1056,130 @@ export async function updateExpenseAction(formData: FormData) {
   }
 
   revalidateProjectPages();
+  revalidatePath("/logs");
+  await createActivityLog({
+    actor,
+    actionType: "update",
+    module: "expense",
+    entityId: excelPayload.id,
+    description: "Memperbarui data biaya project.",
+    payload: {
+      project_id: excelPayload.project_id,
+      category: excelPayload.category,
+      requester_name: excelPayload.requester_name,
+      amount: excelPayload.amount,
+      expense_date: excelPayload.expense_date,
+    },
+  });
+  if (returnTo) {
+    redirect(returnTo);
+  }
+}
+
+export async function updateManyExpensesAction(formData: FormData) {
+  const actor = await requireEditorActionUser();
+  const expenseIds = getStringList(formData, "expense_id");
+  if (expenseIds.length === 0) {
+    return;
+  }
+  const returnTo = getReturnTo(formData);
+
+  const applyCategory = isChecked(formData, "apply_category");
+  const applyExpenseDate = isChecked(formData, "apply_expense_date");
+  const applyRequesterName = isChecked(formData, "apply_requester_name");
+  const applyDescription = isChecked(formData, "apply_description");
+  const applyUsageInfo = isChecked(formData, "apply_usage_info");
+  const applyRecipientName = isChecked(formData, "apply_recipient_name");
+
+  const patch: Partial<{
+    category: string;
+    specialist_type: string | null;
+    requester_name: string | null;
+    description: string | null;
+    usage_info: string | null;
+    recipient_name: string | null;
+    expense_date: string;
+  }> = {};
+
+  if (applyCategory) {
+    const parsedCategory = getParsedCategory(formData);
+    if (!parsedCategory) {
+      return;
+    }
+    patch.category = parsedCategory;
+    patch.specialist_type = getSpecialistType(formData, parsedCategory);
+  }
+  if (applyExpenseDate) {
+    const expenseDate = getString(formData, "expense_date");
+    if (!expenseDate) {
+      return;
+    }
+    patch.expense_date = expenseDate;
+  }
+  if (applyRequesterName) {
+    patch.requester_name = getString(formData, "requester_name") || null;
+  }
+  if (applyDescription) {
+    patch.description = getString(formData, "description") || null;
+  }
+  if (applyUsageInfo) {
+    patch.usage_info = getString(formData, "usage_info") || null;
+  }
+  if (applyRecipientName) {
+    patch.recipient_name = getString(formData, "recipient_name") || null;
+  }
+
+  const updateFields = Object.keys(patch);
+  if (updateFields.length === 0) {
+    return;
+  }
+
+  if (activeDataSource === "excel") {
+    updateManyExcelExpenses(expenseIds, patch);
+  } else if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return;
+    }
+    if (patch.category) {
+      await upsertSupabaseCategories(supabase, [patch.category]);
+    }
+    await supabase.from("project_expenses").update(patch).in("id", expenseIds);
+  } else if (activeDataSource === "firebase") {
+    const firestore = getFirestoreServerClient();
+    if (!firestore) {
+      return;
+    }
+    await runFirebaseWriteSafely(async () => {
+      const batch = firestore.batch();
+      for (const expenseId of expenseIds) {
+        batch.set(firestore.collection("project_expenses").doc(expenseId), patch, { merge: true });
+      }
+      await batch.commit();
+    });
+  } else {
+    return;
+  }
+
+  revalidateProjectPages();
+  revalidatePath("/logs");
+  await createActivityLog({
+    actor,
+    actionType: "update_bulk",
+    module: "expense",
+    description: `Memperbarui ${expenseIds.length} data biaya secara massal.`,
+    payload: {
+      expense_ids: expenseIds,
+      fields: updateFields,
+    },
+  });
   if (returnTo) {
     redirect(returnTo);
   }
 }
 
 export async function deleteExpenseAction(formData: FormData) {
+  const actor = await requireEditorActionUser();
   const expenseId = getString(formData, "expense_id");
   if (!expenseId) {
     return;
@@ -995,12 +1207,21 @@ export async function deleteExpenseAction(formData: FormData) {
   }
 
   revalidateProjectPages();
+  revalidatePath("/logs");
+  await createActivityLog({
+    actor,
+    actionType: "delete",
+    module: "expense",
+    entityId: expenseId,
+    description: "Menghapus data biaya project.",
+  });
   if (returnTo) {
     redirect(returnTo);
   }
 }
 
 export async function importExcelTemplateAction(formData: FormData) {
+  const actor = await requireDevActionUser();
   const returnTo = getReturnTo(formData);
   const uploadedFile = formData.get("template_file");
   let uploadedBuffer: Uint8Array | null = null;
@@ -1039,12 +1260,25 @@ export async function importExcelTemplateAction(formData: FormData) {
 
   revalidateProjectPages();
   revalidatePath("/attendance");
+  revalidatePath("/logs");
+  await createActivityLog({
+    actor,
+    actionType: "import",
+    module: "expense",
+    description: "Melakukan import template Excel.",
+    payload: {
+      has_uploaded_file: Boolean(uploadedBuffer),
+      template_path: templatePath ?? null,
+      data_source: activeDataSource,
+    },
+  });
   if (returnTo) {
     redirect(returnTo);
   }
 }
 
 export async function createAttendanceAction(formData: FormData) {
+  const actor = await requireEditorActionUser();
   const projectId = getString(formData, "project_id");
   const workerName = getString(formData, "worker_name");
   if (!projectId || !workerName) {
@@ -1127,12 +1361,28 @@ export async function createAttendanceAction(formData: FormData) {
 
   revalidatePath("/");
   revalidatePath("/attendance");
+  revalidatePath("/logs");
+  await createActivityLog({
+    actor,
+    actionType: "create",
+    module: "attendance",
+    description: `Menambah absensi pekerja "${payload.worker_name}".`,
+    payload: {
+      project_id: payload.project_id,
+      worker_name: payload.worker_name,
+      team_type: payload.team_type,
+      attendance_date: payload.attendance_date,
+      work_days: payload.work_days,
+      net_reference: Math.max(payload.daily_wage * payload.work_days - payload.kasbon_amount, 0),
+    },
+  });
   if (returnTo) {
     redirect(returnTo);
   }
 }
 
 export async function updateAttendanceAction(formData: FormData) {
+  const actor = await requireEditorActionUser();
   const attendanceId = getString(formData, "attendance_id");
   const projectId = getString(formData, "project_id");
   const workerName = getString(formData, "worker_name");
@@ -1230,12 +1480,29 @@ export async function updateAttendanceAction(formData: FormData) {
 
   revalidatePath("/");
   revalidatePath("/attendance");
+  revalidatePath("/logs");
+  await createActivityLog({
+    actor,
+    actionType: "update",
+    module: "attendance",
+    entityId: payload.id,
+    description: `Memperbarui absensi pekerja "${payload.worker_name}".`,
+    payload: {
+      project_id: payload.project_id,
+      team_type: payload.team_type,
+      attendance_date: payload.attendance_date,
+      work_days: payload.work_days,
+      daily_wage: payload.daily_wage,
+      kasbon_amount: payload.kasbon_amount,
+    },
+  });
   if (returnTo) {
     redirect(returnTo);
   }
 }
 
 export async function deleteAttendanceAction(formData: FormData) {
+  const actor = await requireEditorActionUser();
   const attendanceId = getString(formData, "attendance_id");
   if (!attendanceId) {
     return;
@@ -1264,12 +1531,21 @@ export async function deleteAttendanceAction(formData: FormData) {
 
   revalidatePath("/");
   revalidatePath("/attendance");
+  revalidatePath("/logs");
+  await createActivityLog({
+    actor,
+    actionType: "delete",
+    module: "attendance",
+    entityId: attendanceId,
+    description: "Menghapus data absensi.",
+  });
   if (returnTo) {
     redirect(returnTo);
   }
 }
 
 export async function confirmPayrollPaidAction(formData: FormData) {
+  const actor = await requireEditorActionUser();
   const projectId = getString(formData, "project_id");
   const teamType = getParsedWorkerTeam(formData);
   if (!projectId) {
@@ -1320,6 +1596,20 @@ export async function confirmPayrollPaidAction(formData: FormData) {
 
   revalidatePath("/");
   revalidatePath("/attendance");
+  revalidatePath("/logs");
+  await createActivityLog({
+    actor,
+    actionType: "confirm",
+    module: "payroll",
+    description: "Konfirmasi status gaji pekerja.",
+    payload: {
+      project_id: payload.project_id,
+      team_type: payload.team_type,
+      specialist_team_name: payload.specialist_team_name,
+      worker_name: payload.worker_name,
+      paid_until_date: payload.paid_until_date,
+    },
+  });
   if (returnTo) {
     redirect(returnTo);
   }

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { canManageData, requireAuthUser } from "@/lib/auth";
 import { WORKER_TEAM_LABEL } from "@/lib/constants";
 import { getAttendanceById } from "@/lib/data";
 import { formatCurrency, formatDate } from "@/lib/format";
@@ -9,6 +10,8 @@ type ViewAttendancePageProps = {
 };
 
 export default async function ViewAttendancePage({ searchParams }: ViewAttendancePageProps) {
+  const user = await requireAuthUser();
+  const canEdit = canManageData(user.role);
   const params = await searchParams;
   const attendanceId = typeof params.id === "string" ? params.id : "";
   const attendance = await getAttendanceById(attendanceId);
@@ -26,12 +29,14 @@ export default async function ViewAttendancePage({ searchParams }: ViewAttendanc
             <Link href="/attendance" className="text-blue-700 hover:text-blue-900">
               Kembali
             </Link>
-            <Link
-              href={`/attendance/edit?id=${attendance.id}`}
-              className="text-emerald-700 hover:text-emerald-900"
-            >
-              Edit Data
-            </Link>
+            {canEdit ? (
+              <Link
+                href={`/attendance/edit?id=${attendance.id}`}
+                className="text-emerald-700 hover:text-emerald-900"
+              >
+                Edit Data
+              </Link>
+            ) : null}
           </div>
         </div>
 

@@ -41,6 +41,7 @@ export const COST_CATEGORY_STYLE: Record<string, string> = {
 const COST_CATEGORY_ALIAS: Record<string, string> = {
   pasir: "material",
 };
+const HIDDEN_COST_CATEGORIES = new Set(["perawatan"]);
 
 export type ExpenseCategoryOption = {
   value: string;
@@ -65,6 +66,14 @@ export function toCategorySlug(value: string) {
     return "";
   }
   return COST_CATEGORY_ALIAS[normalized] ?? normalized;
+}
+
+export function isHiddenCostCategory(value: string) {
+  const normalized = toCategorySlug(value);
+  if (!normalized) {
+    return false;
+  }
+  return HIDDEN_COST_CATEGORIES.has(normalized);
 }
 
 export function formatCostCategoryLabel(value: string) {
@@ -116,7 +125,7 @@ export function mergeExpenseCategoryOptions(
   const upsert = (item: string | ExpenseCategoryOption) => {
     const valueRaw = typeof item === "string" ? item : item.value;
     const value = toCategorySlug(valueRaw);
-    if (!value) {
+    if (!value || isHiddenCostCategory(value)) {
       return;
     }
     const explicitLabel = typeof item === "string" ? "" : item.label;
@@ -142,7 +151,8 @@ export function parseCategoryListInput(value: string) {
       value
         .split(/[,\n;]/)
         .map((item) => toCategorySlug(item))
-        .filter((item) => item.length > 0),
+        .filter((item) => item.length > 0)
+        .filter((item) => !isHiddenCostCategory(item)),
     ),
   );
 }

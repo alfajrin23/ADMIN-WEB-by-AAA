@@ -873,6 +873,95 @@ export async function getExpenseCategories(): Promise<ExpenseCategoryOption[]> {
   return mergeExpenseCategoryOptions(sampleExpenses.map((item) => item.category));
 }
 
+function buildRequesterSuggestionMap(
+  rows: Array<{ projectId: string; requesterName: string | null }>,
+) {
+  const suggestionSetByProject = new Map<string, Set<string>>();
+
+  for (const row of rows) {
+    const projectId = row.projectId.trim();
+    const requesterName = (row.requesterName ?? "").trim();
+    if (!projectId || !requesterName) {
+      continue;
+    }
+
+    const current = suggestionSetByProject.get(projectId) ?? new Set<string>();
+    current.add(requesterName);
+    suggestionSetByProject.set(projectId, current);
+  }
+
+  return Object.fromEntries(
+    Array.from(suggestionSetByProject.entries()).map(([projectId, names]) => [
+      projectId,
+      Array.from(names).sort((a, b) => a.localeCompare(b, "id-ID")),
+    ]),
+  );
+}
+
+export async function getRequesterSuggestionsByProject(): Promise<Record<string, string[]>> {
+  if (activeDataSource === "excel") {
+    const db = readExcelDatabase();
+    const rows = db.project_expenses
+      .map((row) => mapExpense(row))
+      .filter((row) => isVisibleExpense(row))
+      .map((row) => ({
+        projectId: row.projectId,
+        requesterName: row.requesterName,
+      }));
+    return buildRequesterSuggestionMap(rows);
+  }
+
+  if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return {};
+    }
+
+    const { data, error } = await supabase
+      .from("project_expenses")
+      .select("project_id, requester_name, category")
+      .order("expense_date", { ascending: false })
+      .limit(6000);
+    if (error || !data) {
+      return {};
+    }
+
+    const rows = data
+      .map((row) => {
+        const parsedCategory = toCategorySlug(String(row.category ?? ""));
+        if (!parsedCategory || isHiddenCostCategory(parsedCategory)) {
+          return null;
+        }
+        return {
+          projectId: String(row.project_id ?? ""),
+          requesterName: typeof row.requester_name === "string" ? row.requester_name : null,
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => Boolean(row));
+    return buildRequesterSuggestionMap(rows);
+  }
+
+  if (activeDataSource === "firebase") {
+    const rows = (await getFirebaseCollectionRows("project_expenses"))
+      .map((row) => mapExpense(row))
+      .filter((row) => isVisibleExpense(row))
+      .map((row) => ({
+        projectId: row.projectId,
+        requesterName: row.requesterName,
+      }));
+    return buildRequesterSuggestionMap(rows);
+  }
+
+  return buildRequesterSuggestionMap(
+    sampleExpenses
+      .filter((row) => isVisibleExpense(row))
+      .map((row) => ({
+        projectId: row.projectId,
+        requesterName: row.requesterName,
+      })),
+  );
+}
+
 export async function getProjectById(projectId: string): Promise<Project | null> {
   if (!projectId) {
     return null;

@@ -873,20 +873,23 @@ export async function getExpenseCategories(): Promise<ExpenseCategoryOption[]> {
   return mergeExpenseCategoryOptions(sampleExpenses.map((item) => item.category));
 }
 
-function buildRequesterSuggestionMap(
-  rows: Array<{ projectId: string; requesterName: string | null }>,
-) {
+type ProjectTextSuggestionRow = {
+  projectId: string;
+  value: string | null;
+};
+
+function buildProjectTextSuggestionMap(rows: ProjectTextSuggestionRow[]) {
   const suggestionSetByProject = new Map<string, Set<string>>();
 
   for (const row of rows) {
     const projectId = row.projectId.trim();
-    const requesterName = (row.requesterName ?? "").trim();
-    if (!projectId || !requesterName) {
+    const textValue = (row.value ?? "").trim();
+    if (!projectId || !textValue) {
       continue;
     }
 
     const current = suggestionSetByProject.get(projectId) ?? new Set<string>();
-    current.add(requesterName);
+    current.add(textValue);
     suggestionSetByProject.set(projectId, current);
   }
 
@@ -906,9 +909,9 @@ export async function getRequesterSuggestionsByProject(): Promise<Record<string,
       .filter((row) => isVisibleExpense(row))
       .map((row) => ({
         projectId: row.projectId,
-        requesterName: row.requesterName,
+        value: row.requesterName,
       }));
-    return buildRequesterSuggestionMap(rows);
+    return buildProjectTextSuggestionMap(rows);
   }
 
   if (activeDataSource === "supabase") {
@@ -934,11 +937,11 @@ export async function getRequesterSuggestionsByProject(): Promise<Record<string,
         }
         return {
           projectId: String(row.project_id ?? ""),
-          requesterName: typeof row.requester_name === "string" ? row.requester_name : null,
+          value: typeof row.requester_name === "string" ? row.requester_name : null,
         };
       })
       .filter((row): row is NonNullable<typeof row> => Boolean(row));
-    return buildRequesterSuggestionMap(rows);
+    return buildProjectTextSuggestionMap(rows);
   }
 
   if (activeDataSource === "firebase") {
@@ -947,17 +950,81 @@ export async function getRequesterSuggestionsByProject(): Promise<Record<string,
       .filter((row) => isVisibleExpense(row))
       .map((row) => ({
         projectId: row.projectId,
-        requesterName: row.requesterName,
+        value: row.requesterName,
       }));
-    return buildRequesterSuggestionMap(rows);
+    return buildProjectTextSuggestionMap(rows);
   }
 
-  return buildRequesterSuggestionMap(
+  return buildProjectTextSuggestionMap(
     sampleExpenses
       .filter((row) => isVisibleExpense(row))
       .map((row) => ({
         projectId: row.projectId,
-        requesterName: row.requesterName,
+        value: row.requesterName,
+      })),
+  );
+}
+
+export async function getDescriptionSuggestionsByProject(): Promise<Record<string, string[]>> {
+  if (activeDataSource === "excel") {
+    const db = readExcelDatabase();
+    const rows = db.project_expenses
+      .map((row) => mapExpense(row))
+      .filter((row) => isVisibleExpense(row))
+      .map((row) => ({
+        projectId: row.projectId,
+        value: row.description,
+      }));
+    return buildProjectTextSuggestionMap(rows);
+  }
+
+  if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return {};
+    }
+
+    const { data, error } = await supabase
+      .from("project_expenses")
+      .select("project_id, description, category")
+      .order("expense_date", { ascending: false })
+      .limit(6000);
+    if (error || !data) {
+      return {};
+    }
+
+    const rows = data
+      .map((row) => {
+        const parsedCategory = toCategorySlug(String(row.category ?? ""));
+        if (!parsedCategory || isHiddenCostCategory(parsedCategory)) {
+          return null;
+        }
+        return {
+          projectId: String(row.project_id ?? ""),
+          value: typeof row.description === "string" ? row.description : null,
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => Boolean(row));
+    return buildProjectTextSuggestionMap(rows);
+  }
+
+  if (activeDataSource === "firebase") {
+    const rows = (await getFirebaseCollectionRows("project_expenses"))
+      .map((row) => mapExpense(row))
+      .filter((row) => isVisibleExpense(row))
+      .map((row) => ({
+        projectId: row.projectId,
+        value: row.description,
+      }));
+    return buildProjectTextSuggestionMap(rows);
+  }
+
+  return buildProjectTextSuggestionMap(
+    sampleExpenses
+      .filter((row) => isVisibleExpense(row))
+      .map((row) => ({
+        projectId: row.projectId,
+        value: row.description,
       })),
   );
 }

@@ -23,6 +23,7 @@ import { ExcelDropInput } from "@/components/excel-drop-input";
 import { EnterToNextField } from "@/components/enter-to-next-field";
 import { ProjectChecklistSearch } from "@/components/project-checklist-search";
 import { ProjectAutocomplete } from "@/components/project-autocomplete";
+import { ProjectScopedAutocompleteInput } from "@/components/project-scoped-autocomplete-input";
 import { ReportDownloadPreviewButton } from "@/components/report-download-preview-button";
 import { ProjectsSelectionToggle } from "@/components/projects-selection-toggle";
 import { ProjectsSearchInput } from "@/components/projects-search-input";
@@ -37,9 +38,11 @@ import {
   SPECIALIST_COST_PRESETS,
 } from "@/lib/constants";
 import {
+  getDescriptionSuggestionsByProject,
   getExpenseCategories,
   getProjectDetail,
   getProjects,
+  getRequesterSuggestionsByProject,
   searchExpenseDetails,
 } from "@/lib/data";
 import { formatCurrency, formatDate } from "@/lib/format";
@@ -98,7 +101,13 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
   const canEdit = canManageData(user.role);
   const canImport = canImportData(user.role);
   const params = await searchParams;
-  const [projects, expenseCategories] = await Promise.all([getProjects(), getExpenseCategories()]);
+  const [projects, expenseCategories, requesterSuggestionsByProject, descriptionSuggestionsByProject] =
+    await Promise.all([
+      getProjects(),
+      getExpenseCategories(),
+      getRequesterSuggestionsByProject(),
+      getDescriptionSuggestionsByProject(),
+    ]);
   const today = new Date().toISOString().slice(0, 10);
   const defaultExpenseCategory = expenseCategories[0]?.value ?? COST_CATEGORIES[0].value;
 
@@ -852,7 +861,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-500">Project</label>
-                  <ProjectAutocomplete projects={projects} initialProjectId={selectedProjectId} />
+                  <ProjectAutocomplete projects={projects} />
                   <details className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                     <summary className="cursor-pointer text-xs font-semibold text-slate-700">
                       Masukkan data yang sama ke project lain (opsional)
@@ -862,7 +871,6 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                     </p>
                     <ProjectChecklistSearch
                       projects={projects}
-                      excludeProjectId={selectedProjectId}
                       inputName="project_ids"
                     />
                   </details>
@@ -888,15 +896,21 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                     <label className="mb-1 block text-xs font-medium text-slate-500">
                       Nama pengajuan
                     </label>
-                    <input name="requester_name" required />
+                    <ProjectScopedAutocompleteInput
+                      name="requester_name"
+                      placeholder="Contoh: Mandor Lapangan"
+                      required
+                      suggestionsByProject={requesterSuggestionsByProject}
+                    />
                   </div>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-500">Keterangan</label>
-                  <input
+                  <ProjectScopedAutocompleteInput
                     name="description"
                     placeholder="Contoh: KAS / MATERIAL / OPERASIONAL"
                     required
+                    suggestionsByProject={descriptionSuggestionsByProject}
                   />
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">

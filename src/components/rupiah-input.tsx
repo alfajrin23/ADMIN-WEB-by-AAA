@@ -7,6 +7,7 @@ type RupiahInputProps = {
   defaultValue?: number;
   required?: boolean;
   placeholder?: string;
+  submitOnEnter?: boolean;
 };
 
 function normalizeDigits(value: string) {
@@ -26,6 +27,7 @@ export function RupiahInput({
   defaultValue = 0,
   required = false,
   placeholder,
+  submitOnEnter = false,
 }: RupiahInputProps) {
   const initial = Number.isFinite(defaultValue) && defaultValue > 0 ? String(Math.floor(defaultValue)) : "";
   const [rawValue, setRawValue] = useState(initial);
@@ -47,6 +49,7 @@ export function RupiahInput({
         inputMode="numeric"
         value={displayValue}
         onChange={(event) => setRawValue(normalizeDigits(event.target.value))}
+        data-enter-submit={submitOnEnter ? "true" : undefined}
         required={required}
         placeholder={placeholder}
         className="!rounded-none !border-0 !shadow-none focus:!border-0 focus:!shadow-none"

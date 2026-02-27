@@ -204,6 +204,16 @@ button:disabled {
   animation: modal-rise 220ms ease-out;
 }
 
+.success-toast {
+  animation:
+    success-toast-in 240ms ease-out,
+    success-toast-out 260ms ease-in 2.45s forwards;
+}
+
+.success-toast__check {
+  animation: success-check-pop 320ms ease-out;
+}
+
 .client-slider {
   overflow: hidden;
 }
@@ -465,6 +475,43 @@ button:disabled {
   }
 }
 
+@keyframes success-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes success-toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+}
+
+@keyframes success-check-pop {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
 @keyframes client-slide-horizontal {
   from {
     transform: translateX(0);
@@ -585,6 +632,11 @@ button:disabled {
   .auth-bg-grid,
   .auth-orb,
   .auth-card {
+    animation: none;
+  }
+
+  .success-toast,
+  .success-toast__check {
     animation: none;
   }
 }

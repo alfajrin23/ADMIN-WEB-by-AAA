@@ -39,6 +39,11 @@ export function EnterToNextField({ formId }: EnterToNextFieldProps) {
       if (!(event.target instanceof HTMLElement)) {
         return;
       }
+      if (event.target.dataset.enterSubmit === "true") {
+        event.preventDefault();
+        form.requestSubmit();
+        return;
+      }
       if (event.target instanceof HTMLTextAreaElement) {
         return;
       }

@@ -27,6 +27,7 @@ import { ReportDownloadPreviewButton } from "@/components/report-download-previe
 import { ProjectsSelectionToggle } from "@/components/projects-selection-toggle";
 import { ProjectsSearchInput } from "@/components/projects-search-input";
 import { RupiahInput } from "@/components/rupiah-input";
+import { SuccessToast } from "@/components/success-toast";
 import {
   COST_CATEGORIES,
   getCostCategoryLabel,
@@ -227,6 +228,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
 
   return (
     <div className="space-y-4">
+      <SuccessToast message={success} />
       {activeDataSource === "demo" ? (
         <section className="panel border-amber-300 bg-amber-50 p-4">
           <p className="text-sm text-amber-700">
@@ -242,11 +244,6 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
       {blockedModalMessage ? (
         <section className="panel border-amber-300 bg-amber-50 p-4">
           <p className="text-sm text-amber-700">{blockedModalMessage}</p>
-        </section>
-      ) : null}
-      {success ? (
-        <section className="panel border-emerald-300 bg-emerald-50 p-4">
-          <p className="text-sm text-emerald-700">{success}</p>
         </section>
       ) : null}
 
@@ -914,7 +911,12 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                     <label className="mb-1 block text-xs font-medium text-slate-500">
                       Nominal biaya total
                     </label>
-                    <RupiahInput name="amount" required placeholder="Contoh: 1.000.000" />
+                    <RupiahInput
+                      name="amount"
+                      required
+                      placeholder="Contoh: 1.000.000"
+                      submitOnEnter
+                    />
                   </div>
                 </div>
 

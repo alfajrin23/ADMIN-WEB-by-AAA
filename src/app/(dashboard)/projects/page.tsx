@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import {
   createExpenseAction,
   createProjectAction,
@@ -16,14 +17,18 @@ import {
   EyeIcon,
   ImportIcon,
   PlusIcon,
+  ProjectIcon,
   SaveIcon,
+  SearchIcon,
   TrashIcon,
+  WalletIcon,
 } from "@/components/icons";
 import { ExcelDropInput } from "@/components/excel-drop-input";
 import { EnterToNextField } from "@/components/enter-to-next-field";
 import { ProjectChecklistSearch } from "@/components/project-checklist-search";
 import { ProjectAutocomplete } from "@/components/project-autocomplete";
 import { ProjectScopedAutocompleteInput } from "@/components/project-scoped-autocomplete-input";
+import { RequesterProjectAutocompleteInput } from "@/components/requester-project-autocomplete-input";
 import { ReportDownloadPreviewButton } from "@/components/report-download-preview-button";
 import { ProjectsSelectionToggle } from "@/components/projects-selection-toggle";
 import { ProjectsSearchInput } from "@/components/projects-search-input";
@@ -99,6 +104,9 @@ function createProjectsHref(params: {
 export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
   const user = await requireAuthUser();
   const canEdit = canManageData(user.role);
+  if (!canEdit) {
+    redirect("/");
+  }
   const canImport = canImportData(user.role);
   const params = await searchParams;
   const [projects, expenseCategories, requesterSuggestionsByProject, descriptionSuggestionsByProject] =
@@ -157,6 +165,36 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
         return haystack.includes(searchKeyword);
       })
     : projects;
+  const projectInfoById = new Map(
+    projects.map((project) => [project.id, project] as const),
+  );
+  const requesterHistorySuggestions = Object.entries(requesterSuggestionsByProject)
+    .flatMap(([projectId, requesterNames]) => {
+      const project = projectInfoById.get(projectId);
+      return requesterNames.map((requesterName) => ({
+        requesterName,
+        projectId,
+        projectName: project?.name ?? "Project",
+        projectCode: project?.code ?? null,
+        clientName: project?.clientName ?? null,
+      }));
+    })
+    .sort((a, b) => {
+      if (a.requesterName !== b.requesterName) {
+        return a.requesterName.localeCompare(b.requesterName, "id-ID");
+      }
+      return a.projectName.localeCompare(b.projectName, "id-ID");
+    });
+  const descriptionSuggestionsGlobal = Array.from(
+    new Set(
+      Object.values(descriptionSuggestionsByProject).flatMap((rows) =>
+        rows.map((item) => item.trim()).filter((item) => item.length > 0),
+      ),
+    ),
+  ).sort((a, b) => a.localeCompare(b, "id-ID"));
+  const descriptionSuggestionsForAllProjects = Object.fromEntries(
+    projects.map((project) => [project.id, descriptionSuggestionsGlobal]),
+  );
 
   const modalParam = typeof params.modal === "string" ? params.modal : "";
   const detailSearchQuery = typeof params.detail_q === "string" ? params.detail_q.trim() : "";
@@ -294,6 +332,9 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
               data-ui-button="true"
               className="inline-flex items-center gap-2 rounded-xl border border-cyan-300 bg-cyan-50 px-4 py-2 text-sm font-medium text-cyan-700 hover:bg-cyan-100"
             >
+              <span className="btn-icon bg-cyan-100 text-cyan-700">
+                <SearchIcon />
+              </span>
               Cari Rincian
             </Link>
             {activeDataSource !== "demo" && canImport ? (
@@ -360,6 +401,13 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 : "border border-slate-200 text-slate-600 hover:bg-slate-100"
             }`}
           >
+            <span
+              className={`btn-icon ${
+                activeView === "list" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"
+              }`}
+            >
+              <ProjectIcon />
+            </span>
             Daftar Project
           </Link>
           <Link
@@ -371,6 +419,13 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 : "border border-slate-200 text-slate-600 hover:bg-slate-100"
             }`}
           >
+            <span
+              className={`btn-icon ${
+                activeView === "rekap" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"
+              }`}
+            >
+              <WalletIcon />
+            </span>
             Rekap Biaya
           </Link>
         </div>
@@ -393,6 +448,9 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 data-ui-button="true"
                 className="inline-flex items-center gap-2 rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-2 text-xs font-semibold text-cyan-700 hover:bg-cyan-100"
               >
+                <span className="btn-icon bg-cyan-100 text-cyan-700">
+                  <SearchIcon />
+                </span>
                 Cari Rincian Semua Project
               </Link>
             </div>
@@ -716,7 +774,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
             className="absolute inset-0 bg-slate-950/45"
           />
           <section className="modal-card panel relative z-10 max-h-[calc(100vh-2rem)] w-full max-w-3xl overflow-y-auto p-5">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-lg font-semibold text-slate-900">
                 {activeModal === "detail-search"
                   ? "Cari Rincian Semua Project"
@@ -754,7 +812,10 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                     autoFocus
                     autoComplete="off"
                   />
-                  <button className="inline-flex items-center justify-center rounded-xl bg-cyan-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-cyan-600">
+                  <button className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-cyan-600">
+                    <span className="btn-icon bg-white/20 text-white">
+                      <SearchIcon />
+                    </span>
                     Cari Rincian
                   </button>
                 </form>
@@ -861,7 +922,11 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-500">Project</label>
-                  <ProjectAutocomplete projects={projects} />
+                  <ProjectAutocomplete
+                    projects={projects}
+                    initialProjectId={currentProjectQueryId}
+                    autoFocus
+                  />
                   <details className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                     <summary className="cursor-pointer text-xs font-semibold text-slate-700">
                       Masukkan data yang sama ke project lain (opsional)
@@ -896,11 +961,11 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                     <label className="mb-1 block text-xs font-medium text-slate-500">
                       Nama pengajuan
                     </label>
-                    <ProjectScopedAutocompleteInput
+                    <RequesterProjectAutocompleteInput
                       name="requester_name"
                       placeholder="Contoh: Mandor Lapangan"
                       required
-                      suggestionsByProject={requesterSuggestionsByProject}
+                      suggestions={requesterHistorySuggestions}
                     />
                   </div>
                 </div>
@@ -910,7 +975,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                     name="description"
                     placeholder="Contoh: KAS / MATERIAL / OPERASIONAL"
                     required
-                    suggestionsByProject={descriptionSuggestionsByProject}
+                    suggestionsByProject={descriptionSuggestionsForAllProjects}
                   />
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">

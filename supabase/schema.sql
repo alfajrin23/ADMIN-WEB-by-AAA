@@ -43,6 +43,8 @@ create table if not exists public.attendance_records (
   status text not null default 'hadir' check (status in ('hadir', 'izin', 'sakit', 'alpa')),
   work_days integer not null default 1 check (work_days >= 1 and work_days <= 31),
   daily_wage numeric(14, 2) not null default 0 check (daily_wage >= 0),
+  overtime_hours numeric(8, 2) not null default 0 check (overtime_hours >= 0),
+  overtime_wage numeric(14, 2) not null default 0 check (overtime_wage >= 0),
   kasbon_amount numeric(14, 2) not null default 0 check (kasbon_amount >= 0),
   reimburse_type text check (reimburse_type in ('material', 'kekurangan_dana') or reimburse_type is null),
   reimburse_amount numeric(14, 2) not null default 0 check (reimburse_amount >= 0),
@@ -83,6 +85,10 @@ add column if not exists work_days integer not null default 1;
 alter table public.attendance_records
 add column if not exists daily_wage numeric(14, 2) not null default 0;
 alter table public.attendance_records
+add column if not exists overtime_hours numeric(8, 2) not null default 0;
+alter table public.attendance_records
+add column if not exists overtime_wage numeric(14, 2) not null default 0;
+alter table public.attendance_records
 add column if not exists reimburse_type text;
 alter table public.attendance_records
 add column if not exists reimburse_amount numeric(14, 2) not null default 0;
@@ -110,6 +116,18 @@ drop constraint if exists attendance_records_reimburse_amount_check;
 alter table public.attendance_records
 add constraint attendance_records_reimburse_amount_check
 check (reimburse_amount >= 0);
+
+alter table public.attendance_records
+drop constraint if exists attendance_records_overtime_hours_check;
+alter table public.attendance_records
+add constraint attendance_records_overtime_hours_check
+check (overtime_hours >= 0);
+
+alter table public.attendance_records
+drop constraint if exists attendance_records_overtime_wage_check;
+alter table public.attendance_records
+add constraint attendance_records_overtime_wage_check
+check (overtime_wage >= 0);
 
 alter table public.project_expenses
 drop constraint if exists project_expenses_category_check;

@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import * as XLSX from "xlsx/xlsx.mjs";
 import { createDetailReportWorkbook } from "@/lib/excel-db";
 import { getProjectDetail, getProjects } from "@/lib/data";
+import { canExportReports, getCurrentUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -64,6 +65,11 @@ function resolveFilePrefix(projectNames: string[]) {
 }
 
 export async function GET(request: Request) {
+  const user = await getCurrentUser();
+  if (!user || !canExportReports(user.role)) {
+    return new Response("Akses export ditolak untuk role ini.", { status: 403 });
+  }
+
   const { searchParams } = new URL(request.url);
   const selectedOnly = searchParams.get("selected_only") === "1";
   const requestedProjectIds = Array.from(

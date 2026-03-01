@@ -50,6 +50,9 @@ export type AttendanceRecord = {
   status: AttendanceStatus;
   workDays: number;
   dailyWage: number;
+  overtimeHours: number;
+  overtimeWage: number;
+  overtimePay: number;
   kasbonAmount: number;
   reimburseType: ReimburseType | null;
   reimburseAmount: number;
@@ -116,6 +119,7 @@ export type WageRecap = {
   projectTeamSummaries: WageProjectTeamSummary[];
   workerSummaries: WageWorkerSummary[];
   totalDailyWage: number;
+  totalOvertimePay: number;
   totalKasbon: number;
   totalReimburse: number;
   totalNetPay: number;

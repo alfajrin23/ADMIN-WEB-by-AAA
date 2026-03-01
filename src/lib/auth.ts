@@ -151,6 +151,10 @@ export function canManageData(role: AppRole) {
   return role === "dev" || role === "staff";
 }
 
+export function canExportReports(role: AppRole) {
+  return canManageData(role);
+}
+
 export function canImportData(role: AppRole) {
   return role === "dev";
 }

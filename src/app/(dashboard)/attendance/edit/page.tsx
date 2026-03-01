@@ -5,7 +5,7 @@ import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { SaveIcon, TrashIcon } from "@/components/icons";
 import { RupiahInput } from "@/components/rupiah-input";
 import { requireEditorUser } from "@/lib/auth";
-import { ATTENDANCE_STATUSES, WORKER_TEAMS } from "@/lib/constants";
+import { WORKER_TEAMS } from "@/lib/constants";
 import { getAttendanceById, getProjects } from "@/lib/data";
 
 type EditAttendancePageProps = {
@@ -37,6 +37,7 @@ export default async function EditAttendancePage({ searchParams }: EditAttendanc
         <form action={updateAttendanceAction} className="mt-4 space-y-3">
           <input type="hidden" name="attendance_id" value={attendance.id} />
           <input type="hidden" name="return_to" value="/attendance" />
+          <input type="hidden" name="attendance_date" value={attendance.attendanceDate} />
 
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-500">Project</label>
@@ -49,21 +50,9 @@ export default async function EditAttendancePage({ searchParams }: EditAttendanc
             </select>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500">Nama pekerja</label>
-              <input name="worker_name" defaultValue={attendance.workerName} required />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500">Status</label>
-              <select name="status" defaultValue={attendance.status}>
-                {ATTENDANCE_STATUSES.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">Nama pekerja</label>
+            <input name="worker_name" defaultValue={attendance.workerName} required />
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -91,10 +80,6 @@ export default async function EditAttendancePage({ searchParams }: EditAttendanc
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500">Tanggal</label>
-              <input type="date" name="attendance_date" defaultValue={attendance.attendanceDate} />
-            </div>
-            <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">Hari kerja</label>
               <input
                 type="number"
@@ -104,18 +89,36 @@ export default async function EditAttendancePage({ searchParams }: EditAttendanc
                 defaultValue={attendance.workDays}
               />
             </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">Lembur (jam)</label>
+              <input
+                type="number"
+                min={0}
+                step="0.5"
+                name="overtime_hours"
+                defaultValue={attendance.overtimeHours}
+              />
+            </div>
           </div>
 
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">Gaji harian</label>
-            <RupiahInput name="daily_wage" defaultValue={attendance.dailyWage} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">Upah harian</label>
+              <RupiahInput name="daily_wage" defaultValue={attendance.dailyWage} />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">
+                Upah lembur / jam
+              </label>
+              <RupiahInput name="overtime_wage" defaultValue={attendance.overtimeWage} />
+            </div>
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-500">Kasbon</label>
             <RupiahInput name="kasbon_amount" defaultValue={attendance.kasbonAmount} />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">Catatan</label>
+            <label className="mb-1 block text-xs font-medium text-slate-500">Keterangan</label>
             <textarea name="notes" rows={3} defaultValue={attendance.notes ?? ""} />
           </div>
 

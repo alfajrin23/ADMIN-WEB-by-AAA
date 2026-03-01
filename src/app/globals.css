@@ -17,6 +17,13 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 body {
   min-height: 100vh;
   color: var(--text-main);
@@ -61,6 +68,9 @@ button {
 
 button,
 [data-ui-button="true"] {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   position: relative;
   overflow: hidden;
   transition:

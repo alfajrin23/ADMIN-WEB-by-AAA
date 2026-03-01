@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { getProjectDetail, getProjects } from "@/lib/data";
+import { canExportReports, getCurrentUser } from "@/lib/auth";
 
 function formatCurrency(value: number) {
   return `Rp ${new Intl.NumberFormat("id-ID", {
@@ -136,6 +137,11 @@ function resolveFilePrefix(projectNames: string[]) {
 }
 
 export async function GET(request: Request) {
+  const user = await getCurrentUser();
+  if (!user || !canExportReports(user.role)) {
+    return new Response("Akses export ditolak untuk role ini.", { status: 403 });
+  }
+
   const { searchParams } = new URL(request.url);
   const isPreview = searchParams.get("preview") === "1";
   const selectedOnly = searchParams.get("selected_only") === "1";

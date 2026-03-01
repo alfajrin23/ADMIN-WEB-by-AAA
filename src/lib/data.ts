@@ -113,10 +113,13 @@ const sampleAttendance: AttendanceRecord[] = [
     status: "hadir",
     workDays: 1,
     dailyWage: 250000,
+    overtimeHours: 2,
+    overtimeWage: 25000,
+    overtimePay: 50000,
     kasbonAmount: 150000,
     reimburseType: null,
     reimburseAmount: 0,
-    netPay: 100000,
+    netPay: 150000,
     payrollPaid: false,
     attendanceDate: "2026-02-14",
     notes: "Lembur 2 jam",
@@ -132,6 +135,9 @@ const sampleAttendance: AttendanceRecord[] = [
     status: "hadir",
     workDays: 1,
     dailyWage: 230000,
+    overtimeHours: 0,
+    overtimeWage: 0,
+    overtimePay: 0,
     kasbonAmount: 50000,
     reimburseType: null,
     reimburseAmount: 0,
@@ -151,6 +157,9 @@ const sampleAttendance: AttendanceRecord[] = [
     status: "izin",
     workDays: 1,
     dailyWage: 0,
+    overtimeHours: 0,
+    overtimeWage: 0,
+    overtimePay: 0,
     kasbonAmount: 0,
     reimburseType: null,
     reimburseAmount: 0,
@@ -187,6 +196,13 @@ function getAttendanceTotalWage(row: AttendanceRecord) {
     return 0;
   }
   return row.dailyWage * row.workDays;
+}
+
+function getAttendanceOvertimePay(row: AttendanceRecord) {
+  if (row.status !== "hadir") {
+    return 0;
+  }
+  return row.overtimePay;
 }
 
 function normalizeText(value: string | null | undefined) {
@@ -721,10 +737,15 @@ function filterVisibleExpenses(entries: ExpenseEntry[]) {
 
 function mapAttendance(row: Record<string, unknown>, projectName?: string): AttendanceRecord {
   const rawWage = Number(row.daily_wage ?? 0);
+  const rawOvertimeHours = Number(row.overtime_hours ?? 0);
+  const rawOvertimeWage = Number(row.overtime_wage ?? 0);
   const rawKasbon = Number(row.kasbon_amount ?? 0);
   const rawReimburse = Number(row.reimburse_amount ?? 0);
   const workDays = resolveWorkDays(row.work_days);
   const dailyWage = Number.isFinite(rawWage) ? rawWage : 0;
+  const overtimeHours = Number.isFinite(rawOvertimeHours) ? Math.max(rawOvertimeHours, 0) : 0;
+  const overtimeWage = Number.isFinite(rawOvertimeWage) ? Math.max(rawOvertimeWage, 0) : 0;
+  const overtimePay = overtimeHours * overtimeWage;
   const kasbonAmount = Number.isFinite(rawKasbon) ? rawKasbon : 0;
   const reimburseAmount = Number.isFinite(rawReimburse) ? rawReimburse : 0;
   const reimburseType =
@@ -739,7 +760,7 @@ function mapAttendance(row: Record<string, unknown>, projectName?: string): Atte
       ? row.status
       : "hadir";
   const totalWage = status === "hadir" ? dailyWage * workDays : 0;
-  const netPay = Math.max(totalWage - kasbonAmount + reimburseAmount, 0);
+  const netPay = Math.max(totalWage + overtimePay - kasbonAmount + reimburseAmount, 0);
 
   return {
     id: String(row.id ?? ""),
@@ -754,6 +775,9 @@ function mapAttendance(row: Record<string, unknown>, projectName?: string): Atte
     status,
     workDays,
     dailyWage,
+    overtimeHours,
+    overtimeWage,
+    overtimePay,
     kasbonAmount,
     reimburseType,
     reimburseAmount,
@@ -1115,7 +1139,7 @@ export async function getAttendanceById(attendanceId: string): Promise<Attendanc
     const { data, error } = await supabase
       .from("attendance_records")
       .select(
-        "id, project_id, worker_name, team_type, specialist_team_name, status, work_days, daily_wage, kasbon_amount, reimburse_type, reimburse_amount, attendance_date, notes, created_at, projects(name)",
+        "id, project_id, worker_name, team_type, specialist_team_name, status, work_days, daily_wage, overtime_hours, overtime_wage, kasbon_amount, reimburse_type, reimburse_amount, attendance_date, notes, created_at, projects(name)",
       )
       .eq("id", attendanceId)
       .maybeSingle();
@@ -1428,6 +1452,7 @@ export async function getWageRecap(options?: {
   teamType?: "tukang" | "laden" | "spesialis";
   specialistTeamName?: string;
   workerNames?: string[];
+  attendanceIds?: string[];
   includePaid?: boolean;
   recapMode?: "gabung" | "per_project";
 }): Promise<WageRecap> {
@@ -1441,6 +1466,13 @@ export async function getWageRecap(options?: {
     options?.workerNames
       ?.map((item) => item.trim().toLowerCase())
       .filter((item) => item.length > 0) ?? [];
+  const normalizedAttendanceIds = Array.from(
+    new Set(
+      options?.attendanceIds
+        ?.map((item) => item.trim())
+        .filter((item) => item.length > 0) ?? [],
+    ),
+  );
   const includePaid = options?.includePaid ?? false;
   const recapMode = options?.recapMode ?? "per_project";
 
@@ -1472,6 +1504,11 @@ export async function getWageRecap(options?: {
           normalizedWorkerNames.length > 0
             ? normalizedWorkerNames.includes(row.workerName.trim().toLowerCase())
             : true,
+        )
+        .filter((row) =>
+          normalizedAttendanceIds.length > 0
+            ? normalizedAttendanceIds.includes(row.id)
+            : true,
         ),
       payrollResets,
       includePaid,
@@ -1495,6 +1532,7 @@ export async function getWageRecap(options?: {
       projectTeamSummaries,
       workerSummaries,
       totalDailyWage: rows.reduce((sum, row) => sum + getAttendanceTotalWage(row), 0),
+      totalOvertimePay: rows.reduce((sum, row) => sum + getAttendanceOvertimePay(row), 0),
       totalKasbon: rows.reduce((sum, row) => sum + row.kasbonAmount, 0),
       totalReimburse: rows.reduce((sum, row) => sum + row.reimburseAmount, 0),
       totalNetPay: rows.reduce((sum, row) => sum + row.netPay, 0),
@@ -1514,6 +1552,7 @@ export async function getWageRecap(options?: {
         projectTeamSummaries: [],
         workerSummaries: [],
         totalDailyWage: 0,
+        totalOvertimePay: 0,
         totalKasbon: 0,
         totalReimburse: 0,
         totalNetPay: 0,
@@ -1523,7 +1562,7 @@ export async function getWageRecap(options?: {
     let query = supabase
       .from("attendance_records")
       .select(
-        "id, project_id, worker_name, team_type, specialist_team_name, status, work_days, daily_wage, kasbon_amount, reimburse_type, reimburse_amount, attendance_date, notes, created_at, projects(name)",
+        "id, project_id, worker_name, team_type, specialist_team_name, status, work_days, daily_wage, overtime_hours, overtime_wage, kasbon_amount, reimburse_type, reimburse_amount, attendance_date, notes, created_at, projects(name)",
       )
       .gte("attendance_date", from)
       .lte("attendance_date", to)
@@ -1545,6 +1584,7 @@ export async function getWageRecap(options?: {
         projectTeamSummaries: [],
         workerSummaries: [],
         totalDailyWage: 0,
+        totalOvertimePay: 0,
         totalKasbon: 0,
         totalReimburse: 0,
         totalNetPay: 0,
@@ -1592,6 +1632,11 @@ export async function getWageRecap(options?: {
           normalizedWorkerNames.length > 0
             ? normalizedWorkerNames.includes(row.workerName.trim().toLowerCase())
             : true,
+        )
+        .filter((row) =>
+          normalizedAttendanceIds.length > 0
+            ? normalizedAttendanceIds.includes(row.id)
+            : true,
         ),
       payrollResets,
       includePaid,
@@ -1611,6 +1656,7 @@ export async function getWageRecap(options?: {
       projectTeamSummaries,
       workerSummaries,
       totalDailyWage: rows.reduce((sum, row) => sum + getAttendanceTotalWage(row), 0),
+      totalOvertimePay: rows.reduce((sum, row) => sum + getAttendanceOvertimePay(row), 0),
       totalKasbon: rows.reduce((sum, row) => sum + row.kasbonAmount, 0),
       totalReimburse: rows.reduce((sum, row) => sum + row.reimburseAmount, 0),
       totalNetPay: rows.reduce((sum, row) => sum + row.netPay, 0),
@@ -1664,6 +1710,11 @@ export async function getWageRecap(options?: {
           normalizedWorkerNames.length > 0
             ? normalizedWorkerNames.includes(row.workerName.trim().toLowerCase())
             : true,
+        )
+        .filter((row) =>
+          normalizedAttendanceIds.length > 0
+            ? normalizedAttendanceIds.includes(row.id)
+            : true,
         ),
       payrollResets,
       includePaid,
@@ -1688,6 +1739,7 @@ export async function getWageRecap(options?: {
       projectTeamSummaries,
       workerSummaries,
       totalDailyWage: rows.reduce((sum, row) => sum + getAttendanceTotalWage(row), 0),
+      totalOvertimePay: rows.reduce((sum, row) => sum + getAttendanceOvertimePay(row), 0),
       totalKasbon: rows.reduce((sum, row) => sum + row.kasbonAmount, 0),
       totalReimburse: rows.reduce((sum, row) => sum + row.reimburseAmount, 0),
       totalNetPay: rows.reduce((sum, row) => sum + row.netPay, 0),
@@ -1708,6 +1760,11 @@ export async function getWageRecap(options?: {
       .filter((row) =>
         normalizedWorkerNames.length > 0
           ? normalizedWorkerNames.includes(row.workerName.trim().toLowerCase())
+          : true,
+      )
+      .filter((row) =>
+        normalizedAttendanceIds.length > 0
+          ? normalizedAttendanceIds.includes(row.id)
           : true,
       ),
     samplePayrollResets,
@@ -1732,6 +1789,7 @@ export async function getWageRecap(options?: {
     projectTeamSummaries,
     workerSummaries,
     totalDailyWage: rows.reduce((sum, row) => sum + getAttendanceTotalWage(row), 0),
+    totalOvertimePay: rows.reduce((sum, row) => sum + getAttendanceOvertimePay(row), 0),
     totalKasbon: rows.reduce((sum, row) => sum + row.kasbonAmount, 0),
     totalReimburse: rows.reduce((sum, row) => sum + row.reimburseAmount, 0),
     totalNetPay: rows.reduce((sum, row) => sum + row.netPay, 0),
@@ -1804,7 +1862,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         supabase
           .from("attendance_records")
           .select(
-            "id, project_id, worker_name, team_type, specialist_team_name, status, work_days, daily_wage, kasbon_amount, reimburse_type, reimburse_amount, attendance_date, notes, created_at",
+            "id, project_id, worker_name, team_type, specialist_team_name, status, work_days, daily_wage, overtime_hours, overtime_wage, kasbon_amount, reimburse_type, reimburse_amount, attendance_date, notes, created_at",
           ),
         supabase
           .from("project_expenses")

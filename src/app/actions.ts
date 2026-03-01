@@ -1307,6 +1307,8 @@ export async function createAttendanceAction(formData: FormData) {
   const specialistTeamNameRaw = getString(formData, "specialist_team_name");
   const specialistTeamName = teamType === "spesialis" ? specialistTeamNameRaw || null : null;
   const dailyWage = getNumber(formData, "daily_wage");
+  const overtimeHours = Math.max(getNumber(formData, "overtime_hours"), 0);
+  const overtimeWage = Math.max(getNumber(formData, "overtime_wage"), 0);
   const kasbonAmount = getNumber(formData, "kasbon_amount");
   const reimburseType = getParsedReimburseType(formData);
   const reimburseAmount = getNumber(formData, "reimburse_amount");
@@ -1314,6 +1316,10 @@ export async function createAttendanceAction(formData: FormData) {
     reimburseType && Number.isFinite(reimburseAmount) && reimburseAmount > 0 ? reimburseAmount : 0;
   const normalizedDailyWage =
     parsedStatus === "hadir" && Number.isFinite(dailyWage) ? dailyWage : 0;
+  const normalizedOvertimeHours =
+    parsedStatus === "hadir" && Number.isFinite(overtimeHours) ? overtimeHours : 0;
+  const normalizedOvertimeWage =
+    parsedStatus === "hadir" && Number.isFinite(overtimeWage) ? overtimeWage : 0;
   const workDays = Math.min(getPositiveInteger(formData, "work_days", 1), 31);
   const attendanceDate =
     getString(formData, "attendance_date") || new Date().toISOString().slice(0, 10);
@@ -1325,6 +1331,8 @@ export async function createAttendanceAction(formData: FormData) {
     specialist_team_name: specialistTeamName,
     status: parsedStatus,
     daily_wage: normalizedDailyWage,
+    overtime_hours: normalizedOvertimeHours,
+    overtime_wage: normalizedOvertimeWage,
     kasbon_amount: Number.isFinite(kasbonAmount) ? kasbonAmount : 0,
     reimburse_type: reimburseType,
     reimburse_amount: normalizedReimburseAmount,
@@ -1348,6 +1356,8 @@ export async function createAttendanceAction(formData: FormData) {
       status: payload.status,
       work_days: payload.work_days,
       daily_wage: payload.daily_wage,
+      overtime_hours: payload.overtime_hours,
+      overtime_wage: payload.overtime_wage,
       kasbon_amount: payload.kasbon_amount,
       reimburse_type: payload.reimburse_type,
       reimburse_amount: payload.reimburse_amount,
@@ -1385,7 +1395,14 @@ export async function createAttendanceAction(formData: FormData) {
       team_type: payload.team_type,
       attendance_date: payload.attendance_date,
       work_days: payload.work_days,
-      net_reference: Math.max(payload.daily_wage * payload.work_days - payload.kasbon_amount, 0),
+      overtime_hours: payload.overtime_hours,
+      overtime_wage: payload.overtime_wage,
+      net_reference: Math.max(
+        payload.daily_wage * payload.work_days +
+          payload.overtime_hours * payload.overtime_wage -
+          payload.kasbon_amount,
+        0,
+      ),
     },
   });
   if (returnTo) {
@@ -1411,6 +1428,8 @@ export async function updateAttendanceAction(formData: FormData) {
   const specialistTeamNameRaw = getString(formData, "specialist_team_name");
   const specialistTeamName = teamType === "spesialis" ? specialistTeamNameRaw || null : null;
   const dailyWage = getNumber(formData, "daily_wage");
+  const overtimeHours = Math.max(getNumber(formData, "overtime_hours"), 0);
+  const overtimeWage = Math.max(getNumber(formData, "overtime_wage"), 0);
   const kasbonAmount = getNumber(formData, "kasbon_amount");
   const reimburseType = getParsedReimburseType(formData);
   const reimburseAmount = getNumber(formData, "reimburse_amount");
@@ -1418,6 +1437,10 @@ export async function updateAttendanceAction(formData: FormData) {
     reimburseType && Number.isFinite(reimburseAmount) && reimburseAmount > 0 ? reimburseAmount : 0;
   const normalizedDailyWage =
     parsedStatus === "hadir" && Number.isFinite(dailyWage) ? dailyWage : 0;
+  const normalizedOvertimeHours =
+    parsedStatus === "hadir" && Number.isFinite(overtimeHours) ? overtimeHours : 0;
+  const normalizedOvertimeWage =
+    parsedStatus === "hadir" && Number.isFinite(overtimeWage) ? overtimeWage : 0;
 
   const payload = {
     id: attendanceId,
@@ -1428,6 +1451,8 @@ export async function updateAttendanceAction(formData: FormData) {
     status: parsedStatus,
     work_days: Math.min(getPositiveInteger(formData, "work_days", 1), 31),
     daily_wage: normalizedDailyWage,
+    overtime_hours: normalizedOvertimeHours,
+    overtime_wage: normalizedOvertimeWage,
     kasbon_amount: Number.isFinite(kasbonAmount) ? kasbonAmount : 0,
     reimburse_type: reimburseType,
     reimburse_amount: normalizedReimburseAmount,
@@ -1454,6 +1479,8 @@ export async function updateAttendanceAction(formData: FormData) {
         status: payload.status,
         work_days: payload.work_days,
         daily_wage: payload.daily_wage,
+        overtime_hours: payload.overtime_hours,
+        overtime_wage: payload.overtime_wage,
         kasbon_amount: payload.kasbon_amount,
         reimburse_type: payload.reimburse_type,
         reimburse_amount: payload.reimburse_amount,
@@ -1477,6 +1504,8 @@ export async function updateAttendanceAction(formData: FormData) {
           status: payload.status,
           work_days: payload.work_days,
           daily_wage: payload.daily_wage,
+          overtime_hours: payload.overtime_hours,
+          overtime_wage: payload.overtime_wage,
           kasbon_amount: payload.kasbon_amount,
           reimburse_type: payload.reimburse_type,
           reimburse_amount: payload.reimburse_amount,
@@ -1505,6 +1534,8 @@ export async function updateAttendanceAction(formData: FormData) {
       attendance_date: payload.attendance_date,
       work_days: payload.work_days,
       daily_wage: payload.daily_wage,
+      overtime_hours: payload.overtime_hours,
+      overtime_wage: payload.overtime_wage,
       kasbon_amount: payload.kasbon_amount,
     },
   });
@@ -1625,4 +1656,69 @@ export async function confirmPayrollPaidAction(formData: FormData) {
   if (returnTo) {
     redirect(returnTo);
   }
+}
+
+export async function updateActivityLogAction(formData: FormData) {
+  const actor = await requireDevActionUser();
+  const logId = getString(formData, "log_id");
+  const description = getString(formData, "description");
+  const payloadJson = getString(formData, "payload_json");
+  const returnTo = getReturnTo(formData) ?? "/logs";
+
+  if (!logId) {
+    redirect(withReturnMessage(returnTo, "error", "ID log wajib diisi."));
+  }
+  if (!description) {
+    redirect(withReturnMessage(returnTo, "error", "Deskripsi log wajib diisi."));
+  }
+
+  let payload: Record<string, unknown> | null = null;
+  if (payloadJson.length > 0) {
+    try {
+      const parsed = JSON.parse(payloadJson);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        redirect(
+          withReturnMessage(
+            returnTo,
+            "error",
+            "Payload JSON harus berbentuk object (contoh: {\"key\":\"value\"}).",
+          ),
+        );
+      }
+      payload = parsed as Record<string, unknown>;
+    } catch {
+      redirect(withReturnMessage(returnTo, "error", "Payload JSON tidak valid."));
+    }
+  }
+
+  const supabase = getSupabaseServerClient();
+  if (!supabase) {
+    redirect(withReturnMessage(returnTo, "error", "Supabase belum terkonfigurasi."));
+  }
+
+  const { error } = await supabase
+    .from("activity_logs")
+    .update({
+      description,
+      payload,
+    })
+    .eq("id", logId);
+
+  if (error) {
+    redirect(withReturnMessage(returnTo, "error", "Gagal memperbarui data log."));
+  }
+
+  revalidatePath("/logs");
+  await createActivityLog({
+    actor,
+    actionType: "update",
+    module: "activity_log",
+    entityId: logId,
+    description: "Memperbarui detail log aktivitas.",
+    payload: {
+      target_log_id: logId,
+    },
+  });
+
+  redirect(withReturnMessage(returnTo, "success", "Log aktivitas berhasil diperbarui."));
 }

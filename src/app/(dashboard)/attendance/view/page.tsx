@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { canManageData, requireAuthUser } from "@/lib/auth";
+import { requireEditorUser } from "@/lib/auth";
 import { WORKER_TEAM_LABEL } from "@/lib/constants";
 import { getAttendanceById } from "@/lib/data";
 import { formatCurrency, formatDate } from "@/lib/format";
@@ -10,8 +10,7 @@ type ViewAttendancePageProps = {
 };
 
 export default async function ViewAttendancePage({ searchParams }: ViewAttendancePageProps) {
-  const user = await requireAuthUser();
-  const canEdit = canManageData(user.role);
+  await requireEditorUser();
   const params = await searchParams;
   const attendanceId = typeof params.id === "string" ? params.id : "";
   const attendance = await getAttendanceById(attendanceId);
@@ -29,14 +28,12 @@ export default async function ViewAttendancePage({ searchParams }: ViewAttendanc
             <Link href="/attendance" className="text-blue-700 hover:text-blue-900">
               Kembali
             </Link>
-            {canEdit ? (
-              <Link
-                href={`/attendance/edit?id=${attendance.id}`}
-                className="text-emerald-700 hover:text-emerald-900"
-              >
-                Edit Data
-              </Link>
-            ) : null}
+            <Link
+              href={`/attendance/edit?id=${attendance.id}`}
+              className="text-emerald-700 hover:text-emerald-900"
+            >
+              Edit Data
+            </Link>
           </div>
         </div>
 
@@ -84,6 +81,24 @@ export default async function ViewAttendancePage({ searchParams }: ViewAttendanc
             </dd>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <dt className="text-xs text-slate-500">Lembur (Jam)</dt>
+            <dd className="mt-1 text-sm font-semibold text-slate-900">
+              {attendance.overtimeHours}
+            </dd>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <dt className="text-xs text-slate-500">Upah Lembur/Jam</dt>
+            <dd className="mt-1 text-sm font-semibold text-slate-900">
+              {formatCurrency(attendance.overtimeWage)}
+            </dd>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <dt className="text-xs text-slate-500">Total Upah Lembur</dt>
+            <dd className="mt-1 text-sm font-semibold text-slate-900">
+              {formatCurrency(attendance.overtimePay)}
+            </dd>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <dt className="text-xs text-slate-500">Kasbon</dt>
             <dd className="mt-1 text-sm font-semibold text-slate-900">
               {formatCurrency(attendance.kasbonAmount)}
@@ -96,7 +111,7 @@ export default async function ViewAttendancePage({ searchParams }: ViewAttendanc
             </dd>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 sm:col-span-2">
-            <dt className="text-xs text-slate-500">Catatan</dt>
+            <dt className="text-xs text-slate-500">Keterangan</dt>
             <dd className="mt-1 text-sm text-slate-900">{attendance.notes ?? "-"}</dd>
           </div>
         </dl>

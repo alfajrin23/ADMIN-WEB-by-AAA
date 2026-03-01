@@ -57,6 +57,8 @@ type AttendanceRow = {
   status: AttendanceStatus;
   work_days: number;
   daily_wage: number;
+  overtime_hours: number;
+  overtime_wage: number;
   kasbon_amount: number;
   reimburse_type: ReimburseType | null;
   reimburse_amount: number;
@@ -659,6 +661,8 @@ function parseAttendance(rawRows: Record<string, unknown>[]): AttendanceRow[] {
       status,
       work_days: toPositiveInteger(row.work_days, 1),
       daily_wage: toNumber(row.daily_wage),
+      overtime_hours: Math.max(0, toNumber(row.overtime_hours)),
+      overtime_wage: Math.max(0, toNumber(row.overtime_wage)),
       kasbon_amount: toNumber(row.kasbon_amount),
       reimburse_type: reimburseType,
       reimburse_amount: toNumber(row.reimburse_amount),
@@ -1634,6 +1638,8 @@ export function insertExcelAttendance(payload: {
   status: AttendanceStatus;
   work_days: number;
   daily_wage: number;
+  overtime_hours: number;
+  overtime_wage: number;
   kasbon_amount: number;
   reimburse_type: ReimburseType | null;
   reimburse_amount: number;
@@ -1650,6 +1656,8 @@ export function insertExcelAttendance(payload: {
     status: payload.status,
     work_days: toPositiveInteger(payload.work_days, 1),
     daily_wage: payload.daily_wage,
+    overtime_hours: Math.max(0, payload.overtime_hours),
+    overtime_wage: Math.max(0, payload.overtime_wage),
     kasbon_amount: payload.kasbon_amount,
     reimburse_type: payload.reimburse_type,
     reimburse_amount: payload.reimburse_amount,
@@ -1672,6 +1680,8 @@ export function insertManyExcelAttendance(
     status: AttendanceStatus;
     work_days: number;
     daily_wage: number;
+    overtime_hours: number;
+    overtime_wage: number;
     kasbon_amount: number;
     reimburse_type: ReimburseType | null;
     reimburse_amount: number;
@@ -1694,6 +1704,8 @@ export function insertManyExcelAttendance(
     status: payload.status,
     work_days: toPositiveInteger(payload.work_days, 1),
     daily_wage: payload.daily_wage,
+    overtime_hours: Math.max(0, payload.overtime_hours),
+    overtime_wage: Math.max(0, payload.overtime_wage),
     kasbon_amount: payload.kasbon_amount,
     reimburse_type: payload.reimburse_type,
     reimburse_amount: payload.reimburse_amount,
@@ -1716,6 +1728,8 @@ export function updateExcelAttendance(payload: {
   status: AttendanceStatus;
   work_days: number;
   daily_wage: number;
+  overtime_hours: number;
+  overtime_wage: number;
   kasbon_amount: number;
   reimburse_type: ReimburseType | null;
   reimburse_amount: number;
@@ -1738,6 +1752,8 @@ export function updateExcelAttendance(payload: {
     status: payload.status,
     work_days: toPositiveInteger(payload.work_days, 1),
     daily_wage: payload.daily_wage,
+    overtime_hours: Math.max(0, payload.overtime_hours),
+    overtime_wage: Math.max(0, payload.overtime_wage),
     kasbon_amount: payload.kasbon_amount,
     reimburse_type: payload.reimburse_type,
     reimburse_amount: payload.reimburse_amount,

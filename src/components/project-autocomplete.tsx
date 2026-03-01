@@ -2,6 +2,8 @@
 
 import { useEffect, useId, useMemo, useState } from "react";
 
+export const PROJECT_AUTOCOMPLETE_SELECT_EVENT = "project-autocomplete:select";
+
 type ProjectOption = {
   id: string;
   name: string;
@@ -12,6 +14,7 @@ type ProjectOption = {
 type ProjectAutocompleteProps = {
   projects: ProjectOption[];
   initialProjectId?: string;
+  autoFocus?: boolean;
 };
 
 type PreparedProjectOption = {
@@ -101,7 +104,7 @@ function focusFormFieldByName(form: HTMLFormElement | null, fieldName: string) {
   return false;
 }
 
-export function ProjectAutocomplete({ projects, initialProjectId }: ProjectAutocompleteProps) {
+export function ProjectAutocomplete({ projects, initialProjectId, autoFocus = false }: ProjectAutocompleteProps) {
   const listId = useId();
 
   const duplicateNames = useMemo(() => {
@@ -151,6 +154,32 @@ export function ProjectAutocomplete({ projects, initialProjectId }: ProjectAutoc
   useEffect(() => {
     setQuery(initialProjectDisplayName);
   }, [initialProjectDisplayName]);
+
+  useEffect(() => {
+    const handleExternalProjectSelect = (event: Event) => {
+      const customEvent = event as CustomEvent<{ projectId?: string }>;
+      const selectedProjectId = customEvent.detail?.projectId?.trim() ?? "";
+      if (!selectedProjectId) {
+        return;
+      }
+      const matched = options.find((option) => option.id === selectedProjectId);
+      if (!matched) {
+        return;
+      }
+      setQuery(matched.displayName);
+    };
+
+    window.addEventListener(
+      PROJECT_AUTOCOMPLETE_SELECT_EVENT,
+      handleExternalProjectSelect as EventListener,
+    );
+    return () => {
+      window.removeEventListener(
+        PROJECT_AUTOCOMPLETE_SELECT_EVENT,
+        handleExternalProjectSelect as EventListener,
+      );
+    };
+  }, [options]);
 
   const normalizedQuery = normalizeText(query);
 
@@ -261,6 +290,7 @@ export function ProjectAutocomplete({ projects, initialProjectId }: ProjectAutoc
         }}
         placeholder="Ketik nama / kode / klien project..."
         autoComplete="off"
+        autoFocus={autoFocus}
         required
       />
       <datalist id={listId}>

@@ -54,7 +54,8 @@ type FilterRowsResult =
   | {
       ok: true;
       rows: WageAttendanceRow[];
-      specialistTeamName: string;
+      exportMode: WageExportMode;
+      specialistTeamNames: string[];
     }
   | {
       ok: false;
@@ -83,13 +84,6 @@ function parseRupiah(value: string | null) {
     .replace(",", ".");
   const parsed = Number(normalized);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-}
-
-function parseExportMode(value: string | null): WageExportMode {
-  if (value === "project" || value === "specialist") {
-    return value;
-  }
-  return "selected";
 }
 
 function parseSelectedIds(searchParams: URLSearchParams) {
@@ -140,14 +134,16 @@ function uniqueStrings(values: string[]) {
 
 function buildDefaultTitle(params: {
   exportMode: WageExportMode;
-  specialistTeamName: string;
-  specialistProjectName: string;
+  specialistTeamNames: string[];
   rowProjectNames: string[];
 }) {
   if (params.exportMode === "specialist") {
-    const projectLabel =
-      params.specialistProjectName || params.rowProjectNames.join(", ") || "LINTAS PROJECT";
-    return `RINCIAN UPAH TIM ${params.specialistTeamName.toUpperCase()} (${projectLabel.toUpperCase()})`;
+    const teamLabel =
+      params.specialistTeamNames.length > 0
+        ? params.specialistTeamNames.join(", ").toUpperCase()
+        : "SPESIALIS";
+    const projectLabel = params.rowProjectNames.join(", ") || "LINTAS PROJECT";
+    return `RINCIAN UPAH TIM ${teamLabel} (${projectLabel.toUpperCase()})`;
   }
   if (params.exportMode === "project") {
     if (params.rowProjectNames.length === 1) {
@@ -166,88 +162,66 @@ function buildDefaultTitle(params: {
 
 function filterRowsByMode(params: {
   rows: WageAttendanceRow[];
-  exportMode: WageExportMode;
   selectedIds: string[];
-  specialistTeamNameInput: string;
 }): FilterRowsResult {
   const selectedSet = new Set(params.selectedIds);
   const selectedRows = params.rows.filter((row) => selectedSet.has(row.id));
-
-  if (params.exportMode === "selected") {
-    if (selectedRows.length === 0) {
-      return {
-        ok: false,
-        status: 400,
-        message: "Belum ada data checklist terpilih. Pilih pekerja dulu lalu export.",
-      };
-    }
-    return { ok: true, rows: selectedRows, specialistTeamName: params.specialistTeamNameInput };
+  if (selectedRows.length === 0) {
+    return {
+      ok: false,
+      status: 400,
+      message:
+        "Belum ada data checklist terpilih. Checklist project atau tim spesialis terlebih dahulu.",
+    };
   }
 
-  if (params.exportMode === "project") {
-    if (selectedRows.length === 0) {
-      return {
-        ok: false,
-        status: 400,
-        message: "Checklist project wajib dipilih dulu sebelum export mode project.",
-      };
-    }
-    const selectedProjectIds = uniqueStrings(
-      selectedRows
-        .filter((row) => row.teamType !== "spesialis")
-        .map((row) => row.projectId.trim()),
-    );
+  const selectedRegularRows = selectedRows.filter((row) => row.teamType !== "spesialis");
+  if (selectedRegularRows.length > 0) {
+    const selectedProjectIds = uniqueStrings(selectedRegularRows.map((row) => row.projectId.trim()));
     if (selectedProjectIds.length === 0) {
       return {
         ok: false,
         status: 400,
-        message: "Checklist project belum ada. Pilih minimal 1 data non-spesialis.",
+        message: "Checklist project belum valid. Pilih data project yang tersedia.",
       };
     }
     return {
       ok: true,
+      exportMode: "project",
       rows: params.rows.filter(
-        (row) => row.teamType !== "spesialis" && selectedProjectIds.includes(row.projectId),
+        (row) => row.teamType !== "spesialis" && selectedProjectIds.includes(row.projectId.trim()),
       ),
-      specialistTeamName: params.specialistTeamNameInput,
+      specialistTeamNames: [],
     };
   }
 
-  if (selectedRows.length === 0 && params.specialistTeamNameInput.length === 0) {
+  const selectedSpecialistTeams = uniqueStrings(
+    selectedRows
+      .filter((row) => row.teamType === "spesialis")
+      .map((row) => row.specialistTeamName?.trim() || "Tim Spesialis"),
+  );
+  if (selectedSpecialistTeams.length === 0) {
     return {
       ok: false,
       status: 400,
-      message: "Checklist tim spesialis atau nama tim spesialis wajib diisi.",
+      message: "Checklist tim spesialis belum dipilih.",
     };
   }
 
-  let specialistTeamName = params.specialistTeamNameInput;
-  if (specialistTeamName.length === 0) {
-    const selectedSpecialistTeams = uniqueStrings(
-      selectedRows
-        .filter((row) => row.teamType === "spesialis")
-        .map((row) => row.specialistTeamName?.trim() || ""),
-    );
-    if (selectedSpecialistTeams.length === 1) {
-      [specialistTeamName] = selectedSpecialistTeams;
-    }
-  }
-  if (specialistTeamName.length === 0) {
-    return {
-      ok: false,
-      status: 400,
-      message: "Nama tim spesialis wajib diisi atau pilih checklist tim spesialis yang sama.",
-    };
-  }
-
-  const normalizedSpecialist = normalizeText(specialistTeamName);
+  const selectedSpecialistTeamsNormalized = selectedSpecialistTeams.map((team) =>
+    normalizeText(team),
+  );
   return {
     ok: true,
+    exportMode: "specialist",
     rows: params.rows.filter(
       (row) =>
-        row.teamType === "spesialis" && normalizeText(row.specialistTeamName) === normalizedSpecialist,
+        row.teamType === "spesialis" &&
+        selectedSpecialistTeamsNormalized.includes(
+          normalizeText(row.specialistTeamName?.trim() || "Tim Spesialis"),
+        ),
     ),
-    specialistTeamName,
+    specialistTeamNames: selectedSpecialistTeams,
   };
 }
 
@@ -324,10 +298,7 @@ export async function buildWageReportData(searchParams: URLSearchParams): Promis
     ? String(searchParams.get("from"))
     : getMonthStartDate();
   const to = isDateString(searchParams.get("to")) ? String(searchParams.get("to")) : today;
-  const exportMode = parseExportMode(searchParams.get("export_mode"));
   const selectedIds = parseSelectedIds(searchParams);
-  const specialistTeamNameInput = searchParams.get("scope_specialist_team_name")?.trim() || "";
-  const specialistProjectName = searchParams.get("scope_project_name")?.trim() || "";
   const reportTitleCustom = searchParams.get("report_title_custom")?.trim() || "";
 
   const recap = await getWageRecap({
@@ -339,9 +310,7 @@ export async function buildWageReportData(searchParams: URLSearchParams): Promis
 
   const filtered = filterRowsByMode({
     rows: recap.rows,
-    exportMode,
     selectedIds,
-    specialistTeamNameInput,
   });
   if (!filtered.ok) {
     return filtered;
@@ -365,9 +334,8 @@ export async function buildWageReportData(searchParams: URLSearchParams): Promis
     reportTitleCustom.length > 0
       ? reportTitleCustom
       : buildDefaultTitle({
-          exportMode,
-          specialistTeamName: filtered.specialistTeamName,
-          specialistProjectName,
+          exportMode: filtered.exportMode,
+          specialistTeamNames: filtered.specialistTeamNames,
           rowProjectNames,
         });
 
@@ -385,7 +353,7 @@ export async function buildWageReportData(searchParams: URLSearchParams): Promis
     data: {
       from,
       to,
-      exportMode,
+      exportMode: filtered.exportMode,
       reportTitle,
       workers,
       reimburseRows,

@@ -222,7 +222,7 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
               <tr className="text-left text-slate-500">
                 <th className="pb-2 font-medium">User</th>
                 <th className="pb-2 font-medium">Role Saat Ini</th>
-                <th className="pb-2 text-right font-medium">Ubah Role</th>
+                <th className="w-64 pb-2 text-right font-medium">Ubah Role</th>
               </tr>
             </thead>
             <tbody>
@@ -242,17 +242,17 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
                       {ROLE_LABEL[user.role]}
                     </span>
                   </td>
-                  <td className="py-2">
+                  <td className="w-64 py-2">
                     <form
                       action={updateUserRoleAction}
-                      className="flex flex-wrap items-center justify-end gap-2"
+                      className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-end"
                     >
                       <input type="hidden" name="user_id" value={user.id} />
                       <input type="hidden" name="return_to" value={closeModalHref} />
                       <select
                         name="next_role"
                         defaultValue={user.role}
-                        className="w-full max-w-[180px]"
+                        className="w-full sm:max-w-[180px]"
                         aria-label={`Ubah role ${user.fullName}`}
                       >
                         {APP_ROLES.map((role) => (
@@ -261,7 +261,7 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
                           </option>
                         ))}
                       </select>
-                      <button className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700">
+                      <button className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700">
                         <span className="btn-icon bg-white/20 text-white">
                           <SaveIcon />
                         </span>
@@ -331,7 +331,7 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
                 <th className="pb-2 font-medium">Entitas</th>
                 <th className="pb-2 font-medium">Deskripsi</th>
                 <th className="pb-2 font-medium">Data</th>
-                <th className="pb-2 text-right font-medium">Kelola</th>
+                <th className="w-48 pb-2 text-right font-medium">Kelola</th>
               </tr>
             </thead>
             <tbody>
@@ -369,8 +369,8 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
                         </p>
                       </div>
                     </td>
-                    <td className="py-2">
-                      <div className="flex flex-wrap items-center justify-end gap-2">
+                    <td className="w-48 py-2">
+                      <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
                         <Link
                           href={createLogsHref({
                             fromDate,
@@ -379,7 +379,7 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
                             mode: "view",
                           })}
                           data-ui-button="true"
-                          className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 sm:px-2.5 sm:text-xs"
+                          className="inline-flex items-center justify-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 sm:min-w-[108px] sm:justify-start sm:px-2.5 sm:text-xs"
                         >
                           <span className="btn-icon bg-blue-100 text-blue-700">
                             <EyeIcon />
@@ -390,7 +390,7 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
                           <Link
                             href={entityEditHref}
                             data-ui-button="true"
-                            className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 sm:px-2.5 sm:text-xs"
+                            className="inline-flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 sm:min-w-[108px] sm:justify-start sm:px-2.5 sm:text-xs"
                           >
                             <span className="btn-icon bg-emerald-100 text-emerald-700">
                               <EditIcon />

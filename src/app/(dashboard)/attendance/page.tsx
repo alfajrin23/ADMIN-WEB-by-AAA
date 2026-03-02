@@ -159,20 +159,25 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
   const selectedRowLabels = selectedRows.map(
     (row) => `${row.workerName} (${row.projectName ?? "Tanpa Project"})`,
   );
+  const selectedRegularRows = selectedRows.filter((row) => row.teamType !== "spesialis");
+  const selectedSpecialistRows = selectedRows.filter((row) => row.teamType === "spesialis");
   const selectedProjectLabels = Array.from(
     new Set(
-      selectedRows
-        .filter((row) => row.teamType !== "spesialis")
-        .map((row) => row.projectName ?? "Tanpa Project"),
+      selectedRegularRows.map((row) => row.projectName ?? "Tanpa Project"),
     ),
   );
   const selectedSpecialistLabels = Array.from(
     new Set(
-      selectedRows
-        .filter((row) => row.teamType === "spesialis")
-        .map((row) => row.specialistTeamName ?? "Tim Spesialis"),
+      selectedSpecialistRows.map((row) => row.specialistTeamName ?? "Tim Spesialis"),
     ),
   );
+  const inferredExportMode =
+    selectedRegularRows.length > 0
+      ? "project"
+      : selectedSpecialistRows.length > 0
+        ? "specialist"
+        : null;
+  const selectedRowPreviewLabels = selectedRowLabels.slice(0, 5);
 
   const closeModalHref = createAttendanceHref({
     from,
@@ -203,6 +208,56 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
           <p className="text-sm text-emerald-700">Sumber data aktif: {getStorageLabel()}</p>
         </section>
       ) : null}
+
+      <section className="panel p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">Filter Rekap</h2>
+            <p className="text-xs text-slate-500">
+              Pilih periode dan project untuk menyesuaikan daftar absensi.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs font-semibold">
+            <span className="rounded-lg bg-slate-100 px-3 py-2 text-slate-700">
+              Total Upah: {formatCurrency(wageRecap.totalDailyWage)}
+            </span>
+            <span className="rounded-lg bg-cyan-100 px-3 py-2 text-cyan-700">
+              Total Lembur: {formatCurrency(wageRecap.totalOvertimePay)}
+            </span>
+            <span className="rounded-lg bg-amber-100 px-3 py-2 text-amber-700">
+              Total Kasbon: {formatCurrency(wageRecap.totalKasbon)}
+            </span>
+            <span className="rounded-lg bg-emerald-100 px-3 py-2 text-emerald-700">
+              Harus Dibayar: {formatCurrency(wageRecap.totalNetPay)}
+            </span>
+          </div>
+        </div>
+
+        <form method="get" className="mt-4 grid gap-3 sm:grid-cols-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">Dari</label>
+            <input type="date" name="from" defaultValue={from} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">Sampai</label>
+            <input type="date" name="to" defaultValue={to} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">Project</label>
+            <select name="project" defaultValue={projectFilter}>
+              <option value="">Semua Project</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button className="inline-flex w-full items-center justify-center rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 sm:col-span-3 sm:w-max">
+            Terapkan Filter
+          </button>
+        </form>
+      </section>
 
       <section className="panel p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -266,7 +321,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                       <th className="pb-2 font-medium">Kehadiran</th>
                       <th className="pb-2 font-medium">Tarif</th>
                       <th className="pb-2 font-medium">Pembayaran</th>
-                      <th className="pb-2 text-right font-medium">Aksi</th>
+                      <th className="w-48 pb-2 text-right font-medium">Aksi</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -307,11 +362,11 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                               Net: {formatCurrency(item.netPay)}
                             </p>
                           </td>
-                          <td className="py-2">
-                            <div className="flex flex-wrap items-center justify-end gap-2">
+                          <td className="w-48 py-2">
+                            <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
                               <Link
                                 href={`/attendance/view?id=${item.id}`}
-                                className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 sm:px-2.5 sm:text-xs"
+                                className="inline-flex items-center justify-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 sm:min-w-[96px] sm:justify-start sm:px-2.5 sm:text-xs"
                               >
                                 <span className="btn-icon bg-blue-100 text-blue-700">
                                   <EyeIcon />
@@ -320,7 +375,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                               </Link>
                               <Link
                                 href={`/attendance/edit?id=${item.id}`}
-                                className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 sm:px-2.5 sm:text-xs"
+                                className="inline-flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 sm:min-w-[96px] sm:justify-start sm:px-2.5 sm:text-xs"
                               >
                                 <span className="btn-icon bg-emerald-100 text-emerald-700">
                                   <EditIcon />
@@ -331,7 +386,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                                 <input type="hidden" name="attendance_id" value={item.id} />
                                 <input type="hidden" name="return_to" value={returnToAttendance} />
                                 <ConfirmActionButton
-                                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 sm:px-2.5 sm:text-xs"
+                                  className="inline-flex items-center justify-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 sm:min-w-[96px] sm:justify-start sm:px-2.5 sm:text-xs"
                                   modalDescription="Yakin ingin menghapus data absensi ini?"
                                 >
                                   <span className="btn-icon bg-rose-100 text-rose-700">
@@ -378,7 +433,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                       <th className="pb-2 font-medium">Kehadiran</th>
                       <th className="pb-2 font-medium">Tarif</th>
                       <th className="pb-2 font-medium">Pembayaran</th>
-                      <th className="pb-2 text-right font-medium">Aksi</th>
+                      <th className="w-48 pb-2 text-right font-medium">Aksi</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -419,11 +474,11 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                             Net: {formatCurrency(item.netPay)}
                           </p>
                         </td>
-                        <td className="py-2">
-                          <div className="flex flex-wrap items-center justify-end gap-2">
+                        <td className="w-48 py-2">
+                          <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
                             <Link
                               href={`/attendance/view?id=${item.id}`}
-                              className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 sm:px-2.5 sm:text-xs"
+                              className="inline-flex items-center justify-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 sm:min-w-[96px] sm:justify-start sm:px-2.5 sm:text-xs"
                             >
                               <span className="btn-icon bg-blue-100 text-blue-700">
                                 <EyeIcon />
@@ -432,7 +487,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                             </Link>
                             <Link
                               href={`/attendance/edit?id=${item.id}`}
-                              className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 sm:px-2.5 sm:text-xs"
+                              className="inline-flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 sm:min-w-[96px] sm:justify-start sm:px-2.5 sm:text-xs"
                             >
                               <span className="btn-icon bg-emerald-100 text-emerald-700">
                                 <EditIcon />
@@ -443,7 +498,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                               <input type="hidden" name="attendance_id" value={item.id} />
                               <input type="hidden" name="return_to" value={returnToAttendance} />
                               <ConfirmActionButton
-                                className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 sm:px-2.5 sm:text-xs"
+                                className="inline-flex items-center justify-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 sm:min-w-[96px] sm:justify-start sm:px-2.5 sm:text-xs"
                                 modalDescription="Yakin ingin menghapus data absensi ini?"
                               >
                                 <span className="btn-icon bg-rose-100 text-rose-700">
@@ -468,56 +523,6 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
             </p>
           ) : null}
         </div>
-      </section>
-
-      <section className="panel p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">Filter Rekap</h2>
-            <p className="text-xs text-slate-500">
-              Pilih periode dan project untuk menyesuaikan daftar absensi.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2 text-xs font-semibold">
-            <span className="rounded-lg bg-slate-100 px-3 py-2 text-slate-700">
-              Total Upah: {formatCurrency(wageRecap.totalDailyWage)}
-            </span>
-            <span className="rounded-lg bg-cyan-100 px-3 py-2 text-cyan-700">
-              Total Lembur: {formatCurrency(wageRecap.totalOvertimePay)}
-            </span>
-            <span className="rounded-lg bg-amber-100 px-3 py-2 text-amber-700">
-              Total Kasbon: {formatCurrency(wageRecap.totalKasbon)}
-            </span>
-            <span className="rounded-lg bg-emerald-100 px-3 py-2 text-emerald-700">
-              Harus Dibayar: {formatCurrency(wageRecap.totalNetPay)}
-            </span>
-          </div>
-        </div>
-
-        <form method="get" className="mt-4 grid gap-3 sm:grid-cols-3">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">Dari</label>
-            <input type="date" name="from" defaultValue={from} />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">Sampai</label>
-            <input type="date" name="to" defaultValue={to} />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">Project</label>
-            <select name="project" defaultValue={projectFilter}>
-              <option value="">Semua Project</option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <button className="inline-flex w-full items-center justify-center rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 sm:col-span-3 sm:w-max">
-            Terapkan Filter
-          </button>
-        </form>
       </section>
 
       {activeModal ? (
@@ -645,6 +650,14 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                   <p className="text-xs font-semibold text-slate-600">
                     Data terpilih via checklist: {selectedRows.length}
                   </p>
+                  <p className="mt-1 text-xs font-semibold text-slate-700">
+                    Mode otomatis:{" "}
+                    {inferredExportMode === "project"
+                      ? "Rekap Project"
+                      : inferredExportMode === "specialist"
+                        ? "Rekap Tim Spesialis"
+                        : "Belum ada checklist"}
+                  </p>
                   <p className="mt-1 text-xs text-slate-600">
                     Project terpilih:{" "}
                     {selectedProjectLabels.length > 0 ? selectedProjectLabels.join(", ") : "-"}
@@ -653,47 +666,26 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                     Tim spesialis terpilih:{" "}
                     {selectedSpecialistLabels.length > 0 ? selectedSpecialistLabels.join(", ") : "-"}
                   </p>
-                  <p className="mt-1 text-sm text-slate-800">
-                    {selectedRowLabels.length > 0 ? selectedRowLabels.join(", ") : "-"}
+                  <p className="mt-2 text-xs text-slate-600">
+                    Jika checklist project, sistem otomatis export seluruh pekerja non-spesialis pada
+                    project tersebut. Jika hanya checklist tim spesialis, sistem otomatis menampilkan
+                    tim spesialis beserta project tempat mereka bekerja.
                   </p>
+                  {selectedRowPreviewLabels.length > 0 ? (
+                    <p className="mt-2 text-xs text-slate-700">
+                      Contoh data dipilih: {selectedRowPreviewLabels.join(", ")}
+                      {selectedRowLabels.length > selectedRowPreviewLabels.length
+                        ? ` +${selectedRowLabels.length - selectedRowPreviewLabels.length} lainnya`
+                        : ""}
+                    </p>
+                  ) : null}
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">Mode rekap</label>
-                    <select name="export_mode" defaultValue={selectedRows.length > 0 ? "project" : "selected"}>
-                      <option value="selected">Sesuai checklist pekerja</option>
-                      <option value="project">Checklist project (otomatis)</option>
-                      <option value="specialist">Checklist tim spesialis (lintas project)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">
-                      Judul custom (opsional)
-                    </label>
-                    <input name="report_title_custom" placeholder="Contoh: Rekap Upah Minggu Ke-2" />
-                  </div>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">
-                      Tim spesialis (jika mode spesialis)
-                    </label>
-                    <input
-                      name="scope_specialist_team_name"
-                      placeholder="Contoh: Baja / Listrik / Sipil"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">
-                      Nama project tim spesialis (opsional)
-                    </label>
-                    <input
-                      name="scope_project_name"
-                      placeholder="Kosongkan untuk auto dari data project kerja"
-                    />
-                  </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-500">
+                    Judul custom (opsional)
+                  </label>
+                  <input name="report_title_custom" placeholder="Contoh: Rekap Upah Minggu Ke-2" />
                 </div>
 
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -701,7 +693,13 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                   <ReimburseLinesInput />
                 </div>
 
-                <AttendanceReportExportButtons formId="attendance-export-form" />
+                {selectedRows.length > 0 ? (
+                  <AttendanceReportExportButtons formId="attendance-export-form" />
+                ) : (
+                  <p className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
+                    Checklist data absensi dulu sebelum export.
+                  </p>
+                )}
               </form>
             )}
           </section>

@@ -257,27 +257,23 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                 </div>
               </div>
 
-              <div className="mt-3 overflow-x-auto">
-                <table className="w-full min-w-[1080px] text-xs">
+              <div className="mt-3">
+                <table className="w-full table-fixed text-[11px] leading-5 sm:text-xs">
                   <thead>
                     <tr className="text-left text-slate-500">
-                      <th className="pb-2 text-center font-medium">Pilih</th>
+                      <th className="w-10 pb-2 text-center font-medium">Pilih</th>
                       <th className="pb-2 font-medium">Pekerja</th>
-                      <th className="pb-2 font-medium">Tim</th>
-                      <th className="pb-2 text-right font-medium">Hari Kerja</th>
-                      <th className="pb-2 text-right font-medium">Upah/Hari</th>
-                      <th className="pb-2 text-right font-medium">Lembur (Jam)</th>
-                      <th className="pb-2 text-right font-medium">Upah Lembur/Jam</th>
-                      <th className="pb-2 text-right font-medium">Kasbon</th>
-                      <th className="pb-2 text-right font-medium">Harus Dibayar</th>
+                      <th className="pb-2 font-medium">Kehadiran</th>
+                      <th className="pb-2 font-medium">Tarif</th>
+                      <th className="pb-2 font-medium">Pembayaran</th>
                       <th className="pb-2 text-right font-medium">Aksi</th>
                     </tr>
                   </thead>
                   <tbody>
                     {group.rows.map((item) => {
                       return (
-                        <tr key={item.id} className="border-t border-slate-100">
-                          <td className="py-2 text-center">
+                        <tr key={item.id} className="border-t border-slate-100 align-top">
+                          <td className="w-10 py-2 pr-1 text-center">
                             <input
                               type="checkbox"
                               name="selected"
@@ -289,25 +285,33 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                               aria-label={`Pilih ${item.workerName}`}
                             />
                           </td>
-                          <td className="py-2 font-medium text-slate-900">{item.workerName}</td>
-                          <td className="py-2">
-                            {item.teamType === "spesialis"
-                              ? `Spesialis - ${item.specialistTeamName ?? "Lainnya"}`
-                              : WORKER_TEAM_LABEL[item.teamType]}
+                          <td className="py-2 pr-2">
+                            <p className="font-semibold text-slate-900">{item.workerName}</p>
+                            <p className="text-slate-600">
+                              {item.teamType === "spesialis"
+                                ? `Spesialis - ${item.specialistTeamName ?? "Lainnya"}`
+                                : WORKER_TEAM_LABEL[item.teamType]}
+                            </p>
                           </td>
-                          <td className="py-2 text-right">{item.workDays}</td>
-                          <td className="py-2 text-right">{formatCurrency(item.dailyWage)}</td>
-                          <td className="py-2 text-right">{formatHours(item.overtimeHours)}</td>
-                          <td className="py-2 text-right">{formatCurrency(item.overtimeWage)}</td>
-                          <td className="py-2 text-right">{formatCurrency(item.kasbonAmount)}</td>
-                          <td className="py-2 text-right font-semibold text-emerald-700">
-                            {formatCurrency(item.netPay)}
+                          <td className="py-2 pr-2 text-slate-700">
+                            <p>Hari kerja: {item.workDays}</p>
+                            <p>Lembur: {formatHours(item.overtimeHours)} jam</p>
+                          </td>
+                          <td className="py-2 pr-2 text-slate-700">
+                            <p>Harian: {formatCurrency(item.dailyWage)}</p>
+                            <p>Lembur/Jam: {formatCurrency(item.overtimeWage)}</p>
+                          </td>
+                          <td className="py-2 pr-2 text-slate-700">
+                            <p>Kasbon: {formatCurrency(item.kasbonAmount)}</p>
+                            <p className="font-semibold text-emerald-700">
+                              Net: {formatCurrency(item.netPay)}
+                            </p>
                           </td>
                           <td className="py-2">
-                            <div className="flex items-center justify-end gap-3">
+                            <div className="flex flex-wrap items-center justify-end gap-2">
                               <Link
                                 href={`/attendance/view?id=${item.id}`}
-                                className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 hover:text-blue-900"
+                                className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 sm:px-2.5 sm:text-xs"
                               >
                                 <span className="btn-icon bg-blue-100 text-blue-700">
                                   <EyeIcon />
@@ -316,7 +320,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                               </Link>
                               <Link
                                 href={`/attendance/edit?id=${item.id}`}
-                                className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 hover:text-emerald-900"
+                                className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 sm:px-2.5 sm:text-xs"
                               >
                                 <span className="btn-icon bg-emerald-100 text-emerald-700">
                                   <EditIcon />
@@ -327,7 +331,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                                 <input type="hidden" name="attendance_id" value={item.id} />
                                 <input type="hidden" name="return_to" value={returnToAttendance} />
                                 <ConfirmActionButton
-                                  className="inline-flex items-center gap-1 text-[11px] font-medium text-rose-700 hover:text-rose-900"
+                                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 sm:px-2.5 sm:text-xs"
                                   modalDescription="Yakin ingin menghapus data absensi ini?"
                                 >
                                   <span className="btn-icon bg-rose-100 text-rose-700">
@@ -365,27 +369,22 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                 </div>
               </div>
 
-              <div className="mt-3 overflow-x-auto">
-                <table className="w-full min-w-[1200px] text-xs">
+              <div className="mt-3">
+                <table className="w-full table-fixed text-[11px] leading-5 sm:text-xs">
                   <thead>
                     <tr className="text-left text-slate-500">
-                      <th className="pb-2 text-center font-medium">Pilih</th>
+                      <th className="w-10 pb-2 text-center font-medium">Pilih</th>
                       <th className="pb-2 font-medium">Pekerja</th>
-                      <th className="pb-2 font-medium">Tim Spesialis</th>
-                      <th className="pb-2 font-medium">Project</th>
-                      <th className="pb-2 text-right font-medium">Hari Kerja</th>
-                      <th className="pb-2 text-right font-medium">Upah/Hari</th>
-                      <th className="pb-2 text-right font-medium">Lembur (Jam)</th>
-                      <th className="pb-2 text-right font-medium">Upah Lembur/Jam</th>
-                      <th className="pb-2 text-right font-medium">Kasbon</th>
-                      <th className="pb-2 text-right font-medium">Harus Dibayar</th>
+                      <th className="pb-2 font-medium">Kehadiran</th>
+                      <th className="pb-2 font-medium">Tarif</th>
+                      <th className="pb-2 font-medium">Pembayaran</th>
                       <th className="pb-2 text-right font-medium">Aksi</th>
                     </tr>
                   </thead>
                   <tbody>
                     {group.rows.map((item) => (
                       <tr key={item.id} className="border-t border-cyan-100 align-top">
-                        <td className="py-2 text-center">
+                        <td className="w-10 py-2 pr-1 text-center">
                           <input
                             type="checkbox"
                             name="selected"
@@ -397,22 +396,34 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                             aria-label={`Pilih ${item.workerName}`}
                           />
                         </td>
-                        <td className="py-2 font-medium text-slate-900">{item.workerName}</td>
-                        <td className="py-2">{item.specialistTeamName ?? "Tim Spesialis"}</td>
-                        <td className="py-2 text-slate-700">{item.projectName ?? "Tanpa Project"}</td>
-                        <td className="py-2 text-right">{item.workDays}</td>
-                        <td className="py-2 text-right">{formatCurrency(item.dailyWage)}</td>
-                        <td className="py-2 text-right">{formatHours(item.overtimeHours)}</td>
-                        <td className="py-2 text-right">{formatCurrency(item.overtimeWage)}</td>
-                        <td className="py-2 text-right">{formatCurrency(item.kasbonAmount)}</td>
-                        <td className="py-2 text-right font-semibold text-emerald-700">
-                          {formatCurrency(item.netPay)}
+                        <td className="py-2 pr-2">
+                          <p className="font-semibold text-slate-900">{item.workerName}</p>
+                          <p className="text-cyan-800">
+                            Tim: {item.specialistTeamName ?? "Tim Spesialis"}
+                          </p>
+                          <p className="text-slate-600">
+                            Project: {item.projectName ?? "Tanpa Project"}
+                          </p>
+                        </td>
+                        <td className="py-2 pr-2 text-slate-700">
+                          <p>Hari kerja: {item.workDays}</p>
+                          <p>Lembur: {formatHours(item.overtimeHours)} jam</p>
+                        </td>
+                        <td className="py-2 pr-2 text-slate-700">
+                          <p>Harian: {formatCurrency(item.dailyWage)}</p>
+                          <p>Lembur/Jam: {formatCurrency(item.overtimeWage)}</p>
+                        </td>
+                        <td className="py-2 pr-2 text-slate-700">
+                          <p>Kasbon: {formatCurrency(item.kasbonAmount)}</p>
+                          <p className="font-semibold text-emerald-700">
+                            Net: {formatCurrency(item.netPay)}
+                          </p>
                         </td>
                         <td className="py-2">
-                          <div className="flex items-center justify-end gap-3">
+                          <div className="flex flex-wrap items-center justify-end gap-2">
                             <Link
                               href={`/attendance/view?id=${item.id}`}
-                              className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 hover:text-blue-900"
+                              className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 sm:px-2.5 sm:text-xs"
                             >
                               <span className="btn-icon bg-blue-100 text-blue-700">
                                 <EyeIcon />
@@ -421,7 +432,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                             </Link>
                             <Link
                               href={`/attendance/edit?id=${item.id}`}
-                              className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 hover:text-emerald-900"
+                              className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 sm:px-2.5 sm:text-xs"
                             >
                               <span className="btn-icon bg-emerald-100 text-emerald-700">
                                 <EditIcon />
@@ -432,7 +443,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                               <input type="hidden" name="attendance_id" value={item.id} />
                               <input type="hidden" name="return_to" value={returnToAttendance} />
                               <ConfirmActionButton
-                                className="inline-flex items-center gap-1 text-[11px] font-medium text-rose-700 hover:text-rose-900"
+                                className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 sm:px-2.5 sm:text-xs"
                                 modalDescription="Yakin ingin menghapus data absensi ini?"
                               >
                                 <span className="btn-icon bg-rose-100 text-rose-700">

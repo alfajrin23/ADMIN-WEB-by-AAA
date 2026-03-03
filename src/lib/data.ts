@@ -1362,15 +1362,85 @@ function sortExpenseSearchResults(a: ProjectExpenseSearchResult, b: ProjectExpen
   return (a.description ?? "").localeCompare(b.description ?? "");
 }
 
+type ExpenseDetailSearchFilters = {
+  from?: string;
+  to?: string;
+  year?: number;
+};
+
+type NormalizedExpenseDetailDateFilters = {
+  from: string | null;
+  to: string | null;
+  hasFilter: boolean;
+  isValid: boolean;
+};
+
+function isDateOnlyString(value: string | undefined) {
+  return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
+}
+
+function normalizeExpenseDetailDateFilters(
+  filters: ExpenseDetailSearchFilters | undefined,
+): NormalizedExpenseDetailDateFilters {
+  const from = isDateOnlyString(filters?.from) ? String(filters?.from) : null;
+  const to = isDateOnlyString(filters?.to) ? String(filters?.to) : null;
+  const parsedYear = Number(filters?.year);
+  const year =
+    Number.isInteger(parsedYear) && parsedYear >= 1900 && parsedYear <= 9999 ? parsedYear : null;
+
+  let effectiveFrom = from;
+  let effectiveTo = to;
+
+  if (year !== null) {
+    const yearStart = `${year}-01-01`;
+    const yearEnd = `${year}-12-31`;
+    if (!effectiveFrom || yearStart > effectiveFrom) {
+      effectiveFrom = yearStart;
+    }
+    if (!effectiveTo || yearEnd < effectiveTo) {
+      effectiveTo = yearEnd;
+    }
+  }
+
+  const hasFilter = Boolean(effectiveFrom || effectiveTo || year !== null);
+  const isValid = !effectiveFrom || !effectiveTo || effectiveFrom <= effectiveTo;
+
+  return {
+    from: effectiveFrom,
+    to: effectiveTo,
+    hasFilter,
+    isValid,
+  };
+}
+
+function matchesExpenseDetailDateFilter(
+  expenseDate: string,
+  filters: NormalizedExpenseDetailDateFilters,
+) {
+  const dateOnly = toDateOnly(expenseDate);
+  if (filters.from && dateOnly < filters.from) {
+    return false;
+  }
+  if (filters.to && dateOnly > filters.to) {
+    return false;
+  }
+  return true;
+}
+
 export async function searchExpenseDetails(
   queryText: string,
   limit = 200,
+  filters?: ExpenseDetailSearchFilters,
 ): Promise<ProjectExpenseSearchResult[]> {
   const normalizedQuery = queryText.trim().toLowerCase().replace(/\s+/g, " ");
-  if (!normalizedQuery) {
+  const dateFilters = normalizeExpenseDetailDateFilters(filters);
+  if (!normalizedQuery && !dateFilters.hasFilter) {
     return [];
   }
-  const queryDigits = getSearchDigits(normalizedQuery);
+  if (!dateFilters.isValid) {
+    return [];
+  }
+  const queryDigits = normalizedQuery ? getSearchDigits(normalizedQuery) : "";
 
   if (activeDataSource === "excel") {
     const db = readExcelDatabase();
@@ -1378,7 +1448,10 @@ export async function searchExpenseDetails(
     return db.project_expenses
       .map((row) => mapExpense(row, projectMap[row.project_id]))
       .filter((row) => isVisibleExpense(row))
-      .filter((row) => matchExpenseSearchQuery(row, normalizedQuery, queryDigits))
+      .filter((row) => matchesExpenseDetailDateFilter(row.expenseDate, dateFilters))
+      .filter((row) =>
+        normalizedQuery ? matchExpenseSearchQuery(row, normalizedQuery, queryDigits) : true,
+      )
       .map((row) => mapExpenseSearchResult(row, row.projectName?.trim() || "Project"))
       .sort(sortExpenseSearchResults)
       .slice(0, limit);
@@ -1391,11 +1464,18 @@ export async function searchExpenseDetails(
     }
 
     const fetchLimit = Math.min(Math.max(limit * 12, 1200), 5000);
-    const { data, error } = await supabase
+    let supabaseQuery = supabase
       .from("project_expenses")
       .select(
         "id, project_id, requester_name, description, recipient_name, usage_info, category, amount, expense_date, projects(name)",
-      )
+      );
+    if (dateFilters.from) {
+      supabaseQuery = supabaseQuery.gte("expense_date", dateFilters.from);
+    }
+    if (dateFilters.to) {
+      supabaseQuery = supabaseQuery.lte("expense_date", dateFilters.to);
+    }
+    const { data, error } = await supabaseQuery
       .order("expense_date", { ascending: false })
       .limit(fetchLimit);
 
@@ -1412,7 +1492,10 @@ export async function searchExpenseDetails(
         };
       })
       .filter((item) => isVisibleExpense(item.mapped))
-      .filter((item) => matchExpenseSearchQuery(item.mapped, normalizedQuery, queryDigits))
+      .filter((item) => matchesExpenseDetailDateFilter(item.mapped.expenseDate, dateFilters))
+      .filter((item) =>
+        normalizedQuery ? matchExpenseSearchQuery(item.mapped, normalizedQuery, queryDigits) : true,
+      )
       .map((item) => mapExpenseSearchResult(item.mapped, item.projectName))
       .sort(sortExpenseSearchResults)
       .slice(0, limit);
@@ -1430,7 +1513,10 @@ export async function searchExpenseDetails(
     return expenseRows
       .map((row) => mapExpense(row, projectMap[String(row.project_id ?? "")]))
       .filter((row) => isVisibleExpense(row))
-      .filter((row) => matchExpenseSearchQuery(row, normalizedQuery, queryDigits))
+      .filter((row) => matchesExpenseDetailDateFilter(row.expenseDate, dateFilters))
+      .filter((row) =>
+        normalizedQuery ? matchExpenseSearchQuery(row, normalizedQuery, queryDigits) : true,
+      )
       .map((row) => mapExpenseSearchResult(row, row.projectName?.trim() || "Project"))
       .sort(sortExpenseSearchResults)
       .slice(0, limit);
@@ -1438,7 +1524,8 @@ export async function searchExpenseDetails(
 
   return sampleExpenses
     .filter((row) => isVisibleExpense(row))
-    .filter((row) => matchExpenseSearchQuery(row, normalizedQuery, queryDigits))
+    .filter((row) => matchesExpenseDetailDateFilter(row.expenseDate, dateFilters))
+    .filter((row) => (normalizedQuery ? matchExpenseSearchQuery(row, normalizedQuery, queryDigits) : true))
     .map((row) => mapExpenseSearchResult(row, row.projectName?.trim() || "Project"))
     .sort(sortExpenseSearchResults)
     .slice(0, limit);

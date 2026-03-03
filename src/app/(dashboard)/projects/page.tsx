@@ -63,6 +63,9 @@ type ProjectPageProps = {
     modal?: string;
     q?: string;
     detail_q?: string;
+    detail_from?: string;
+    detail_to?: string;
+    detail_year?: string;
     success?: string;
     view?: string;
   }>;
@@ -72,11 +75,29 @@ function normalizeSearchText(value: string | undefined) {
   return value?.trim().toLowerCase() ?? "";
 }
 
+function isDateString(value: string | undefined) {
+  return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
+}
+
+function parseFilterYear(value: string | undefined) {
+  if (!value || !/^\d{4}$/.test(value.trim())) {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1900 || parsed > 9999) {
+    return null;
+  }
+  return parsed;
+}
+
 function createProjectsHref(params: {
   projectId?: string;
   modal?: ModalType;
   searchText?: string;
   detailSearchQuery?: string;
+  detailDateFrom?: string;
+  detailDateTo?: string;
+  detailYear?: number | null;
   view?: ProjectView;
 }) {
   const query = new URLSearchParams();
@@ -96,6 +117,15 @@ function createProjectsHref(params: {
   const trimmedDetailSearch = params.detailSearchQuery?.trim();
   if (trimmedDetailSearch) {
     query.set("detail_q", trimmedDetailSearch);
+  }
+  if (params.detailDateFrom) {
+    query.set("detail_from", params.detailDateFrom);
+  }
+  if (params.detailDateTo) {
+    query.set("detail_to", params.detailDateTo);
+  }
+  if (params.detailYear) {
+    query.set("detail_year", String(params.detailYear));
   }
   const queryText = query.toString();
   return queryText ? `/projects?${queryText}` : "/projects";
@@ -198,6 +228,12 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
 
   const modalParam = typeof params.modal === "string" ? params.modal : "";
   const detailSearchQuery = typeof params.detail_q === "string" ? params.detail_q.trim() : "";
+  const detailDateFrom = isDateString(params.detail_from) ? String(params.detail_from) : "";
+  const detailDateTo = isDateString(params.detail_to) ? String(params.detail_to) : "";
+  const detailYear = parseFilterYear(
+    typeof params.detail_year === "string" ? params.detail_year : undefined,
+  );
+  const hasDetailSearchCriteria = Boolean(detailSearchQuery || detailDateFrom || detailDateTo || detailYear);
   const success = typeof params.success === "string" ? params.success : "";
   const requestedModal: ModalType | null =
     modalParam === "project-new" ||
@@ -217,8 +253,12 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
     blockedModalMessage = "Import Excel hanya tersedia untuk role developer.";
   }
   const detailSearchResults =
-    activeModal === "detail-search" && detailSearchQuery
-      ? await searchExpenseDetails(detailSearchQuery, 240)
+    activeModal === "detail-search" && hasDetailSearchCriteria
+      ? await searchExpenseDetails(detailSearchQuery, 1200, {
+          from: detailDateFrom || undefined,
+          to: detailDateTo || undefined,
+          year: detailYear ?? undefined,
+        })
       : [];
   const closeModalHref = createProjectsHref({
     projectId: currentProjectQueryId,
@@ -270,6 +310,9 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
     modal: "detail-search",
     searchText,
     detailSearchQuery,
+    detailDateFrom,
+    detailDateTo,
+    detailYear,
     view: activeView,
   });
 
@@ -798,41 +841,66 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
 
             {activeModal === "detail-search" ? (
               <div className="mt-4 space-y-4">
-                <form method="get" className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                <form method="get" className="space-y-2">
                   {currentProjectQueryId ? (
                     <input type="hidden" name="project" value={currentProjectQueryId} />
                   ) : null}
                   {searchText ? <input type="hidden" name="q" value={searchText} /> : null}
                   <input type="hidden" name="view" value={activeView} />
                   <input type="hidden" name="modal" value="detail-search" />
-                  <input
-                    name="detail_q"
-                    defaultValue={detailSearchQuery}
-                    placeholder="Contoh: hebel, proyek gudang, 1.500.000"
-                    autoFocus
-                    autoComplete="off"
-                  />
-                  <button className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-cyan-600">
-                    <span className="btn-icon bg-white/20 text-white">
-                      <SearchIcon />
-                    </span>
-                    Cari Rincian
-                  </button>
+                  <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                    <input
+                      name="detail_q"
+                      defaultValue={detailSearchQuery}
+                      placeholder="Contoh: hebel, proyek gudang, 1.500.000"
+                      autoFocus
+                      autoComplete="off"
+                    />
+                    <button className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-cyan-600">
+                      <span className="btn-icon bg-white/20 text-white">
+                        <SearchIcon />
+                      </span>
+                      Cari Rincian
+                    </button>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-500">Dari tanggal</label>
+                      <input type="date" name="detail_from" defaultValue={detailDateFrom} />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-500">Sampai tanggal</label>
+                      <input type="date" name="detail_to" defaultValue={detailDateTo} />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-500">Tahun</label>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        name="detail_year"
+                        min={1900}
+                        max={9999}
+                        step={1}
+                        defaultValue={detailYear ?? ""}
+                        placeholder="Contoh: 2026"
+                      />
+                    </div>
+                  </div>
                 </form>
 
-                {!detailSearchQuery ? (
+                {!hasDetailSearchCriteria ? (
                   <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600">
-                    Isi kata kunci rincian, nama project, atau nominal untuk mencari data di semua project.
+                    Isi kata kunci rincian atau gunakan filter tanggal/tahun untuk mencari data di semua
+                    project.
                   </p>
                 ) : detailSearchResults.length === 0 ? (
                   <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-4 text-sm text-amber-700">
-                    Data untuk kata kunci &quot;{detailSearchQuery}&quot; tidak ditemukan di semua project.
+                    Data tidak ditemukan untuk filter rincian yang dipilih.
                   </p>
                 ) : (
                   <div className="space-y-2">
                     <p className="text-xs text-slate-500">
-                      Ditemukan {detailSearchResults.length} data untuk kata kunci &quot;
-                      {detailSearchQuery}&quot;.
+                      Ditemukan {detailSearchResults.length} data sesuai filter rincian.
                     </p>
                     <ExpenseDetailSearchResults
                       results={detailSearchResults}

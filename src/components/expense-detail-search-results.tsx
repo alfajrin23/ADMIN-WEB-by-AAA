@@ -29,14 +29,28 @@ function getDigits(value: string) {
   return value.replace(/\D/g, "");
 }
 
+function toCompactSearchToken(value: string) {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/gi, "")
+    .toLowerCase();
+}
+
 function buildLocalSearchHaystack(item: ProjectExpenseSearchResult) {
   const absoluteAmount = Math.round(Math.abs(item.amount));
   const groupedAmount = absoluteAmount.toLocaleString("id-ID");
   return [
     item.projectName,
+    `project ${item.projectName}`,
+    `proyek ${item.projectName}`,
     item.requesterName ?? "",
+    `pengaju ${item.requesterName ?? ""}`,
+    `atas nama ${item.requesterName ?? ""}`,
     item.description ?? "",
     item.usageInfo ?? "",
+    `penggunaan ${item.usageInfo ?? ""}`,
+    `untuk ${item.usageInfo ?? ""}`,
     String(item.amount),
     String(absoluteAmount),
     groupedAmount,
@@ -82,8 +96,17 @@ export function ExpenseDetailSearchResults({
     }
 
     const queryDigits = getDigits(normalizedFilterQuery);
+    const queryTerms = normalizedFilterQuery.split(" ").filter((item) => item.length > 0);
+    const compactQuery = toCompactSearchToken(normalizedFilterQuery);
     return results.filter((item) => {
-      if (buildLocalSearchHaystack(item).includes(normalizedFilterQuery)) {
+      const haystack = buildLocalSearchHaystack(item);
+      if (haystack.includes(normalizedFilterQuery)) {
+        return true;
+      }
+      if (queryTerms.length > 1 && queryTerms.every((term) => haystack.includes(term))) {
+        return true;
+      }
+      if (compactQuery && toCompactSearchToken(haystack).includes(compactQuery)) {
         return true;
       }
       if (!queryDigits) {

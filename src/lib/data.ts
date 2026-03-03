@@ -1297,8 +1297,14 @@ function buildExpenseSearchHaystack(row: {
     row.description ?? "",
     row.usageInfo ?? "",
     row.requesterName ?? "",
+    `pengaju ${row.requesterName ?? ""}`,
+    `atas nama ${row.requesterName ?? ""}`,
     row.recipientName ?? "",
+    `penerima ${row.recipientName ?? ""}`,
+    `vendor ${row.recipientName ?? ""}`,
     row.projectName ?? "",
+    `project ${row.projectName ?? ""}`,
+    `proyek ${row.projectName ?? ""}`,
     row.category ? getCostCategoryLabel(row.category) : "",
     row.category ?? "",
     String(amountValue),
@@ -1308,6 +1314,14 @@ function buildExpenseSearchHaystack(row: {
     `rp${groupedAmount}`,
   ]
     .join(" ")
+    .toLowerCase();
+}
+
+function toCompactSearchToken(value: string) {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/gi, "")
     .toLowerCase();
 }
 
@@ -1328,8 +1342,20 @@ function matchExpenseSearchQuery(
   normalizedQuery: string,
   queryDigits: string,
 ) {
-  if (buildExpenseSearchHaystack(row).includes(normalizedQuery)) {
+  const haystack = buildExpenseSearchHaystack(row);
+  if (haystack.includes(normalizedQuery)) {
     return true;
+  }
+  const queryTerms = normalizedQuery.split(" ").filter((item) => item.length > 0);
+  if (queryTerms.length > 1 && queryTerms.every((term) => haystack.includes(term))) {
+    return true;
+  }
+  const compactQuery = toCompactSearchToken(normalizedQuery);
+  if (compactQuery) {
+    const compactHaystack = toCompactSearchToken(haystack);
+    if (compactHaystack.includes(compactQuery)) {
+      return true;
+    }
   }
   if (!queryDigits) {
     return false;

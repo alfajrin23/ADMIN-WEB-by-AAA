@@ -68,12 +68,12 @@ export function ExpenseDetailSearchResults({
   const [filterQuery, setFilterQuery] = useState("");
   const [isBulkEditorOpen, setIsBulkEditorOpen] = useState(false);
   const [applyCategory, setApplyCategory] = useState(false);
-  const [applyExpenseDate, setApplyExpenseDate] = useState(false);
+  const [applyExpenseYear, setApplyExpenseYear] = useState(false);
   const [applyRequesterName, setApplyRequesterName] = useState(false);
   const [applyDescription, setApplyDescription] = useState(false);
   const [applyUsageInfo, setApplyUsageInfo] = useState(false);
   const [applyRecipientName, setApplyRecipientName] = useState(false);
-  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const currentYear = useMemo(() => String(new Date().getFullYear()), []);
 
   const filteredResults = useMemo(() => {
     const normalizedFilterQuery = normalizeFilterQuery(filterQuery);
@@ -207,19 +207,24 @@ export function ExpenseDetailSearchResults({
                 <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
                   <input
                     type="checkbox"
-                    name="apply_expense_date"
+                    name="apply_expense_year"
                     value="1"
-                    checked={applyExpenseDate}
-                    onChange={(event) => setApplyExpenseDate(event.currentTarget.checked)}
+                    checked={applyExpenseYear}
+                    onChange={(event) => setApplyExpenseYear(event.currentTarget.checked)}
                   />
-                  Ubah tanggal
+                  Ubah tahun
                 </label>
                 <input
-                  type="date"
-                  name="expense_date"
-                  defaultValue={today}
-                  disabled={!applyExpenseDate}
-                  required={applyExpenseDate}
+                  type="number"
+                  inputMode="numeric"
+                  name="expense_year"
+                  min={1900}
+                  max={9999}
+                  step={1}
+                  defaultValue={currentYear}
+                  placeholder="Contoh: 2026"
+                  disabled={!applyExpenseYear}
+                  required={applyExpenseYear}
                 />
               </div>
 

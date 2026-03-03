@@ -1618,6 +1618,47 @@ export function updateManyExcelExpenses(
   return updatedCount;
 }
 
+function replaceExpenseYearKeepingMonthDay(dateValue: string, year: number) {
+  const trimmed = dateValue.trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (!match) {
+    return `${year}-01-01`;
+  }
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!Number.isInteger(month) || month < 1 || month > 12) {
+    return `${year}-01-01`;
+  }
+  const maxDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const safeDay = Math.max(1, Math.min(day, maxDay));
+  return `${year}-${String(month).padStart(2, "0")}-${String(safeDay).padStart(2, "0")}`;
+}
+
+export function updateManyExcelExpenseYears(expenseIds: string[], year: number) {
+  const targets = new Set(expenseIds.map((item) => item.trim()).filter((item) => item.length > 0));
+  if (targets.size === 0) {
+    return 0;
+  }
+
+  const db = readExcelDatabase();
+  let updatedCount = 0;
+  db.project_expenses = db.project_expenses.map((row) => {
+    if (!targets.has(row.id)) {
+      return row;
+    }
+    updatedCount += 1;
+    return {
+      ...row,
+      expense_date: replaceExpenseYearKeepingMonthDay(row.expense_date, year),
+    };
+  });
+
+  if (updatedCount > 0) {
+    writeDatabase(db);
+  }
+  return updatedCount;
+}
+
 export function deleteExcelExpense(expenseId: string) {
   const db = readExcelDatabase();
   const nextRows = db.project_expenses.filter((row) => row.id !== expenseId);

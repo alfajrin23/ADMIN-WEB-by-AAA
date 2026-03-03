@@ -35,6 +35,7 @@ import {
   insertExcelProject,
   updateExcelAttendance,
   updateExcelExpense,
+  updateManyExcelExpenseYears,
   updateManyExcelExpenses,
   updateExcelProject,
 } from "@/lib/excel-db";
@@ -71,6 +72,33 @@ function getPositiveInteger(formData: FormData, key: string, fallback = 1) {
     return fallback;
   }
   return parsed;
+}
+
+function parseYearInput(value: string) {
+  if (!/^\d{4}$/.test(value)) {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1900 || parsed > 9999) {
+    return null;
+  }
+  return parsed;
+}
+
+function replaceDateYearKeepingMonthDay(value: string, year: number) {
+  const dateOnly = value.trim().slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateOnly);
+  if (!match) {
+    return `${year}-01-01`;
+  }
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!Number.isInteger(month) || month < 1 || month > 12) {
+    return `${year}-01-01`;
+  }
+  const maxDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const safeDay = Math.max(1, Math.min(day, maxDay));
+  return `${year}-${String(month).padStart(2, "0")}-${String(safeDay).padStart(2, "0")}`;
 }
 
 function getReturnTo(formData: FormData) {
@@ -1098,10 +1126,15 @@ export async function updateManyExpensesAction(formData: FormData) {
 
   const applyCategory = isChecked(formData, "apply_category");
   const applyExpenseDate = isChecked(formData, "apply_expense_date");
+  const applyExpenseYear = isChecked(formData, "apply_expense_year");
   const applyRequesterName = isChecked(formData, "apply_requester_name");
   const applyDescription = isChecked(formData, "apply_description");
   const applyUsageInfo = isChecked(formData, "apply_usage_info");
   const applyRecipientName = isChecked(formData, "apply_recipient_name");
+  const expenseYear = applyExpenseYear ? parseYearInput(getString(formData, "expense_year")) : null;
+  if (applyExpenseYear && expenseYear === null) {
+    return;
+  }
 
   const patch: Partial<{
     category: string;
@@ -1121,7 +1154,7 @@ export async function updateManyExpensesAction(formData: FormData) {
     patch.category = parsedCategory;
     patch.specialist_type = getSpecialistType(formData, parsedCategory);
   }
-  if (applyExpenseDate) {
+  if (applyExpenseDate && !applyExpenseYear) {
     const expenseDate = getString(formData, "expense_date");
     if (!expenseDate) {
       return;
@@ -1141,13 +1174,23 @@ export async function updateManyExpensesAction(formData: FormData) {
     patch.recipient_name = getString(formData, "recipient_name") || null;
   }
 
-  const updateFields = Object.keys(patch);
+  const applyExpenseYearOnly = applyExpenseYear && expenseYear !== null;
+  const hasUniformPatch = Object.keys(patch).length > 0;
+  const updateFields = [
+    ...Object.keys(patch),
+    ...(applyExpenseYearOnly ? ["expense_year"] : []),
+  ];
   if (updateFields.length === 0) {
     return;
   }
 
   if (activeDataSource === "excel") {
-    updateManyExcelExpenses(expenseIds, patch);
+    if (hasUniformPatch) {
+      updateManyExcelExpenses(expenseIds, patch);
+    }
+    if (applyExpenseYearOnly) {
+      updateManyExcelExpenseYears(expenseIds, expenseYear);
+    }
   } else if (activeDataSource === "supabase") {
     const supabase = getSupabaseServerClient();
     if (!supabase) {
@@ -1156,19 +1199,91 @@ export async function updateManyExpensesAction(formData: FormData) {
     if (patch.category) {
       await upsertSupabaseCategories(supabase, [patch.category]);
     }
-    await supabase.from("project_expenses").update(patch).in("id", expenseIds);
+    if (applyExpenseYearOnly) {
+      const { data: existingRows, error: existingRowsError } = await supabase
+        .from("project_expenses")
+        .select("id, expense_date")
+        .in("id", expenseIds);
+      if (existingRowsError || !existingRows) {
+        return;
+      }
+
+      for (const chunk of chunkArray(existingRows, 50)) {
+        await Promise.all(
+          chunk.map(async (row) => {
+            const id = String(row.id ?? "").trim();
+            if (!id) {
+              return;
+            }
+            const nextExpenseDate = replaceDateYearKeepingMonthDay(
+              String(row.expense_date ?? ""),
+              expenseYear,
+            );
+            const { error } = await supabase
+              .from("project_expenses")
+              .update({
+                ...patch,
+                expense_date: nextExpenseDate,
+              })
+              .eq("id", id);
+            if (error) {
+              throw error;
+            }
+          }),
+        );
+      }
+    } else {
+      await supabase.from("project_expenses").update(patch).in("id", expenseIds);
+    }
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
     if (!firestore) {
       return;
     }
-    await runFirebaseWriteSafely(async () => {
-      const batch = firestore.batch();
-      for (const expenseId of expenseIds) {
-        batch.set(firestore.collection("project_expenses").doc(expenseId), patch, { merge: true });
-      }
-      await batch.commit();
-    });
+    if (applyExpenseYearOnly) {
+      await runFirebaseWriteSafely(async () => {
+        let batch = firestore.batch();
+        let count = 0;
+        const refs = expenseIds.map((expenseId) => firestore.collection("project_expenses").doc(expenseId));
+        for (const refChunk of chunkArray(refs, 120)) {
+          const snapshots = await Promise.all(refChunk.map((ref) => ref.get()));
+          for (const snapshot of snapshots) {
+            if (!snapshot.exists) {
+              continue;
+            }
+            const nextExpenseDate = replaceDateYearKeepingMonthDay(
+              String(snapshot.data()?.expense_date ?? ""),
+              expenseYear,
+            );
+            batch.set(
+              snapshot.ref,
+              {
+                ...patch,
+                expense_date: nextExpenseDate,
+              },
+              { merge: true },
+            );
+            count += 1;
+            if (count >= 400) {
+              await batch.commit();
+              batch = firestore.batch();
+              count = 0;
+            }
+          }
+        }
+        if (count > 0) {
+          await batch.commit();
+        }
+      });
+    } else {
+      await runFirebaseWriteSafely(async () => {
+        const batch = firestore.batch();
+        for (const expenseId of expenseIds) {
+          batch.set(firestore.collection("project_expenses").doc(expenseId), patch, { merge: true });
+        }
+        await batch.commit();
+      });
+    }
   } else {
     return;
   }

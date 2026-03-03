@@ -1489,42 +1489,58 @@ export async function searchExpenseDetails(
       return [];
     }
 
-    const fetchLimit = Math.min(Math.max(limit * 12, 1200), 5000);
-    let supabaseQuery = supabase
-      .from("project_expenses")
-      .select(
-        "id, project_id, requester_name, description, recipient_name, usage_info, category, amount, expense_date, projects(name)",
-      );
-    if (dateFilters.from) {
-      supabaseQuery = supabaseQuery.gte("expense_date", dateFilters.from);
-    }
-    if (dateFilters.to) {
-      supabaseQuery = supabaseQuery.lte("expense_date", dateFilters.to);
-    }
-    const { data, error } = await supabaseQuery
-      .order("expense_date", { ascending: false })
-      .limit(fetchLimit);
+    const pageSize = 1000;
+    const mappedResults: ProjectExpenseSearchResult[] = [];
+    let offset = 0;
 
-    if (error || !data) {
-      return [];
+    while (true) {
+      let supabaseQuery = supabase
+        .from("project_expenses")
+        .select(
+          "id, project_id, requester_name, description, recipient_name, usage_info, category, amount, expense_date, projects(name)",
+        )
+        .order("expense_date", { ascending: false })
+        .order("id", { ascending: false })
+        .range(offset, offset + pageSize - 1);
+      if (dateFilters.from) {
+        supabaseQuery = supabaseQuery.gte("expense_date", dateFilters.from);
+      }
+      if (dateFilters.to) {
+        supabaseQuery = supabaseQuery.lte("expense_date", dateFilters.to);
+      }
+
+      const { data, error } = await supabaseQuery;
+      if (error || !data) {
+        return [];
+      }
+      if (data.length === 0) {
+        break;
+      }
+
+      const currentPage = data
+        .map((row) => {
+          const mapped = mapExpense(row, resolveJoinName(row.projects));
+          return {
+            mapped,
+            projectName: resolveJoinName(row.projects)?.trim() || mapped.projectName?.trim() || "Project",
+          };
+        })
+        .filter((item) => isVisibleExpense(item.mapped))
+        .filter((item) => matchesExpenseDetailDateFilter(item.mapped.expenseDate, dateFilters))
+        .filter((item) =>
+          normalizedQuery ? matchExpenseSearchQuery(item.mapped, normalizedQuery, queryDigits) : true,
+        )
+        .map((item) => mapExpenseSearchResult(item.mapped, item.projectName));
+
+      mappedResults.push(...currentPage);
+
+      if (data.length < pageSize) {
+        break;
+      }
+      offset += pageSize;
     }
 
-    return data
-      .map((row) => {
-        const mapped = mapExpense(row, resolveJoinName(row.projects));
-        return {
-          mapped,
-          projectName: resolveJoinName(row.projects)?.trim() || mapped.projectName?.trim() || "Project",
-        };
-      })
-      .filter((item) => isVisibleExpense(item.mapped))
-      .filter((item) => matchesExpenseDetailDateFilter(item.mapped.expenseDate, dateFilters))
-      .filter((item) =>
-        normalizedQuery ? matchExpenseSearchQuery(item.mapped, normalizedQuery, queryDigits) : true,
-      )
-      .map((item) => mapExpenseSearchResult(item.mapped, item.projectName))
-      .sort(sortExpenseSearchResults)
-      .slice(0, limit);
+    return mappedResults.sort(sortExpenseSearchResults).slice(0, limit);
   }
 
   if (activeDataSource === "firebase") {

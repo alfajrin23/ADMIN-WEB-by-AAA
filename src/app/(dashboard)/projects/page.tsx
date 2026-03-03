@@ -848,7 +848,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                   {searchText ? <input type="hidden" name="q" value={searchText} /> : null}
                   <input type="hidden" name="view" value={activeView} />
                   <input type="hidden" name="modal" value="detail-search" />
-                  <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                  <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
                     <input
                       name="detail_q"
                       defaultValue={detailSearchQuery}
@@ -862,15 +862,23 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                       </span>
                       Cari Rincian
                     </button>
+                    {hasDetailSearchCriteria ? (
+                      <Link
+                        href={openDetailSearchModalHref}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
+                      >
+                        Reset Filter
+                      </Link>
+                    ) : null}
                   </div>
                   <div className="grid gap-2 sm:grid-cols-3">
                     <div>
                       <label className="mb-1 block text-xs font-medium text-slate-500">Dari tanggal</label>
-                      <input type="date" name="detail_from" defaultValue={detailDateFrom} />
+                      <input type="date" name="detail_from" defaultValue={detailDateFrom} autoComplete="off" />
                     </div>
                     <div>
                       <label className="mb-1 block text-xs font-medium text-slate-500">Sampai tanggal</label>
-                      <input type="date" name="detail_to" defaultValue={detailDateTo} />
+                      <input type="date" name="detail_to" defaultValue={detailDateTo} autoComplete="off" />
                     </div>
                     <div>
                       <label className="mb-1 block text-xs font-medium text-slate-500">Tahun</label>
@@ -883,6 +891,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                         step={1}
                         defaultValue={detailYear ?? ""}
                         placeholder="Contoh: 2026"
+                        autoComplete="off"
                       />
                     </div>
                   </div>

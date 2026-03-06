@@ -16,10 +16,20 @@ type RequesterProjectAutocompleteInputProps = {
   placeholder?: string;
   required?: boolean;
   projectFieldName?: string;
+  projectClientNameById?: Record<string, string | null>;
 };
 
 function normalizeText(value: string | null | undefined) {
   return (value ?? "").trim().toLowerCase();
+}
+
+function resolveClientScopeName(value: string | null | undefined) {
+  const trimmed = (value ?? "").trim();
+  return trimmed || "Tanpa Klien";
+}
+
+function resolveClientScopeKey(value: string | null | undefined) {
+  return resolveClientScopeName(value).toLowerCase();
 }
 
 function isFocusableElement(element: HTMLElement) {
@@ -93,6 +103,7 @@ export function RequesterProjectAutocompleteInput({
   placeholder,
   required,
   projectFieldName = "project_id",
+  projectClientNameById,
 }: RequesterProjectAutocompleteInputProps) {
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -155,22 +166,45 @@ export function RequesterProjectAutocompleteInput({
     return Array.from(unique.values());
   }, [suggestions]);
 
+  const currentClientScopeName = useMemo(() => {
+    if (!projectId) {
+      return "";
+    }
+    return resolveClientScopeName(projectClientNameById?.[projectId] ?? null);
+  }, [projectClientNameById, projectId]);
+
+  const currentClientScopeKey = useMemo(() => {
+    if (!projectId) {
+      return "";
+    }
+    return resolveClientScopeKey(projectClientNameById?.[projectId] ?? null);
+  }, [projectClientNameById, projectId]);
+
+  const scopedSuggestions = useMemo(() => {
+    if (!currentClientScopeKey) {
+      return dedupedSuggestions;
+    }
+    return dedupedSuggestions.filter(
+      (option) => resolveClientScopeKey(option.clientName) === currentClientScopeKey,
+    );
+  }, [currentClientScopeKey, dedupedSuggestions]);
+
   const requesterNameSuggestions = useMemo(() => {
     const uniqueNames = new Set<string>();
-    for (const option of dedupedSuggestions) {
+    for (const option of scopedSuggestions) {
       uniqueNames.add(option.requesterName);
     }
     return Array.from(uniqueNames).sort((a, b) => a.localeCompare(b, "id-ID"));
-  }, [dedupedSuggestions]);
+  }, [scopedSuggestions]);
 
   const matchingProjectOptions = useMemo(() => {
     if (!normalizedValue) {
       return [];
     }
-    return dedupedSuggestions.filter(
+    return scopedSuggestions.filter(
       (option) => normalizeText(option.requesterName) === normalizedValue,
     );
-  }, [dedupedSuggestions, normalizedValue]);
+  }, [normalizedValue, scopedSuggestions]);
 
   const typedRequesterMatches = useMemo(() => {
     if (!normalizedValue) {
@@ -185,7 +219,7 @@ export function RequesterProjectAutocompleteInput({
       }
     >();
 
-    for (const option of dedupedSuggestions) {
+    for (const option of scopedSuggestions) {
       const normalizedRequester = normalizeText(option.requesterName);
       if (!normalizedRequester.includes(normalizedValue)) {
         continue;
@@ -209,7 +243,7 @@ export function RequesterProjectAutocompleteInput({
         return a.requesterName.localeCompare(b.requesterName, "id-ID");
       })
       .slice(0, 6);
-  }, [dedupedSuggestions, normalizedValue]);
+  }, [normalizedValue, scopedSuggestions]);
 
   const applyBestRequesterMatch = useCallback(
     (inputValue: string) => {
@@ -287,13 +321,16 @@ export function RequesterProjectAutocompleteInput({
 
       {matchingProjectOptions.length === 1 ? (
         <p className="text-[11px] font-medium text-emerald-700">
-          Histori nama ini ada di project: {buildProjectContext(matchingProjectOptions[0])}
+          Histori nama ini
+          {currentClientScopeName ? ` pada klien ${currentClientScopeName}` : ""} ada di project:{" "}
+          {buildProjectContext(matchingProjectOptions[0])}
         </p>
       ) : matchingProjectOptions.length > 1 ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
           <p className="font-semibold">
-            Nama ini ada di {matchingProjectOptions.length} project. Ini hanya keterangan, input tetap bisa
-            dilanjutkan:
+            Nama ini
+            {currentClientScopeName ? ` pada klien ${currentClientScopeName}` : ""} ada di{" "}
+            {matchingProjectOptions.length} project. Ini hanya keterangan, input tetap bisa dilanjutkan:
           </p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {matchingProjectOptions.map((option) => (
@@ -315,7 +352,10 @@ export function RequesterProjectAutocompleteInput({
         </div>
       ) : typedRequesterMatches.length > 0 ? (
         <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
-          <p className="font-semibold text-slate-700">Histori nama serupa saat Anda mengetik:</p>
+          <p className="font-semibold text-slate-700">
+            Histori nama serupa
+            {currentClientScopeName ? ` pada klien ${currentClientScopeName}` : ""}:
+          </p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {typedRequesterMatches.map((item) => (
               <span
@@ -327,9 +367,17 @@ export function RequesterProjectAutocompleteInput({
             ))}
           </div>
         </div>
+      ) : projectId && requesterNameSuggestions.length === 0 ? (
+        <p className="text-[11px] text-slate-500">
+          Belum ada histori nama pengajuan untuk klien {currentClientScopeName}.
+        </p>
+      ) : projectId ? (
+        <p className="text-[11px] text-slate-500">
+          Saran nama pengajuan mengikuti histori klien {currentClientScopeName}.
+        </p>
       ) : (
         <p className="text-[11px] text-slate-500">
-          Saran nama pengajuan diambil dari histori seluruh project.
+          Pilih project dulu agar saran nama pengajuan mengikuti klien.
         </p>
       )}
     </div>

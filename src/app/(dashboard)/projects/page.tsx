@@ -78,6 +78,15 @@ function normalizeSearchText(value: string | undefined) {
   return value?.trim().toLowerCase() ?? "";
 }
 
+function resolveClientScopeName(value: string | null | undefined) {
+  const trimmed = (value ?? "").trim();
+  return trimmed || "Tanpa Klien";
+}
+
+function resolveClientScopeKey(value: string | null | undefined) {
+  return resolveClientScopeName(value).toLowerCase();
+}
+
 function isDateString(value: string | undefined) {
   return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
 }
@@ -237,6 +246,12 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
   const projectInfoById = new Map(
     projects.map((project) => [project.id, project] as const),
   );
+  const projectClientNameById = Object.fromEntries(
+    projects.map((project) => [project.id, project.clientName ?? null] as const),
+  );
+  const projectClientScopeKeyById = new Map(
+    projects.map((project) => [project.id, resolveClientScopeKey(project.clientName)] as const),
+  );
   const requesterHistorySuggestions = Object.entries(requesterSuggestionsByProject)
     .flatMap(([projectId, requesterNames]) => {
       const project = projectInfoById.get(projectId);
@@ -254,15 +269,30 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
       }
       return a.projectName.localeCompare(b.projectName, "id-ID");
     });
-  const descriptionSuggestionsGlobal = Array.from(
-    new Set(
-      Object.values(descriptionSuggestionsByProject).flatMap((rows) =>
-        rows.map((item) => item.trim()).filter((item) => item.length > 0),
-      ),
-    ),
-  ).sort((a, b) => a.localeCompare(b, "id-ID"));
-  const descriptionSuggestionsForAllProjects = Object.fromEntries(
-    projects.map((project) => [project.id, descriptionSuggestionsGlobal]),
+  const descriptionSuggestionsByClientScope = new Map<string, Set<string>>();
+  for (const [projectId, suggestionRows] of Object.entries(descriptionSuggestionsByProject)) {
+    const scopeKey = projectClientScopeKeyById.get(projectId) ?? `project:${projectId.toLowerCase()}`;
+    const current = descriptionSuggestionsByClientScope.get(scopeKey) ?? new Set<string>();
+    for (const item of suggestionRows) {
+      const trimmedValue = item.trim();
+      if (!trimmedValue) {
+        continue;
+      }
+      current.add(trimmedValue);
+    }
+    descriptionSuggestionsByClientScope.set(scopeKey, current);
+  }
+  const descriptionSuggestionsForProjects = Object.fromEntries(
+    projects.map((project) => {
+      const scopeKey =
+        projectClientScopeKeyById.get(project.id) ?? `project:${project.id.toLowerCase()}`;
+      return [
+        project.id,
+        Array.from(descriptionSuggestionsByClientScope.get(scopeKey) ?? []).sort((a, b) =>
+          a.localeCompare(b, "id-ID"),
+        ),
+      ] as const;
+    }),
   );
 
   const modalParam = typeof params.modal === "string" ? params.modal : "";
@@ -1149,6 +1179,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                       placeholder="Contoh: Mandor Lapangan"
                       required
                       suggestions={requesterHistorySuggestions}
+                      projectClientNameById={projectClientNameById}
                     />
                   </div>
                 </div>
@@ -1158,7 +1189,8 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                     name="description"
                     placeholder="Contoh: KAS / MATERIAL / OPERASIONAL"
                     required
-                    suggestionsByProject={descriptionSuggestionsForAllProjects}
+                    suggestionsByProject={descriptionSuggestionsForProjects}
+                    projectClientNameById={projectClientNameById}
                   />
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">

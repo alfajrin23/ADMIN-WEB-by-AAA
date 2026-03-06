@@ -16,6 +16,7 @@ import { getSupabaseServerClient } from "@/lib/supabase";
 import type {
   AttendanceRecord,
   CategoryTotal,
+  ClientCategoryTotal,
   DashboardData,
   ExpenseEntry,
   Project,
@@ -210,6 +211,15 @@ function normalizeText(value: string | null | undefined) {
   return (value ?? "").trim().toLowerCase();
 }
 
+function resolveClientScopeName(value: string | null | undefined) {
+  const trimmed = (value ?? "").trim();
+  return trimmed || "Tanpa Klien";
+}
+
+function resolveClientScopeKey(value: string | null | undefined) {
+  return resolveClientScopeName(value).toLowerCase();
+}
+
 function getMonthStartDate() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
@@ -389,6 +399,91 @@ function buildCategoryTotals(
     label: item.label,
     total: totalsByCategory.get(item.value) ?? 0,
   }));
+}
+
+function buildCategoryTotalsByClient(
+  expenses: ExpenseEntry[],
+  projects: Project[],
+  categoryOptions?: ExpenseCategoryOption[],
+): ClientCategoryTotal[] {
+  const projectById = new Map(projects.map((project) => [project.id, project] as const));
+  const projectCountByClientKey = new Map<string, { clientName: string; count: number }>();
+  for (const project of projects) {
+    const clientName = resolveClientScopeName(project.clientName);
+    const clientKey = resolveClientScopeKey(project.clientName);
+    if (!projectCountByClientKey.has(clientKey)) {
+      projectCountByClientKey.set(clientKey, {
+        clientName,
+        count: 0,
+      });
+    }
+    projectCountByClientKey.get(clientKey)!.count += 1;
+  }
+
+  const totalsByClientKey = new Map<
+    string,
+    {
+      clientName: string;
+      totalExpense: number;
+      totalsByCategory: Map<string, number>;
+    }
+  >();
+
+  for (const expense of expenses) {
+    const project = projectById.get(expense.projectId);
+    const clientName = resolveClientScopeName(project?.clientName);
+    const clientKey = resolveClientScopeKey(project?.clientName);
+    const category = resolveSummaryCostCategory({
+      category: expense.category,
+      description: expense.description,
+      usageInfo: expense.usageInfo,
+    });
+    if (!category) {
+      continue;
+    }
+
+    if (!totalsByClientKey.has(clientKey)) {
+      totalsByClientKey.set(clientKey, {
+        clientName,
+        totalExpense: 0,
+        totalsByCategory: new Map<string, number>(),
+      });
+    }
+
+    const clientTotals = totalsByClientKey.get(clientKey)!;
+    clientTotals.totalExpense += expense.amount;
+    clientTotals.totalsByCategory.set(
+      category,
+      (clientTotals.totalsByCategory.get(category) ?? 0) + expense.amount,
+    );
+  }
+
+  return Array.from(totalsByClientKey.entries())
+    .map(([clientKey, summary]) => {
+      const mergedOptions =
+        categoryOptions && categoryOptions.length > 0
+          ? mergeExpenseCategoryOptions(categoryOptions, Array.from(summary.totalsByCategory.keys()))
+          : mergeExpenseCategoryOptions(Array.from(summary.totalsByCategory.keys()));
+
+      return {
+        clientName: summary.clientName,
+        projectCount: projectCountByClientKey.get(clientKey)?.count ?? 0,
+        totalExpense: summary.totalExpense,
+        categoryTotals: mergedOptions
+          .map((item) => ({
+            category: item.value,
+            label: item.label,
+            total: summary.totalsByCategory.get(item.value) ?? 0,
+          }))
+          .filter((item) => item.total !== 0),
+      };
+    })
+    .sort((a, b) => {
+      if (b.totalExpense !== a.totalExpense) {
+        return b.totalExpense - a.totalExpense;
+      }
+      return a.clientName.localeCompare(b.clientName, "id-ID");
+    });
 }
 
 function buildWageSummary(rows: AttendanceRecord[]) {
@@ -593,8 +688,8 @@ function buildProjectCountByClient(projects: Project[]) {
   const totals: Record<string, { clientName: string; count: number }> = {};
 
   for (const project of projects) {
-    const clientName = project.clientName?.trim() || "Tanpa Klien";
-    const key = clientName.toLowerCase();
+    const clientName = resolveClientScopeName(project.clientName);
+    const key = resolveClientScopeKey(project.clientName);
     if (!totals[key]) {
       totals[key] = {
         clientName,
@@ -2007,6 +2102,11 @@ export async function getDashboardData(): Promise<DashboardData> {
         expenses,
         mergeExpenseCategoryOptions(db.project_expenses.map((row) => row.category)),
       ),
+      categoryTotalsByClient: buildCategoryTotalsByClient(
+        expenses,
+        projects,
+        mergeExpenseCategoryOptions(db.project_expenses.map((row) => row.category)),
+      ),
       recentExpenses: expenses
         .slice()
         .sort((a, b) => b.expenseDate.localeCompare(a.expenseDate))
@@ -2025,6 +2125,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         monthExpense: 0,
         totalKasbon: 0,
         categoryTotals: buildCategoryTotals([]),
+        categoryTotalsByClient: [],
         recentExpenses: [],
         projectExpenseTotals: [],
         projectCountByClient: [],
@@ -2073,6 +2174,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         .reduce((sum, item) => sum + item.amount, 0),
       totalKasbon: attendance.reduce((sum, item) => sum + item.kasbonAmount, 0),
       categoryTotals: buildCategoryTotals(expenses, categoryOptions),
+      categoryTotalsByClient: buildCategoryTotalsByClient(expenses, projects, categoryOptions),
       recentExpenses,
       projectExpenseTotals: buildProjectExpenseTotals(expenses, projects),
       projectCountByClient: buildProjectCountByClient(projects),
@@ -2111,6 +2213,11 @@ export async function getDashboardData(): Promise<DashboardData> {
         expenses,
         mergeExpenseCategoryOptions(expenseRows.map((row) => String(row.category ?? ""))),
       ),
+      categoryTotalsByClient: buildCategoryTotalsByClient(
+        expenses,
+        projects,
+        mergeExpenseCategoryOptions(expenseRows.map((row) => String(row.category ?? ""))),
+      ),
       recentExpenses,
       projectExpenseTotals: buildProjectExpenseTotals(expenses, projects),
       projectCountByClient: buildProjectCountByClient(projects),
@@ -2131,6 +2238,11 @@ export async function getDashboardData(): Promise<DashboardData> {
     totalKasbon: sampleAttendance.reduce((sum, item) => sum + item.kasbonAmount, 0),
     categoryTotals: buildCategoryTotals(
       sampleVisibleExpenses,
+      mergeExpenseCategoryOptions(sampleVisibleExpenses.map((item) => item.category)),
+    ),
+    categoryTotalsByClient: buildCategoryTotalsByClient(
+      sampleVisibleExpenses,
+      sampleProjects,
       mergeExpenseCategoryOptions(sampleVisibleExpenses.map((item) => item.category)),
     ),
     recentExpenses: sampleVisibleExpenses,

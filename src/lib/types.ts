@@ -40,6 +40,13 @@ export type CategoryTotal = {
   total: number;
 };
 
+export type ClientCategoryTotal = {
+  clientName: string;
+  projectCount: number;
+  totalExpense: number;
+  categoryTotals: CategoryTotal[];
+};
+
 export type AttendanceRecord = {
   id: string;
   projectId: string;
@@ -149,6 +156,7 @@ export type DashboardData = {
   monthExpense: number;
   totalKasbon: number;
   categoryTotals: CategoryTotal[];
+  categoryTotalsByClient: ClientCategoryTotal[];
   recentExpenses: ExpenseEntry[];
   projectExpenseTotals: Array<{
     projectId: string;

@@ -99,34 +99,58 @@ export default async function DashboardPage() {
       <section className="grid gap-4 xl:grid-cols-[1fr_1.35fr]">
         <article className="motion-display panel p-5">
           <h2 className="text-lg font-semibold text-slate-900">
-            Rekap Biaya per Kategori
+            Rekap Biaya per Kategori dan Klien
           </h2>
-          <div className="mt-4">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-slate-500">
-                  <th className="pb-2 font-medium">Kategori</th>
-                  <th className="pb-2 text-right font-medium">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dashboard.categoryTotals.map((item) => (
-                  <tr key={item.category} className="border-t border-slate-100">
-                    <td className="py-2">
-                      <span
-                        className={`rounded-full px-2 py-1 text-xs font-semibold ${getCostCategoryStyle(item.category)}`}
-                      >
-                        {item.label}
-                      </span>
-                    </td>
-                    <td className="py-2 text-right font-semibold text-slate-900">
-                      {formatCurrency(item.total)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {dashboard.categoryTotalsByClient.length === 0 ? (
+            <p className="mt-4 text-sm text-slate-500">Belum ada data biaya per klien.</p>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {dashboard.categoryTotalsByClient.map((clientSummary) => (
+                <section
+                  key={clientSummary.clientName}
+                  className="rounded-xl border border-slate-200 bg-slate-50 p-3"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-900">
+                        {clientSummary.clientName}
+                      </h3>
+                      <p className="text-[11px] text-slate-500">
+                        {clientSummary.projectCount} proyek
+                      </p>
+                    </div>
+                    <p className="text-sm font-semibold text-slate-900">
+                      {formatCurrency(clientSummary.totalExpense)}
+                    </p>
+                  </div>
+
+                  {clientSummary.categoryTotals.length === 0 ? (
+                    <p className="mt-3 text-[11px] text-slate-500">
+                      Belum ada kategori biaya untuk klien ini.
+                    </p>
+                  ) : (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {clientSummary.categoryTotals.map((item) => (
+                        <div
+                          key={`${clientSummary.clientName}-${item.category}`}
+                          className="rounded-xl border border-white bg-white px-3 py-2 shadow-sm"
+                        >
+                          <span
+                            className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${getCostCategoryStyle(item.category)}`}
+                          >
+                            {item.label}
+                          </span>
+                          <p className="mt-2 text-sm font-semibold text-slate-900">
+                            {formatCurrency(item.total)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              ))}
+            </div>
+          )}
         </article>
 
         <article className="motion-display panel p-5">

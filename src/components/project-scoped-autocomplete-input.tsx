@@ -8,10 +8,16 @@ type ProjectScopedAutocompleteInputProps = {
   placeholder?: string;
   required?: boolean;
   projectFieldName?: string;
+  projectClientNameById?: Record<string, string | null>;
 };
 
 function normalizeText(value: string | null | undefined) {
   return (value ?? "").trim().toLowerCase();
+}
+
+function resolveClientScopeName(value: string | null | undefined) {
+  const trimmed = (value ?? "").trim();
+  return trimmed || "Tanpa Klien";
 }
 
 function isFocusableElement(element: HTMLElement) {
@@ -74,6 +80,7 @@ export function ProjectScopedAutocompleteInput({
   placeholder,
   required,
   projectFieldName = "project_id",
+  projectClientNameById,
 }: ProjectScopedAutocompleteInputProps) {
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -117,6 +124,13 @@ export function ProjectScopedAutocompleteInput({
   const visibleSuggestions = useMemo(() => {
     return suggestionsByProject[projectId] ?? [];
   }, [projectId, suggestionsByProject]);
+
+  const currentClientScopeName = useMemo(() => {
+    if (!projectId) {
+      return "";
+    }
+    return resolveClientScopeName(projectClientNameById?.[projectId] ?? null);
+  }, [projectClientNameById, projectId]);
 
   const applyBestMatch = useCallback(
     (inputValue: string, activeSuggestions: string[]) => {
@@ -191,6 +205,21 @@ export function ProjectScopedAutocompleteInput({
           <option key={`${projectId}-${item}`} value={item} />
         ))}
       </datalist>
+      {projectId ? (
+        visibleSuggestions.length > 0 ? (
+          <p className="text-[11px] text-slate-500">
+            Saran keterangan mengikuti histori klien {currentClientScopeName}.
+          </p>
+        ) : (
+          <p className="text-[11px] text-slate-500">
+            Belum ada histori keterangan untuk klien {currentClientScopeName}.
+          </p>
+        )
+      ) : (
+        <p className="text-[11px] text-slate-500">
+          Pilih project dulu agar saran keterangan mengikuti klien.
+        </p>
+      )}
     </div>
   );
 }

@@ -1,35 +1,11 @@
 import { Buffer } from "node:buffer";
 import * as XLSX from "xlsx/xlsx.mjs";
 import { createDetailReportWorkbook } from "@/lib/excel-db";
-import { getProjectDetail, getProjects } from "@/lib/data";
+import { getExpenseCategories, getProjectReportDetail, getProjects } from "@/lib/data";
 import { canExportReports, getCurrentUser } from "@/lib/auth";
+import { buildReportCategoryOptions, buildReportCategoryTotals } from "@/lib/expense-report";
 
 export const runtime = "nodejs";
-
-type SummaryTotals = {
-  material: number;
-  alat: number;
-  upah: number;
-  ops: number;
-  total: number;
-};
-
-function splitTotalsByCategory(category: string, amount: number): SummaryTotals {
-  if (category === "material") {
-    return { material: amount, alat: 0, upah: 0, ops: 0, total: amount };
-  }
-  if (category === "alat") {
-    return { material: 0, alat: amount, upah: 0, ops: 0, total: amount };
-  }
-  if (
-    category === "upah_kasbon_tukang" ||
-    category === "upah_staff_pelaksana" ||
-    category === "upah_tim_spesialis"
-  ) {
-    return { material: 0, alat: 0, upah: amount, ops: 0, total: amount };
-  }
-  return { material: 0, alat: 0, upah: 0, ops: amount, total: amount };
-}
 
 function appendUniqueSheet(workbook: XLSX.WorkBook, worksheet: XLSX.WorkSheet, baseName: string) {
   const cleanedBase = baseName.replace(/[\\/?*[\]:]/g, " ").trim() || "Sheet";
@@ -93,7 +69,10 @@ export async function GET(request: Request) {
     return new Response("Project tidak ditemukan.", { status: 404 });
   }
 
-  const details = await Promise.all(selectedProjects.map((project) => getProjectDetail(project.id)));
+  const [details, expenseCategories] = await Promise.all([
+    Promise.all(selectedProjects.map((project) => getProjectReportDetail(project.id))),
+    getExpenseCategories(),
+  ]);
   const reportProjects: Array<{ id: string; name: string }> = [];
   const reportExpenses: Array<{
     project_id: string;
@@ -107,8 +86,9 @@ export async function GET(request: Request) {
     amount: number;
     expense_date: string;
   }> = [];
+  const categoryOptionsByProject: Record<string, Array<{ value: string; label: string }>> = {};
   const summaryRows: Array<Record<string, string | number>> = [];
-  const grandTotals: SummaryTotals = { material: 0, alat: 0, upah: 0, ops: 0, total: 0 };
+  const allCategoryValues: string[] = [];
 
   for (const detail of details) {
     if (!detail) {
@@ -130,6 +110,12 @@ export async function GET(request: Request) {
       id: detail.project.id,
       name: detail.project.name,
     });
+    const categoryOptions = buildReportCategoryOptions(
+      expenseCategories,
+      rows.map((row) => row.category),
+    );
+    categoryOptionsByProject[detail.project.id] = categoryOptions;
+    allCategoryValues.push(...rows.map((row) => row.category));
     for (const row of rows) {
       reportExpenses.push({
         project_id: detail.project.id,
@@ -144,82 +130,80 @@ export async function GET(request: Request) {
         expense_date: row.expenseDate.slice(0, 10),
       });
     }
-
-    const projectTotals: SummaryTotals = { material: 0, alat: 0, upah: 0, ops: 0, total: 0 };
-    for (const row of rows) {
-      const split = splitTotalsByCategory(row.category, row.amount);
-      projectTotals.material += split.material;
-      projectTotals.alat += split.alat;
-      projectTotals.upah += split.upah;
-      projectTotals.ops += split.ops;
-      projectTotals.total += split.total;
-    }
-    grandTotals.material += projectTotals.material;
-    grandTotals.alat += projectTotals.alat;
-    grandTotals.upah += projectTotals.upah;
-    grandTotals.ops += projectTotals.ops;
-    grandTotals.total += projectTotals.total;
-
-    summaryRows.push({
-      PROJECT: detail.project.name,
-      "COST MATERIAL": projectTotals.material,
-      ALAT: projectTotals.alat,
-      "COST UPAH/KASBON": projectTotals.upah,
-      "COST OPS": projectTotals.ops,
-      "PENGELUARAN TOTAL": projectTotals.total,
-    });
   }
 
   if (reportProjects.length === 0) {
     return new Response("Belum ada data biaya project.", { status: 404 });
   }
 
+  const summaryCategoryOptions = buildReportCategoryOptions(expenseCategories, allCategoryValues);
+  const grandTotalsByCategory = Object.fromEntries(
+    summaryCategoryOptions.map((item) => [item.value, 0]),
+  ) as Record<string, number>;
+  let grandTotal = 0;
+
+  for (const detail of details) {
+    if (!detail || detail.expenses.length === 0) {
+      continue;
+    }
+    const { totalsByCategory, total } = buildReportCategoryTotals(detail.expenses, summaryCategoryOptions);
+    for (const category of summaryCategoryOptions) {
+      grandTotalsByCategory[category.value] += totalsByCategory[category.value] ?? 0;
+    }
+    grandTotal += total;
+
+    const row: Record<string, string | number> = {
+      PROJECT: detail.project.name,
+    };
+    for (const category of summaryCategoryOptions) {
+      row[`KATEGORI: ${category.label}`] = totalsByCategory[category.value] ?? 0;
+    }
+    row.TOTAL = total;
+    summaryRows.push(row);
+  }
+
   const workbook = createDetailReportWorkbook({
     projects: reportProjects,
     project_expenses: reportExpenses,
+    category_options_by_project: categoryOptionsByProject,
   });
 
-  summaryRows.push({
+  const totalRow: Record<string, string | number> = {
     PROJECT: "TOTAL",
-    "COST MATERIAL": grandTotals.material,
-    ALAT: grandTotals.alat,
-    "COST UPAH/KASBON": grandTotals.upah,
-    "COST OPS": grandTotals.ops,
-    "PENGELUARAN TOTAL": grandTotals.total,
-  });
+  };
+  for (const category of summaryCategoryOptions) {
+    totalRow[`KATEGORI: ${category.label}`] = grandTotalsByCategory[category.value] ?? 0;
+  }
+  totalRow.TOTAL = grandTotal;
+  summaryRows.push(totalRow);
+
   const summaryHeaders = [
     "PROJECT",
-    "COST MATERIAL",
-    "ALAT",
-    "COST UPAH/KASBON",
-    "COST OPS",
-    "PENGELUARAN TOTAL",
+    ...summaryCategoryOptions.map((item) => `KATEGORI: ${item.label}`),
+    "TOTAL",
   ];
   const summarySheetRows: Array<Array<string | number>> = [
     ["REKAP KESELURUHAN RINCIAN BIAYA"],
     [`Dicetak ${new Date().toLocaleString("id-ID")}`],
     [],
     summaryHeaders,
-    ...summaryRows.map((row) => [
-      String(row.PROJECT ?? ""),
-      Number(row["COST MATERIAL"] ?? 0),
-      Number(row.ALAT ?? 0),
-      Number(row["COST UPAH/KASBON"] ?? 0),
-      Number(row["COST OPS"] ?? 0),
-      Number(row["PENGELUARAN TOTAL"] ?? 0),
-    ]),
+    ...summaryRows.map((row) => {
+      const values: Array<string | number> = [String(row.PROJECT ?? "")];
+      for (const category of summaryCategoryOptions) {
+        values.push(Number(row[`KATEGORI: ${category.label}`] ?? 0));
+      }
+      values.push(Number(row.TOTAL ?? 0));
+      return values;
+    }),
   ];
   const summarySheet = XLSX.utils.aoa_to_sheet(summarySheetRows);
   summarySheet["!merges"] = [
-    { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
-    { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } },
+    { s: { r: 0, c: 0 }, e: { r: 0, c: summaryHeaders.length - 1 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: summaryHeaders.length - 1 } },
   ];
   summarySheet["!cols"] = [
     { wch: 34 },
-    { wch: 16 },
-    { wch: 16 },
-    { wch: 18 },
-    { wch: 14 },
+    ...summaryCategoryOptions.map(() => ({ wch: 18 })),
     { wch: 20 },
   ];
   appendUniqueSheet(workbook, summarySheet, "Rekap Keseluruhan");

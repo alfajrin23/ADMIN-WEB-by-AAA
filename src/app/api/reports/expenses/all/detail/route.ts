@@ -1,7 +1,38 @@
 import { Buffer } from "node:buffer";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import { getProjectDetail, getProjects } from "@/lib/data";
+import type { ExpenseCategoryOption } from "@/lib/constants";
+import { getExpenseCategories, getProjectReportDetail, getProjects } from "@/lib/data";
 import { canExportReports, getCurrentUser } from "@/lib/auth";
+import {
+  buildReportCategoryOptions,
+  buildReportCategoryTotals,
+  createEmptyCategoryTotals,
+  getExpenseCategoryFill,
+} from "@/lib/expense-report";
+
+type ExpenseRow = {
+  expenseDate: string;
+  requesterName: string;
+  description: string;
+  quantity: number;
+  unitLabel: string;
+  usageInfo: string;
+  unitPrice: number;
+  amount: number;
+  category: string;
+};
+
+type ProjectSection = {
+  projectName: string;
+  rows: ExpenseRow[];
+  categoryOptions: ExpenseCategoryOption[];
+};
+
+type ProjectSummaryRow = {
+  projectName: string;
+  totalsByCategory: Record<string, number>;
+  total: number;
+};
 
 function formatCurrency(value: number) {
   return `Rp ${new Intl.NumberFormat("id-ID", {
@@ -58,23 +89,6 @@ function formatMonthLabel(value: string) {
   return `${months[monthNumber - 1] ?? "BULAN"} ${year}`;
 }
 
-function splitByCategory(category: string, amount: number) {
-  if (category === "material") {
-    return { material: amount, alat: 0, upah: 0, ops: 0 };
-  }
-  if (category === "alat") {
-    return { material: 0, alat: amount, upah: 0, ops: 0 };
-  }
-  if (
-    category === "upah_kasbon_tukang" ||
-    category === "upah_staff_pelaksana" ||
-    category === "upah_tim_spesialis"
-  ) {
-    return { material: 0, alat: 0, upah: amount, ops: 0 };
-  }
-  return { material: 0, alat: 0, upah: 0, ops: amount };
-}
-
 function fitText(
   text: string,
   font: Awaited<ReturnType<PDFDocument["embedFont"]>>,
@@ -96,26 +110,6 @@ function fitText(
   return suffix;
 }
 
-type ExpenseRow = {
-  expenseDate: string;
-  requesterName: string;
-  description: string;
-  quantity: number;
-  unitLabel: string;
-  usageInfo: string;
-  unitPrice: number;
-  amount: number;
-  category: string;
-};
-
-type SummaryTotals = {
-  material: number;
-  alat: number;
-  upah: number;
-  ops: number;
-  total: number;
-};
-
 function toFileSlug(value: string) {
   return value
     .trim()
@@ -134,6 +128,20 @@ function resolveFilePrefix(projectNames: string[]) {
     return normalized[0];
   }
   return `${normalized[0]}-${normalized.length - 1}-project-lain`;
+}
+
+function buildCategoryHeaderLabel(label: string) {
+  const upper = label.trim().replace(/\s+/g, " ").toUpperCase();
+  if (!upper) {
+    return "KATEGORI";
+  }
+  if (upper === "ALAT") {
+    return "ALAT";
+  }
+  if (upper.startsWith("COST ")) {
+    return upper;
+  }
+  return `COST ${upper}`;
 }
 
 export async function GET(request: Request) {
@@ -166,8 +174,13 @@ export async function GET(request: Request) {
     return new Response("Project tidak ditemukan.", { status: 404 });
   }
 
-  const details = await Promise.all(selectedProjects.map((project) => getProjectDetail(project.id)));
-  const rowsByProject = new Map<string, ExpenseRow[]>();
+  const [details, expenseCategories] = await Promise.all([
+    Promise.all(selectedProjects.map((project) => getProjectReportDetail(project.id))),
+    getExpenseCategories(),
+  ]);
+
+  const sections: ProjectSection[] = [];
+  const allCategoryValues: string[] = [];
   for (const detail of details) {
     if (!detail) {
       continue;
@@ -191,44 +204,81 @@ export async function GET(request: Request) {
         }
         return a.requesterName.localeCompare(b.requesterName);
       });
-    rowsByProject.set(detail.project.id, rows);
+    if (rows.length === 0) {
+      continue;
+    }
+
+    const categoryOptions = buildReportCategoryOptions(
+      expenseCategories,
+      rows.map((row) => row.category),
+    );
+    sections.push({
+      projectName: detail.project.name,
+      rows,
+      categoryOptions,
+    });
+    allCategoryValues.push(...rows.map((row) => row.category));
   }
 
-  const hasAnyRows = Array.from(rowsByProject.values()).some((rows) => rows.length > 0);
-  if (!hasAnyRows) {
+  if (sections.length === 0) {
     return new Response("Belum ada data biaya project.", { status: 404 });
   }
-  const reportProjects = selectedProjects.filter(
-    (project) => (rowsByProject.get(project.id) ?? []).length > 0,
-  );
-  const reportProjectNames = reportProjects
-    .filter((project) => (rowsByProject.get(project.id) ?? []).length > 0)
-    .map((project) => project.name);
+
+  const summaryCategoryOptions = buildReportCategoryOptions(expenseCategories, allCategoryValues);
+  const summaryRows: ProjectSummaryRow[] = sections.map((section) => {
+    const { totalsByCategory, total } = buildReportCategoryTotals(section.rows, summaryCategoryOptions);
+    return {
+      projectName: section.projectName,
+      totalsByCategory,
+      total,
+    };
+  });
+  const grandTotalsByCategory = Object.fromEntries(
+    summaryCategoryOptions.map((item) => [item.value, 0]),
+  ) as Record<string, number>;
+  let grandTotal = 0;
+  for (const row of summaryRows) {
+    for (const category of summaryCategoryOptions) {
+      grandTotalsByCategory[category.value] += row.totalsByCategory[category.value] ?? 0;
+    }
+    grandTotal += row.total;
+  }
 
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const margin = 20;
-  const pageSize: [number, number] = [1191, 842];
-  const cols = [26, 100, 66, 166, 42, 48, 120, 76, 88, 84, 98, 86, 111];
-  const xAt = (index: number) => margin + cols.slice(0, index).reduce((sum, width) => sum + width, 0);
+  const minimumPageSize: [number, number] = [1191, 842];
   const headerTop = 24;
   const headerBottom = 20;
   const rowHeight = 19;
   const bodySize = 7.2;
 
   const colorHeader = [0.9, 0.9, 0.9] as const;
-  const colorMaterial = [0.91, 0.86, 0.69] as const;
-  const colorAlat = [0.86, 0.72, 0.86] as const;
-  const colorUpah = [0.79, 0.79, 0.81] as const;
-  const colorOps = [0.57, 0.76, 0.88] as const;
-  const colorTotal = [1, 0.95, 0.2] as const;
+  const colorTotal = [0.98, 0.86, 0.38] as const;
+  const staticColumns = [26, 100, 66, 166, 42, 48, 120, 76];
+  const categoryColumnWidth = 96;
+  const totalColumnWidth = 111;
+  const printedAtText = new Date().toLocaleString("id-ID");
+  const selectedLabel =
+    requestedProjectIds.length > 0
+      ? `${requestedProjectIds.length} project terpilih`
+      : "Semua project";
 
-  let page = pdf.addPage(pageSize);
+  let page = pdf.addPage(minimumPageSize);
   let y = page.getHeight() - margin;
-  let currentProjectName = "";
+  let currentColumns = [...staticColumns, totalColumnWidth];
 
-  const drawRect = (x: number, topY: number, width: number, height: number, fill?: readonly [number, number, number]) => {
+  const xAt = (index: number) =>
+    margin + currentColumns.slice(0, index).reduce((sum, width) => sum + width, 0);
+
+  const drawRect = (
+    x: number,
+    topY: number,
+    width: number,
+    height: number,
+    fill?: readonly [number, number, number],
+  ) => {
     page.drawRectangle({
       x,
       y: topY - height,
@@ -250,15 +300,15 @@ export async function GET(request: Request) {
     boldText?: boolean;
     size?: number;
   }) => {
-    const lines = params.text.split("\n");
     const drawFont = params.boldText ? bold : font;
     const size = params.size ?? bodySize;
+    const lines = params.text.split("\n");
     const lineGap = 1.5;
     const textHeight = lines.length * size + Math.max(0, lines.length - 1) * lineGap;
     let lineY = params.topY - (params.height - textHeight) / 2 - size;
 
-    for (const lineRaw of lines) {
-      const line = fitText(lineRaw, drawFont, size, params.width - 6);
+    for (const rawLine of lines) {
+      const line = fitText(rawLine, drawFont, size, params.width - 6);
       const lineWidth = drawFont.widthOfTextAtSize(line, size);
       let textX = params.x + 3;
       if (params.align === "center") {
@@ -266,6 +316,7 @@ export async function GET(request: Request) {
       } else if (params.align === "right") {
         textX = params.x + params.width - lineWidth - 3;
       }
+
       page.drawText(line, {
         x: textX,
         y: lineY,
@@ -277,9 +328,20 @@ export async function GET(request: Request) {
     }
   };
 
-  const drawHeader = (projectName: string) => {
-    currentProjectName = projectName;
-    const title = `PROJECT KMP CIANJUR DS ${projectName.toUpperCase()}`;
+  const addProjectPage = (section: ProjectSection) => {
+    currentColumns = [
+      ...staticColumns,
+      ...section.categoryOptions.map(() => categoryColumnWidth),
+      totalColumnWidth,
+    ];
+    const pageWidth = Math.max(
+      minimumPageSize[0],
+      margin * 2 + currentColumns.reduce((sum, width) => sum + width, 0),
+    );
+    page = pdf.addPage([pageWidth, minimumPageSize[1]]);
+    y = page.getHeight() - margin;
+
+    const title = `PROJECT ${section.projectName.toUpperCase()}`;
     const titleSize = 22;
     const titleWidth = bold.widthOfTextAtSize(title, titleSize);
     page.drawText(title, {
@@ -291,7 +353,7 @@ export async function GET(request: Request) {
     });
     y -= 26;
 
-    page.drawText(`Dicetak ${new Date().toLocaleString("id-ID")}`, {
+    page.drawText(`${selectedLabel} | Dicetak ${printedAtText}`, {
       x: margin,
       y,
       size: 8.5,
@@ -300,8 +362,9 @@ export async function GET(request: Request) {
     });
     y -= 12;
 
-    const mergedTwoRows = [0, 1, 2, 3, 12];
-    const topConfig: Array<{
+    const totalCol = staticColumns.length + section.categoryOptions.length;
+    const mergedTwoRows = new Set([0, 1, 2, 3, totalCol]);
+    const topHeaders: Array<{
       start: number;
       end: number;
       text: string;
@@ -312,20 +375,24 @@ export async function GET(request: Request) {
       { start: 2, end: 2, text: "TANGGAL", fill: colorHeader },
       { start: 3, end: 3, text: "KETERANGAN", fill: colorHeader },
       { start: 4, end: 7, text: "RINCIAN COST", fill: colorHeader },
-      { start: 8, end: 8, text: "COST\nMATERIAL", fill: colorMaterial },
-      { start: 9, end: 9, text: "ALAT", fill: colorAlat },
-      { start: 10, end: 10, text: "COST\nUPAH/KASBON", fill: colorUpah },
-      { start: 11, end: 11, text: "COST OPS", fill: colorOps },
-      { start: 12, end: 12, text: "PENGELUARAN\nPER MINGGU", fill: colorHeader },
+      ...section.categoryOptions.map((category, index) => ({
+        start: staticColumns.length + index,
+        end: staticColumns.length + index,
+        text: buildCategoryHeaderLabel(category.label),
+        fill: getExpenseCategoryFill(index),
+      })),
+      { start: totalCol, end: totalCol, text: "PENGELUARAN\nPER MINGGU", fill: colorHeader },
     ];
 
-    for (const item of topConfig) {
-      const x = xAt(item.start);
-      const width = cols.slice(item.start, item.end + 1).reduce((sum, col) => sum + col, 0);
-      const height = mergedTwoRows.includes(item.start) ? headerTop + headerBottom : headerTop;
-      drawRect(x, y, width, height, item.fill);
+    for (const header of topHeaders) {
+      const x = xAt(header.start);
+      const width = currentColumns
+        .slice(header.start, header.end + 1)
+        .reduce((sum, value) => sum + value, 0);
+      const height = mergedTwoRows.has(header.start) ? headerTop + headerBottom : headerTop;
+      drawRect(x, y, width, height, header.fill);
       drawCellText({
-        text: item.text,
+        text: header.text,
         x,
         topY: y,
         width,
@@ -341,73 +408,67 @@ export async function GET(request: Request) {
       { col: 5, text: "KET", fill: colorHeader },
       { col: 6, text: "INFORMASI\nPENGGUNAAN", fill: colorHeader },
       { col: 7, text: "HARGA", fill: colorHeader },
-      { col: 8, text: "COST", fill: colorMaterial },
-      { col: 9, text: "COST", fill: colorAlat },
-      { col: 10, text: "COST", fill: colorUpah },
-      { col: 11, text: "COST", fill: colorOps },
+      ...section.categoryOptions.map((_, index) => ({
+        col: staticColumns.length + index,
+        text: "COST",
+        fill: getExpenseCategoryFill(index),
+      })),
     ];
-    for (const item of bottomHeaders) {
-      const x = xAt(item.col);
-      drawRect(x, y - headerTop, cols[item.col], headerBottom, item.fill);
+
+    for (const header of bottomHeaders) {
+      drawRect(xAt(header.col), y - headerTop, currentColumns[header.col], headerBottom, header.fill);
       drawCellText({
-        text: item.text,
-        x,
+        text: header.text,
+        x: xAt(header.col),
         topY: y - headerTop,
-        width: cols[item.col],
+        width: currentColumns[header.col],
         height: headerBottom,
         align: "center",
         boldText: true,
-        size: 8.2,
+        size: 8.1,
       });
     }
 
     y -= headerTop + headerBottom;
   };
 
-  const ensureSpace = (height: number) => {
+  const ensureProjectSpace = (section: ProjectSection, height: number) => {
     if (y - height < margin + 12) {
-      page = pdf.addPage(pageSize);
-      y = page.getHeight() - margin;
-      drawHeader(currentProjectName);
+      addProjectPage(section);
     }
   };
 
-  const drawBodyRow = (values: Array<string>, fills?: Partial<Record<number, readonly [number, number, number]>>, boldText = false) => {
-    for (let col = 0; col < cols.length; col += 1) {
-      const x = xAt(col);
-      drawRect(x, y, cols[col], rowHeight, fills?.[col]);
+  const drawProjectRow = (
+    values: string[],
+    fills: Partial<Record<number, readonly [number, number, number]>>,
+    boldText = false,
+  ) => {
+    for (let col = 0; col < currentColumns.length; col += 1) {
+      const align =
+        col === 0 || col === 2 || col === 4 || col === 5
+          ? "center"
+          : col >= 7
+            ? "right"
+            : "left";
+      drawRect(xAt(col), y, currentColumns[col], rowHeight, fills[col]);
       drawCellText({
         text: values[col] ?? "",
-        x,
+        x: xAt(col),
         topY: y,
-        width: cols[col],
+        width: currentColumns[col],
         height: rowHeight,
-        align: col <= 2 ? "center" : col >= 7 ? "right" : "left",
+        align,
         boldText,
       });
     }
     y -= rowHeight;
   };
 
-  let renderedProjects = 0;
-  const summaryRows: Array<{ projectName: string } & SummaryTotals> = [];
-  const grandTotals: SummaryTotals = { material: 0, alat: 0, upah: 0, ops: 0, total: 0 };
-
-  for (const project of reportProjects) {
-    const rows = rowsByProject.get(project.id) ?? [];
-    if (rows.length === 0) {
-      continue;
-    }
-
-    if (renderedProjects > 0) {
-      page = pdf.addPage(pageSize);
-      y = page.getHeight() - margin;
-    }
-    drawHeader(project.name);
-    renderedProjects += 1;
+  sections.forEach((section) => {
+    addProjectPage(section);
 
     const groupedByMonth = new Map<string, ExpenseRow[]>();
-    for (const row of rows) {
+    for (const row of section.rows) {
       const monthKey = row.expenseDate.slice(0, 7);
       if (!groupedByMonth.has(monthKey)) {
         groupedByMonth.set(monthKey, []);
@@ -415,24 +476,19 @@ export async function GET(request: Request) {
       groupedByMonth.get(monthKey)?.push(row);
     }
 
-    const projectTotals: SummaryTotals = { material: 0, alat: 0, upah: 0, ops: 0, total: 0 };
+    const categoryFills = Object.fromEntries(
+      section.categoryOptions.map((_, index) => [staticColumns.length + index, getExpenseCategoryFill(index)]),
+    ) as Partial<Record<number, readonly [number, number, number]>>;
+
     let rowNo = 1;
     for (const [monthKey, monthRows] of groupedByMonth.entries()) {
-      const monthTotals = { material: 0, alat: 0, upah: 0, ops: 0, total: 0 };
+      const monthTotals = createEmptyCategoryTotals(section.categoryOptions);
+      let monthTotal = 0;
 
       for (const row of monthRows) {
-        ensureSpace(rowHeight);
-        const split = splitByCategory(row.category, row.amount);
-        monthTotals.material += split.material;
-        monthTotals.alat += split.alat;
-        monthTotals.upah += split.upah;
-        monthTotals.ops += split.ops;
-        monthTotals.total += row.amount;
-        projectTotals.material += split.material;
-        projectTotals.alat += split.alat;
-        projectTotals.upah += split.upah;
-        projectTotals.ops += split.ops;
-        projectTotals.total += row.amount;
+        ensureProjectSpace(section, rowHeight);
+        monthTotals[row.category] = (monthTotals[row.category] ?? 0) + row.amount;
+        monthTotal += row.amount;
 
         const values = [
           String(rowNo),
@@ -443,27 +499,20 @@ export async function GET(request: Request) {
           row.unitLabel,
           row.usageInfo,
           row.unitPrice > 0 ? formatCurrency(row.unitPrice) : "",
-          split.material > 0 ? formatCurrency(split.material) : "",
-          split.alat > 0 ? formatCurrency(split.alat) : "",
-          split.upah > 0 ? formatCurrency(split.upah) : "",
-          split.ops > 0 ? formatCurrency(split.ops) : "",
+          ...section.categoryOptions.map((category) =>
+            category.value === row.category && row.amount > 0 ? formatCurrency(row.amount) : "",
+          ),
           row.amount > 0 ? formatCurrency(row.amount) : "",
         ];
-        drawBodyRow(values, {
-          8: colorMaterial,
-          9: colorAlat,
-          10: colorUpah,
-          11: colorOps,
-        });
+        drawProjectRow(values, categoryFills);
         rowNo += 1;
       }
 
-      ensureSpace(rowHeight);
-      const subtotalLabel = `TOTAL PENGELUARAN COST ${formatMonthLabel(monthKey)}`;
-      const leftWidth = cols.slice(0, 8).reduce((sum, width) => sum + width, 0);
+      ensureProjectSpace(section, rowHeight);
+      const leftWidth = currentColumns.slice(0, staticColumns.length).reduce((sum, width) => sum + width, 0);
       drawRect(xAt(0), y, leftWidth, rowHeight, colorTotal);
       drawCellText({
-        text: subtotalLabel,
+        text: `TOTAL PENGELUARAN COST ${formatMonthLabel(monthKey)}`,
         x: xAt(0),
         topY: y,
         width: leftWidth,
@@ -471,121 +520,159 @@ export async function GET(request: Request) {
         align: "left",
         boldText: true,
       });
-      const subtotalValues = [
-        monthTotals.material,
-        monthTotals.alat,
-        monthTotals.upah,
-        monthTotals.ops,
-        monthTotals.total,
-      ];
-      const subtotalCols = [8, 9, 10, 11, 12];
-      subtotalCols.forEach((col, index) => {
-        drawRect(xAt(col), y, cols[col], rowHeight, colorTotal);
+
+      section.categoryOptions.forEach((category, index) => {
+        const col = staticColumns.length + index;
+        drawRect(xAt(col), y, currentColumns[col], rowHeight, colorTotal);
         drawCellText({
-          text: subtotalValues[index] > 0 ? formatCurrency(subtotalValues[index]) : "-",
+          text: monthTotals[category.value] > 0 ? formatCurrency(monthTotals[category.value]) : "-",
           x: xAt(col),
           topY: y,
-          width: cols[col],
+          width: currentColumns[col],
           height: rowHeight,
           align: "right",
           boldText: true,
         });
       });
+
+      const totalCol = staticColumns.length + section.categoryOptions.length;
+      drawRect(xAt(totalCol), y, currentColumns[totalCol], rowHeight, colorTotal);
+      drawCellText({
+        text: monthTotal > 0 ? formatCurrency(monthTotal) : "-",
+        x: xAt(totalCol),
+        topY: y,
+        width: currentColumns[totalCol],
+        height: rowHeight,
+        align: "right",
+        boldText: true,
+      });
       y -= rowHeight;
     }
-
-    summaryRows.push({
-      projectName: project.name,
-      ...projectTotals,
-    });
-    grandTotals.material += projectTotals.material;
-    grandTotals.alat += projectTotals.alat;
-    grandTotals.upah += projectTotals.upah;
-    grandTotals.ops += projectTotals.ops;
-    grandTotals.total += projectTotals.total;
-  }
+  });
 
   if (summaryRows.length > 0) {
-    page = pdf.addPage(pageSize);
-    y = page.getHeight() - margin;
+    const summaryColumns = [
+      34,
+      300,
+      ...summaryCategoryOptions.map(() => 120),
+      140,
+    ];
+    const summaryPageWidth = Math.max(
+      minimumPageSize[0],
+      margin * 2 + summaryColumns.reduce((sum, width) => sum + width, 0),
+    );
+    const summaryXAt = (index: number) =>
+      margin + summaryColumns.slice(0, index).reduce((sum, width) => sum + width, 0);
+    const summaryRowHeight = 20;
 
-    const summaryTitle = "REKAP KESELURUHAN RINCIAN BIAYA";
-    const summaryTitleSize = 16;
-    const summaryTitleWidth = bold.widthOfTextAtSize(summaryTitle, summaryTitleSize);
-    page.drawText(summaryTitle, {
-      x: (page.getWidth() - summaryTitleWidth) / 2,
-      y,
-      size: summaryTitleSize,
-      font: bold,
-      color: rgb(0.08, 0.1, 0.12),
-    });
-    y -= 24;
+    const addSummaryPage = () => {
+      page = pdf.addPage([summaryPageWidth, minimumPageSize[1]]);
+      y = page.getHeight() - margin;
 
-    const recapCols = [34, 380, 130, 110, 150, 110, 180];
-    const recapXAt = (index: number) =>
-      margin + recapCols.slice(0, index).reduce((sum, width) => sum + width, 0);
+      const title = "REKAP KESELURUHAN RINCIAN BIAYA";
+      const titleSize = 16;
+      const titleWidth = bold.widthOfTextAtSize(title, titleSize);
+      page.drawText(title, {
+        x: (page.getWidth() - titleWidth) / 2,
+        y,
+        size: titleSize,
+        font: bold,
+        color: rgb(0.08, 0.1, 0.12),
+      });
+      y -= 22;
 
-    const drawRecapRow = (
-      values: string[],
-      fill?: readonly [number, number, number],
-      boldText = false,
-    ) => {
-      const recapRowHeight = 20;
-      if (y - recapRowHeight < margin + 12) {
-        page = pdf.addPage(pageSize);
-        y = page.getHeight() - margin;
-      }
+      page.drawText(`${selectedLabel} | Dicetak ${printedAtText}`, {
+        x: margin,
+        y,
+        size: 8.5,
+        font,
+        color: rgb(0.3, 0.34, 0.38),
+      });
+      y -= 14;
 
-      for (let col = 0; col < recapCols.length; col += 1) {
-        const x = recapXAt(col);
-        drawRect(x, y, recapCols[col], recapRowHeight, fill);
+      const headers = [
+        "NO",
+        "PROJECT",
+        ...summaryCategoryOptions.map((item) => item.label.toUpperCase()),
+        "TOTAL",
+      ];
+      headers.forEach((header, index) => {
+        const fill =
+          index >= 2 && index < 2 + summaryCategoryOptions.length
+            ? getExpenseCategoryFill(index - 2)
+            : colorHeader;
+        drawRect(summaryXAt(index), y, summaryColumns[index], summaryRowHeight, fill);
         drawCellText({
-          text: values[col] ?? "",
-          x,
+          text: header,
+          x: summaryXAt(index),
           topY: y,
-          width: recapCols[col],
-          height: recapRowHeight,
-          align: col === 0 ? "center" : col >= 2 ? "right" : "left",
-          boldText,
+          width: summaryColumns[index],
+          height: summaryRowHeight,
+          align: "center",
+          boldText: true,
           size: 8,
         });
-      }
-      y -= recapRowHeight;
+      });
+      y -= summaryRowHeight;
     };
 
-    drawRecapRow(
-      ["NO", "PROJECT", "MATERIAL", "ALAT", "UPAH/KASBON", "OPS", "TOTAL"],
-      colorHeader,
-      true,
-    );
-    summaryRows.forEach((summary, index) => {
-      drawRecapRow([
+    const ensureSummarySpace = () => {
+      if (y - summaryRowHeight < margin + 12) {
+        addSummaryPage();
+      }
+    };
+
+    addSummaryPage();
+
+    summaryRows.forEach((row, index) => {
+      ensureSummarySpace();
+      const values = [
         String(index + 1),
-        summary.projectName,
-        formatCurrency(summary.material),
-        formatCurrency(summary.alat),
-        formatCurrency(summary.upah),
-        formatCurrency(summary.ops),
-        formatCurrency(summary.total),
-      ]);
+        row.projectName,
+        ...summaryCategoryOptions.map((category) =>
+          formatCurrency(row.totalsByCategory[category.value] ?? 0),
+        ),
+        formatCurrency(row.total),
+      ];
+      values.forEach((value, col) => {
+        drawRect(summaryXAt(col), y, summaryColumns[col], summaryRowHeight);
+        drawCellText({
+          text: value,
+          x: summaryXAt(col),
+          topY: y,
+          width: summaryColumns[col],
+          height: summaryRowHeight,
+          align: col === 0 ? "center" : col >= 2 ? "right" : "left",
+          size: 8,
+        });
+      });
+      y -= summaryRowHeight;
     });
-    drawRecapRow(
-      [
-        "",
-        "TOTAL KESELURUHAN",
-        formatCurrency(grandTotals.material),
-        formatCurrency(grandTotals.alat),
-        formatCurrency(grandTotals.upah),
-        formatCurrency(grandTotals.ops),
-        formatCurrency(grandTotals.total),
-      ],
-      colorTotal,
-      true,
-    );
+
+    ensureSummarySpace();
+    const totalValues = [
+      "",
+      "TOTAL KESELURUHAN",
+      ...summaryCategoryOptions.map((category) => formatCurrency(grandTotalsByCategory[category.value] ?? 0)),
+      formatCurrency(grandTotal),
+    ];
+    totalValues.forEach((value, col) => {
+      drawRect(summaryXAt(col), y, summaryColumns[col], summaryRowHeight, colorTotal);
+      drawCellText({
+        text: value,
+        x: summaryXAt(col),
+        topY: y,
+        width: summaryColumns[col],
+        height: summaryRowHeight,
+        align: col >= 2 ? "right" : "left",
+        boldText: true,
+        size: 8,
+      });
+    });
   }
 
   const bytes = await pdf.save();
-  const filePrefix = resolveFilePrefix(reportProjectNames);
+  const filePrefix = resolveFilePrefix(sections.map((section) => section.projectName));
   return new Response(Buffer.from(bytes), {
     headers: {
       "Content-Type": "application/pdf",

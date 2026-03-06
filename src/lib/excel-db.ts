@@ -10,6 +10,8 @@ import {
   toCategorySlug,
   WORKER_TEAMS,
 } from "@/lib/constants";
+import type { ExpenseCategoryOption } from "@/lib/constants";
+import { buildReportCategoryOptions, createEmptyCategoryTotals } from "@/lib/expense-report";
 import { excelDbPath } from "@/lib/storage";
 import type {
   AttendanceStatus,
@@ -126,6 +128,7 @@ export type DetailReportWorkbookInput = {
     amount: number;
     expense_date: string;
   }>;
+  category_options_by_project?: Record<string, ExpenseCategoryOption[]>;
 };
 
 type DetailColumnMap = {
@@ -1325,44 +1328,493 @@ function readDetailTemplateWorkbook() {
     : XLSX.utils.book_new();
 }
 
-function toDetailWorkbookData(input: DetailReportWorkbookInput): ExcelDb {
-  const now = new Date().toISOString();
+function cloneSheetStyle(style: XLSX.CellObject["s"]) {
+  return style ? (JSON.parse(JSON.stringify(style)) as XLSX.CellObject["s"]) : undefined;
+}
+
+function rgbFillToHex(fill: readonly [number, number, number]) {
+  return fill
+    .map((value) => Math.round(Math.max(0, Math.min(1, value)) * 255).toString(16).padStart(2, "0"))
+    .join("")
+    .toUpperCase();
+}
+
+const DETAIL_SHEET_HEADER_FILL = "E5E5E5";
+const DETAIL_SHEET_TOTAL_FILL = "F4D774";
+const DETAIL_SHEET_CATEGORY_FILLS = [
+  "E8DBB0",
+  "DBB8DB",
+  "C7CCDE",
+  "CACACE",
+  "C9D7C2",
+  "E3CFC0",
+  "E8CC6B",
+  "91C2E0",
+  "DCE8C7",
+  "FADD9E",
+] as const;
+
+function createSheetStyle(params: {
+  align?: "left" | "center" | "right";
+  bold?: boolean;
+  fill?: string;
+  wrapText?: boolean;
+}) {
   return {
-    projects: input.projects.map((project) => ({
-      id: project.id,
-      name: project.name,
-      code: null,
-      client_name: null,
-      start_date: null,
-      status: "aktif",
-      created_at: now,
-    })),
-    project_expenses: input.project_expenses.map((expense) => ({
-      id: randomUUID(),
-      project_id: expense.project_id,
-      category: expense.category,
-      specialist_type: null,
-      requester_name: expense.requester_name,
-      description: expense.description,
-      recipient_name: null,
-      quantity: expense.quantity,
-      unit_label: expense.unit_label,
-      usage_info: expense.usage_info,
-      unit_price: expense.unit_price,
-      amount: expense.amount,
-      expense_date: expense.expense_date,
-      created_at: now,
-    })),
-    attendance_records: [],
-    payroll_resets: [],
+    font: params.bold ? { bold: true } : undefined,
+    alignment: {
+      horizontal: params.align ?? "left",
+      vertical: "center",
+      wrapText: params.wrapText ?? false,
+    },
+    fill: params.fill
+      ? {
+          patternType: "solid",
+          fgColor: { rgb: params.fill },
+        }
+      : undefined,
+    border: {
+      top: { style: "thin", color: { rgb: "3A3A3A" } },
+      right: { style: "thin", color: { rgb: "3A3A3A" } },
+      bottom: { style: "thin", color: { rgb: "3A3A3A" } },
+      left: { style: "thin", color: { rgb: "3A3A3A" } },
+    },
+  } as XLSX.CellObject["s"];
+}
+
+const DETAIL_TITLE_STYLE = createSheetStyle({
+  align: "center",
+  bold: true,
+});
+const DETAIL_HEADER_STYLE = createSheetStyle({
+  align: "center",
+  bold: true,
+  fill: DETAIL_SHEET_HEADER_FILL,
+  wrapText: true,
+});
+const DETAIL_BODY_LEFT_STYLE = createSheetStyle({
+  align: "left",
+  wrapText: true,
+});
+const DETAIL_BODY_CENTER_STYLE = createSheetStyle({
+  align: "center",
+  wrapText: true,
+});
+const DETAIL_BODY_RIGHT_STYLE = createSheetStyle({
+  align: "right",
+  wrapText: true,
+});
+const DETAIL_TOTAL_STYLE = createSheetStyle({
+  align: "right",
+  bold: true,
+  fill: DETAIL_SHEET_TOTAL_FILL,
+  wrapText: true,
+});
+const DETAIL_TOTAL_LEFT_STYLE = createSheetStyle({
+  align: "left",
+  bold: true,
+  fill: DETAIL_SHEET_TOTAL_FILL,
+  wrapText: true,
+});
+
+function getDetailCategoryFillHex(index: number) {
+  return DETAIL_SHEET_CATEGORY_FILLS[index % DETAIL_SHEET_CATEGORY_FILLS.length] ??
+    rgbFillToHex([0.9, 0.9, 0.9]);
+}
+
+function createDetailCategoryStyle(index: number, align: "center" | "right") {
+  return createSheetStyle({
+    align,
+    fill: getDetailCategoryFillHex(index),
+    wrapText: true,
+  });
+}
+
+function setWorksheetCell(params: {
+  sheet: XLSX.WorkSheet;
+  row: number;
+  col: number;
+  value: string | number | null;
+  style?: XLSX.CellObject["s"];
+  numberFormat?: string;
+}) {
+  const address = XLSX.utils.encode_cell({ r: params.row, c: params.col });
+  const cell: XLSX.CellObject = { t: "z" };
+
+  if (typeof params.value === "number") {
+    cell.t = "n";
+    cell.v = params.value;
+    if (params.numberFormat) {
+      cell.z = params.numberFormat;
+    }
+  } else if (typeof params.value === "string" && params.value.length > 0) {
+    cell.t = "s";
+    cell.v = params.value;
+  }
+
+  if (params.style) {
+    cell.s = cloneSheetStyle(params.style);
+  }
+
+  params.sheet[address] = cell;
+}
+
+function createDetailReportSheet(params: {
+  projectName: string;
+  rows: DetailReportWorkbookInput["project_expenses"];
+  categoryOptions: ExpenseCategoryOption[];
+}) {
+  const { projectName, rows, categoryOptions } = params;
+  const sheet = {} as XLSX.WorkSheet;
+  const currencyFormat = '"Rp" #,##0';
+  const titleRow = 0;
+  const topHeaderRow = 1;
+  const bottomHeaderRow = 2;
+  const staticColumnCount = 8;
+  const categoryStartCol = staticColumnCount;
+  const totalCol = categoryStartCol + categoryOptions.length;
+  const lastCol = totalCol;
+
+  setWorksheetCell({
+    sheet,
+    row: titleRow,
+    col: 0,
+    value: `PROJECT ${projectName.toUpperCase()}`,
+    style: DETAIL_TITLE_STYLE,
+  });
+
+  for (let col = 0; col <= lastCol; col += 1) {
+    const topStyle =
+      col >= categoryStartCol && col < totalCol
+        ? createSheetStyle({
+            align: "center",
+            bold: true,
+            fill: getDetailCategoryFillHex(col - categoryStartCol),
+            wrapText: true,
+          })
+        : DETAIL_HEADER_STYLE;
+    const bottomStyle =
+      col >= categoryStartCol && col < totalCol
+        ? createSheetStyle({
+            align: "center",
+            bold: true,
+            fill: getDetailCategoryFillHex(col - categoryStartCol),
+            wrapText: true,
+          })
+        : DETAIL_HEADER_STYLE;
+    setWorksheetCell({ sheet, row: topHeaderRow, col, value: null, style: topStyle });
+    setWorksheetCell({ sheet, row: bottomHeaderRow, col, value: null, style: bottomStyle });
+  }
+
+  const setTopHeader = (startCol: number, endCol: number, value: string, style?: XLSX.CellObject["s"]) => {
+    for (let col = startCol; col <= endCol; col += 1) {
+      setWorksheetCell({
+        sheet,
+        row: topHeaderRow,
+        col,
+        value: col === startCol ? value : null,
+        style: style ?? DETAIL_HEADER_STYLE,
+      });
+    }
   };
+
+  const setVerticalHeader = (col: number, value: string, style?: XLSX.CellObject["s"]) => {
+    setWorksheetCell({
+      sheet,
+      row: topHeaderRow,
+      col,
+      value,
+      style: style ?? DETAIL_HEADER_STYLE,
+    });
+    setWorksheetCell({
+      sheet,
+      row: bottomHeaderRow,
+      col,
+      value: null,
+      style: style ?? DETAIL_HEADER_STYLE,
+    });
+  };
+
+  setVerticalHeader(0, "NO");
+  setVerticalHeader(1, "NAMA\nPENGAJUAN");
+  setVerticalHeader(2, "TANGGAL");
+  setVerticalHeader(3, "KETERANGAN");
+  setTopHeader(4, 7, "RINCIAN COST");
+  setVerticalHeader(totalCol, "PENGELUARAN\nPER MINGGU");
+
+  setWorksheetCell({
+    sheet,
+    row: bottomHeaderRow,
+    col: 4,
+    value: "QTY",
+    style: DETAIL_HEADER_STYLE,
+  });
+  setWorksheetCell({
+    sheet,
+    row: bottomHeaderRow,
+    col: 5,
+    value: "KET",
+    style: DETAIL_HEADER_STYLE,
+  });
+  setWorksheetCell({
+    sheet,
+    row: bottomHeaderRow,
+    col: 6,
+    value: "INFORMASI\nPENGGUNAAN",
+    style: DETAIL_HEADER_STYLE,
+  });
+  setWorksheetCell({
+    sheet,
+    row: bottomHeaderRow,
+    col: 7,
+    value: "HARGA",
+    style: DETAIL_HEADER_STYLE,
+  });
+
+  categoryOptions.forEach((category, index) => {
+    const col = categoryStartCol + index;
+    const fill = getDetailCategoryFillHex(index);
+    const headerStyle = createSheetStyle({
+      align: "center",
+      bold: true,
+      fill,
+      wrapText: true,
+    });
+    const headerLabel = category.label.trim().toUpperCase();
+    const titleLabel =
+      headerLabel === "ALAT"
+        ? "ALAT"
+        : headerLabel.startsWith("COST ")
+          ? headerLabel
+          : `COST ${headerLabel}`;
+
+    setWorksheetCell({
+      sheet,
+      row: topHeaderRow,
+      col,
+      value: titleLabel,
+      style: headerStyle,
+    });
+    setWorksheetCell({
+      sheet,
+      row: bottomHeaderRow,
+      col,
+      value: "COST",
+      style: headerStyle,
+    });
+  });
+
+  const groupedByMonth = new Map<string, DetailReportWorkbookInput["project_expenses"]>();
+  for (const row of rows) {
+    const monthKey = row.expense_date.slice(0, 7);
+    if (!groupedByMonth.has(monthKey)) {
+      groupedByMonth.set(monthKey, []);
+    }
+    groupedByMonth.get(monthKey)?.push(row);
+  }
+
+  const merges: XLSX.Range[] = [
+    { s: { r: titleRow, c: 0 }, e: { r: titleRow, c: lastCol } },
+    { s: { r: topHeaderRow, c: 0 }, e: { r: bottomHeaderRow, c: 0 } },
+    { s: { r: topHeaderRow, c: 1 }, e: { r: bottomHeaderRow, c: 1 } },
+    { s: { r: topHeaderRow, c: 2 }, e: { r: bottomHeaderRow, c: 2 } },
+    { s: { r: topHeaderRow, c: 3 }, e: { r: bottomHeaderRow, c: 3 } },
+    { s: { r: topHeaderRow, c: 4 }, e: { r: topHeaderRow, c: 7 } },
+    { s: { r: topHeaderRow, c: totalCol }, e: { r: bottomHeaderRow, c: totalCol } },
+  ];
+
+  let rowPointer = 3;
+  let rowNo = 1;
+  for (const [monthKey, monthRows] of groupedByMonth.entries()) {
+    const monthTotals = createEmptyCategoryTotals(categoryOptions);
+    let monthTotal = 0;
+
+    for (const row of monthRows) {
+      setWorksheetCell({
+        sheet,
+        row: rowPointer,
+        col: 0,
+        value: rowNo,
+        style: DETAIL_BODY_CENTER_STYLE,
+      });
+      setWorksheetCell({
+        sheet,
+        row: rowPointer,
+        col: 1,
+        value: row.requester_name ?? "",
+        style: DETAIL_BODY_LEFT_STYLE,
+      });
+      setWorksheetCell({
+        sheet,
+        row: rowPointer,
+        col: 2,
+        value: formatDetailDate(row.expense_date),
+        style: DETAIL_BODY_CENTER_STYLE,
+      });
+      setWorksheetCell({
+        sheet,
+        row: rowPointer,
+        col: 3,
+        value: row.description ?? "",
+        style: DETAIL_BODY_LEFT_STYLE,
+      });
+      setWorksheetCell({
+        sheet,
+        row: rowPointer,
+        col: 4,
+        value: row.quantity > 0 ? row.quantity : null,
+        style: DETAIL_BODY_CENTER_STYLE,
+      });
+      setWorksheetCell({
+        sheet,
+        row: rowPointer,
+        col: 5,
+        value: row.unit_label ?? "",
+        style: DETAIL_BODY_CENTER_STYLE,
+      });
+      setWorksheetCell({
+        sheet,
+        row: rowPointer,
+        col: 6,
+        value: row.usage_info ?? "",
+        style: DETAIL_BODY_LEFT_STYLE,
+      });
+      setWorksheetCell({
+        sheet,
+        row: rowPointer,
+        col: 7,
+        value: row.unit_price > 0 ? row.unit_price : null,
+        style: DETAIL_BODY_RIGHT_STYLE,
+        numberFormat: currencyFormat,
+      });
+
+      categoryOptions.forEach((category, index) => {
+        const value = category.value === row.category && row.amount > 0 ? row.amount : null;
+        setWorksheetCell({
+          sheet,
+          row: rowPointer,
+          col: categoryStartCol + index,
+          value,
+          style: createDetailCategoryStyle(index, "right"),
+          numberFormat: currencyFormat,
+        });
+      });
+
+      setWorksheetCell({
+        sheet,
+        row: rowPointer,
+        col: totalCol,
+        value: row.amount > 0 ? row.amount : null,
+        style: DETAIL_BODY_RIGHT_STYLE,
+        numberFormat: currencyFormat,
+      });
+
+      monthTotals[row.category] = (monthTotals[row.category] ?? 0) + row.amount;
+      monthTotal += row.amount;
+      rowPointer += 1;
+      rowNo += 1;
+    }
+
+    for (let col = 0; col <= lastCol; col += 1) {
+      const style = col === 0 ? DETAIL_TOTAL_LEFT_STYLE : DETAIL_TOTAL_STYLE;
+      setWorksheetCell({
+        sheet,
+        row: rowPointer,
+        col,
+        value: null,
+        style,
+      });
+    }
+
+    setWorksheetCell({
+      sheet,
+      row: rowPointer,
+      col: 0,
+      value: `TOTAL PENGELUARAN COST ${formatMonthLabel(monthKey)}`,
+      style: DETAIL_TOTAL_LEFT_STYLE,
+    });
+    categoryOptions.forEach((category, index) => {
+      setWorksheetCell({
+        sheet,
+        row: rowPointer,
+        col: categoryStartCol + index,
+        value: monthTotals[category.value] > 0 ? monthTotals[category.value] : null,
+        style: DETAIL_TOTAL_STYLE,
+        numberFormat: currencyFormat,
+      });
+    });
+    setWorksheetCell({
+      sheet,
+      row: rowPointer,
+      col: totalCol,
+      value: monthTotal > 0 ? monthTotal : null,
+      style: DETAIL_TOTAL_STYLE,
+      numberFormat: currencyFormat,
+    });
+    merges.push({
+      s: { r: rowPointer, c: 0 },
+      e: { r: rowPointer, c: staticColumnCount - 1 },
+    });
+    rowPointer += 1;
+  }
+
+  sheet["!ref"] = XLSX.utils.encode_range({
+    s: { r: 0, c: 0 },
+    e: { r: Math.max(3, rowPointer - 1), c: lastCol },
+  });
+  sheet["!merges"] = merges;
+  sheet["!cols"] = [
+    { wch: 6 },
+    { wch: 20 },
+    { wch: 12 },
+    { wch: 24 },
+    { wch: 8 },
+    { wch: 8 },
+    { wch: 20 },
+    { wch: 14 },
+    ...categoryOptions.map(() => ({ wch: 18 })),
+    { wch: 18 },
+  ];
+  sheet["!rows"] = [
+    { hpt: 26 },
+    { hpt: 34 },
+    { hpt: 26 },
+    ...Array.from({ length: Math.max(0, rowPointer - 3) }, () => ({ hpt: 20 })),
+  ];
+
+  return sheet;
 }
 
 export function createDetailReportWorkbook(input: DetailReportWorkbookInput) {
   const workbook = XLSX.utils.book_new();
-  const templateWorkbook = readDetailTemplateWorkbook();
-  const data = toDetailWorkbookData(input);
-  appendProjectDetailSheets(workbook, templateWorkbook, data);
+  const usedNames = new Set<string>();
+
+  for (const project of input.projects) {
+    const rows = input.project_expenses
+      .filter((expense) => expense.project_id === project.id)
+      .slice()
+      .sort((a, b) => {
+        if (a.expense_date !== b.expense_date) {
+          return a.expense_date.localeCompare(b.expense_date);
+        }
+        return (a.requester_name ?? "").localeCompare(b.requester_name ?? "");
+      });
+    if (rows.length === 0) {
+      continue;
+    }
+
+    const categoryOptions = buildReportCategoryOptions(
+      input.category_options_by_project?.[project.id],
+      rows.map((row) => row.category),
+    );
+    const sheet = createDetailReportSheet({
+      projectName: project.name,
+      rows,
+      categoryOptions,
+    });
+    XLSX.utils.book_append_sheet(workbook, sheet, ensureUniqueSheetName(project.name, usedNames));
+  }
+
   return workbook;
 }
 

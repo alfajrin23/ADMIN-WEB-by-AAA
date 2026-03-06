@@ -1427,6 +1427,92 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
   };
 }
 
+export async function getProjectReportDetail(projectId: string): Promise<{
+  project: Project;
+  expenses: ExpenseEntry[];
+} | null> {
+  if (!projectId) {
+    return null;
+  }
+
+  if (activeDataSource === "excel") {
+    const db = readExcelDatabase();
+    const projectRow = db.projects.find((row) => row.id === projectId);
+    if (!projectRow) {
+      return null;
+    }
+
+    const project = mapProject(projectRow);
+    const expenses = db.project_expenses
+      .filter((row) => row.project_id === projectId)
+      .map((row) => mapExpense(row, project.name))
+      .sort((a, b) => a.expenseDate.localeCompare(b.expenseDate));
+    return {
+      project,
+      expenses,
+    };
+  }
+
+  if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return null;
+    }
+
+    const [projectResult, expenseRows] = await Promise.all([
+      supabase
+        .from("projects")
+        .select("id, name, code, client_name, start_date, status, created_at")
+        .eq("id", projectId)
+        .maybeSingle(),
+      getAllSupabaseRows(
+        "project_expenses",
+        "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at",
+        (query) => query.eq("project_id", projectId).order("expense_date", { ascending: true }),
+      ),
+    ]);
+    const { data: projectRow, error: projectError } = projectResult;
+    if (projectError || !projectRow) {
+      return null;
+    }
+
+    return {
+      project: mapProject(projectRow),
+      expenses: expenseRows.map((row) => mapExpense(row, String(projectRow.name ?? ""))),
+    };
+  }
+
+  if (activeDataSource === "firebase") {
+    const projectRow = await getFirebaseDocRow("projects", projectId);
+    if (!projectRow) {
+      return null;
+    }
+
+    const project = mapProject(projectRow);
+    const expenseRows = await getFirebaseCollectionRows("project_expenses");
+    return {
+      project,
+      expenses: expenseRows
+        .filter((row) => String(row.project_id ?? "") === projectId)
+        .map((row) => mapExpense(row, project.name))
+        .sort((a, b) => a.expenseDate.localeCompare(b.expenseDate)),
+    };
+  }
+
+  const project = sampleProjects.find((item) => item.id === projectId);
+  if (!project) {
+    return null;
+  }
+
+  return {
+    project,
+    expenses: sampleExpenses
+      .filter((item) => item.projectId === projectId)
+      .slice()
+      .sort((a, b) => a.expenseDate.localeCompare(b.expenseDate)),
+  };
+}
+
 function buildExpenseSearchHaystack(row: {
   requesterName?: string | null;
   description?: string | null;

@@ -1,8 +1,8 @@
 import { Buffer } from "node:buffer";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import { mergeExpenseCategoryOptions, resolveSummaryCostCategory } from "@/lib/constants";
-import { getExpenseCategories, getProjectDetail, getProjects } from "@/lib/data";
+import { getExpenseCategories, getProjectReportDetail, getProjects } from "@/lib/data";
 import { canExportReports, getCurrentUser } from "@/lib/auth";
+import { buildReportCategoryOptions, buildReportCategoryTotals } from "@/lib/expense-report";
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("id-ID", {
@@ -91,40 +91,20 @@ export async function GET(request: Request) {
   }
 
   const [details, expenseCategories] = await Promise.all([
-    Promise.all(selectedProjects.map((project) => getProjectDetail(project.id))),
+    Promise.all(selectedProjects.map((project) => getProjectReportDetail(project.id))),
     getExpenseCategories(),
   ]);
   const detailCategoryValues = details.flatMap(
-    (detail) =>
-      detail?.expenses.map((expense) =>
-        resolveSummaryCostCategory({
-          category: expense.category,
-          description: expense.description,
-          usageInfo: expense.usageInfo,
-        }),
-      ) ?? [],
+    (detail) => detail?.expenses.map((expense) => expense.category) ?? [],
   );
-  const categoryOptions = mergeExpenseCategoryOptions(expenseCategories, detailCategoryValues);
+  const categoryOptions = buildReportCategoryOptions(expenseCategories, detailCategoryValues);
 
   const summaries: ProjectSummary[] = [];
   for (const detail of details) {
     if (!detail) {
       continue;
     }
-
-    const totalsByCategory = Object.fromEntries(
-      categoryOptions.map((category) => [category.value, 0]),
-    ) as Record<string, number>;
-    let total = 0;
-    for (const expense of detail.expenses) {
-      const category = resolveSummaryCostCategory({
-        category: expense.category,
-        description: expense.description,
-        usageInfo: expense.usageInfo,
-      });
-      totalsByCategory[category] = (totalsByCategory[category] ?? 0) + expense.amount;
-      total += expense.amount;
-    }
+    const { totalsByCategory, total } = buildReportCategoryTotals(detail.expenses, categoryOptions);
 
     summaries.push({
       projectId: detail.project.id,

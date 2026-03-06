@@ -68,6 +68,49 @@ export function toCategorySlug(value: string) {
   return COST_CATEGORY_ALIAS[normalized] ?? normalized;
 }
 
+function normalizeCategorySummaryContext(
+  values: Array<string | null | undefined>,
+) {
+  return values
+    .map((value) => value?.trim().toLowerCase() ?? "")
+    .filter((value) => value.length > 0)
+    .join(" ");
+}
+
+const STAFF_PELAKSANA_SUMMARY_PATTERNS = [
+  /\bupah\s+staff\b/,
+  /\bupah\s+pelaksana\b/,
+  /\bkasbon\s+pelaksana\b/,
+  /\bum\s+pelaksana\b/,
+  /\bupah\s+dan\s+um\s+pelaksana\b/,
+  /\bupah\s+office\b/,
+  /\bupah\s+supir\b/,
+];
+
+export function resolveSummaryCostCategory(input: {
+  category: string;
+  description?: string | null;
+  usageInfo?: string | null;
+}) {
+  const normalizedCategory = toCategorySlug(input.category);
+  if (!normalizedCategory) {
+    return "";
+  }
+
+  const summaryContext = normalizeCategorySummaryContext([
+    input.description,
+    input.usageInfo,
+  ]);
+  if (
+    normalizedCategory !== "upah_staff_pelaksana" &&
+    STAFF_PELAKSANA_SUMMARY_PATTERNS.some((pattern) => pattern.test(summaryContext))
+  ) {
+    return "upah_staff_pelaksana";
+  }
+
+  return normalizedCategory;
+}
+
 export function isHiddenCostCategory(value: string) {
   const normalized = toCategorySlug(value);
   if (!normalized) {

@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import { mergeExpenseCategoryOptions } from "@/lib/constants";
+import { mergeExpenseCategoryOptions, resolveSummaryCostCategory } from "@/lib/constants";
 import { getExpenseCategories, getProjectDetail } from "@/lib/data";
 import { canExportReports, getCurrentUser } from "@/lib/auth";
 
@@ -74,14 +74,25 @@ export async function GET(request: Request) {
 
   const categoryOptions = mergeExpenseCategoryOptions(
     await getExpenseCategories(),
-    rows.map((row) => row.category),
+    rows.map((row) =>
+      resolveSummaryCostCategory({
+        category: row.category,
+        description: row.description,
+        usageInfo: row.usageInfo,
+      }),
+    ),
   );
   const totalsByCategory = Object.fromEntries(
     categoryOptions.map((item) => [item.value, 0]),
   ) as Record<string, number>;
   let grandTotal = 0;
   for (const row of rows) {
-    totalsByCategory[row.category] = (totalsByCategory[row.category] ?? 0) + row.amount;
+    const category = resolveSummaryCostCategory({
+      category: row.category,
+      description: row.description,
+      usageInfo: row.usageInfo,
+    });
+    totalsByCategory[category] = (totalsByCategory[category] ?? 0) + row.amount;
     grandTotal += row.amount;
   }
 

@@ -4,6 +4,7 @@ import {
   getCostCategoryLabel,
   isHiddenCostCategory,
   mergeExpenseCategoryOptions,
+  resolveSummaryCostCategory,
   toCategorySlug,
   WORKER_TEAMS,
   WORKER_TEAM_LABEL,
@@ -313,13 +314,65 @@ async function getFirebaseDocRow(
   }
 }
 
+type SupabasePagedRowsQuery = {
+  eq(column: string, value: unknown): SupabasePagedRowsQuery;
+  order(column: string, options?: { ascending?: boolean }): SupabasePagedRowsQuery;
+  range(
+    from: number,
+    to: number,
+  ): Promise<{
+    data: Record<string, unknown>[] | null;
+    error: unknown;
+  }>;
+};
+
+async function getAllSupabaseRows(
+  table: string,
+  select: string,
+  configure?: (query: SupabasePagedRowsQuery) => SupabasePagedRowsQuery,
+  pageSize = 1000,
+): Promise<Record<string, unknown>[]> {
+  const supabase = getSupabaseServerClient();
+  if (!supabase) {
+    return [];
+  }
+
+  const rows: Record<string, unknown>[] = [];
+  let from = 0;
+
+  while (true) {
+    let query = supabase.from(table).select(select) as unknown as SupabasePagedRowsQuery;
+    if (configure) {
+      query = configure(query);
+    }
+
+    const { data, error } = await query.range(from, from + pageSize - 1);
+    if (error || !data) {
+      return [];
+    }
+
+    rows.push(...data);
+    if (data.length < pageSize) {
+      break;
+    }
+
+    from += pageSize;
+  }
+
+  return rows;
+}
+
 function buildCategoryTotals(
   expenses: ExpenseEntry[],
   categoryOptions?: ExpenseCategoryOption[],
 ): CategoryTotal[] {
   const totalsByCategory = new Map<string, number>();
   for (const expense of expenses) {
-    const category = toCategorySlug(expense.category);
+    const category = resolveSummaryCostCategory({
+      category: expense.category,
+      description: expense.description,
+      usageInfo: expense.usageInfo,
+    });
     if (!category) {
       continue;
     }
@@ -841,9 +894,9 @@ export async function getExpenseCategories(): Promise<ExpenseCategoryOption[]> {
       return mergeExpenseCategoryOptions();
     }
 
-    const [{ data: categoryRows, error: categoryError }, { data: expenseRows }] = await Promise.all([
+    const [{ data: categoryRows, error: categoryError }, expenseRows] = await Promise.all([
       supabase.from("expense_categories").select("slug, label").order("created_at", { ascending: true }),
-      supabase.from("project_expenses").select("category"),
+      getAllSupabaseRows("project_expenses", "category"),
     ]);
 
     const registeredOptions =
@@ -862,7 +915,7 @@ export async function getExpenseCategories(): Promise<ExpenseCategoryOption[]> {
             })
             .filter((row): row is ExpenseCategoryOption => Boolean(row))
         : [];
-    const expenseValues = (expenseRows ?? [])
+    const expenseValues = expenseRows
       .map((row) => toCategorySlug(String(row.category ?? "")))
       .filter((value) => value.length > 0);
 
@@ -944,12 +997,12 @@ export async function getRequesterSuggestionsByProject(): Promise<Record<string,
       return {};
     }
 
-    const { data, error } = await supabase
-      .from("project_expenses")
-      .select("project_id, requester_name, category")
-      .order("expense_date", { ascending: false })
-      .limit(6000);
-    if (error || !data) {
+    const data = await getAllSupabaseRows(
+      "project_expenses",
+      "project_id, requester_name, category",
+      (query) => query.order("expense_date", { ascending: false }),
+    );
+    if (data.length === 0) {
       return {};
     }
 
@@ -1008,12 +1061,12 @@ export async function getDescriptionSuggestionsByProject(): Promise<Record<strin
       return {};
     }
 
-    const { data, error } = await supabase
-      .from("project_expenses")
-      .select("project_id, description, category")
-      .order("expense_date", { ascending: false })
-      .limit(6000);
-    if (error || !data) {
+    const data = await getAllSupabaseRows(
+      "project_expenses",
+      "project_id, description, category",
+      (query) => query.order("expense_date", { ascending: false }),
+    );
+    if (data.length === 0) {
       return {};
     }
 
@@ -1201,27 +1254,25 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
       return null;
     }
 
-    const [{ data: projectRow, error: projectError }, { data: expenseRows, error: expenseError }] =
-      await Promise.all([
-        supabase
-          .from("projects")
-          .select("id, name, code, client_name, start_date, status, created_at")
-          .eq("id", projectId)
-          .maybeSingle(),
-        supabase
-          .from("project_expenses")
-          .select(
-            "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at",
-          )
-          .eq("project_id", projectId)
-          .order("expense_date", { ascending: true }),
-      ]);
+    const [projectResult, expenseRows] = await Promise.all([
+      supabase
+        .from("projects")
+        .select("id, name, code, client_name, start_date, status, created_at")
+        .eq("id", projectId)
+        .maybeSingle(),
+      getAllSupabaseRows(
+        "project_expenses",
+        "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at",
+        (query) => query.eq("project_id", projectId).order("expense_date", { ascending: true }),
+      ),
+    ]);
+    const { data: projectRow, error: projectError } = projectResult;
 
     if (projectError || !projectRow) {
       return null;
     }
 
-    if (expenseError || !expenseRows) {
+    if (expenseRows.length === 0) {
       const categoryOptions = await getExpenseCategories();
       return {
         project: mapProject(projectRow),
@@ -1980,19 +2031,17 @@ export async function getDashboardData(): Promise<DashboardData> {
       };
     }
 
-    const [{ data: projectRows }, { data: expenseRows }, { data: attendanceRows }, { data: recentRows }, categoryOptions] =
+    const [{ data: projectRows }, expenseRows, attendanceRows, { data: recentRows }, categoryOptions] =
       await Promise.all([
         supabase.from("projects").select("id, name, code, client_name, start_date, status, created_at"),
-        supabase
-          .from("project_expenses")
-          .select(
-            "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at",
-          ),
-        supabase
-          .from("attendance_records")
-          .select(
-            "id, project_id, worker_name, team_type, specialist_team_name, status, work_days, daily_wage, overtime_hours, overtime_wage, kasbon_amount, reimburse_type, reimburse_amount, attendance_date, notes, created_at",
-          ),
+        getAllSupabaseRows(
+          "project_expenses",
+          "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at",
+        ),
+        getAllSupabaseRows(
+          "attendance_records",
+          "id, project_id, worker_name, team_type, specialist_team_name, status, work_days, daily_wage, overtime_hours, overtime_wage, kasbon_amount, reimburse_type, reimburse_amount, attendance_date, notes, created_at",
+        ),
         supabase
           .from("project_expenses")
           .select(

@@ -9,6 +9,7 @@ import {
   importExcelTemplateAction,
 } from "@/app/actions";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
+import { ExpenseDetailSearchForm } from "@/components/expense-detail-search-form";
 import { ExpenseDetailSearchResults } from "@/components/expense-detail-search-results";
 import {
   CashInIcon,
@@ -38,8 +39,10 @@ import {
   COST_CATEGORIES,
   getCostCategoryLabel,
   getCostCategoryStyle,
+  mergeExpenseCategoryOptions,
   PROJECT_STATUSES,
   PROJECT_STATUS_STYLE,
+  resolveSummaryCostCategory,
   SPECIALIST_COST_PRESETS,
 } from "@/lib/constants";
 import {
@@ -178,6 +181,42 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
           }
           return (a.requesterName ?? "").localeCompare(b.requesterName ?? "");
         })
+    : [];
+  const recapCategoryTotals = selectedProject
+    ? (() => {
+        const totalsByCategory = new Map<string, number>();
+        for (const expense of recapExpenses) {
+          const category = resolveSummaryCostCategory({
+            category: expense.category,
+            description: expense.description,
+            usageInfo: expense.usageInfo,
+          });
+          if (!category) {
+            continue;
+          }
+          totalsByCategory.set(
+            category,
+            (totalsByCategory.get(category) ?? 0) + expense.amount,
+          );
+        }
+
+        return mergeExpenseCategoryOptions(
+          expenseCategories,
+          recapExpenses.map((item) =>
+            resolveSummaryCostCategory({
+              category: item.category,
+              description: item.description,
+              usageInfo: item.usageInfo,
+            }),
+          ),
+        )
+          .map((item) => ({
+            category: item.value,
+            label: item.label,
+            total: totalsByCategory.get(item.value) ?? 0,
+          }))
+          .filter((item) => item.total !== 0);
+      })()
     : [];
 
   const searchText = typeof params.q === "string" ? params.q.trim() : "";
@@ -686,7 +725,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
           ) : (
             <div className="mt-4 space-y-4">
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {selectedProject.categoryTotals.map((item) => (
+                {recapCategoryTotals.map((item) => (
                   <div key={item.category} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
                     <p className="text-xs font-medium text-slate-500">
                       <span
@@ -700,65 +739,176 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 ))}
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[980px] border-collapse text-sm">
+              <div className="space-y-3 xl:hidden">
+                {recapExpenses.map((item) => (
+                  <article
+                    key={item.id}
+                    className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+                          {formatDate(item.expenseDate)}
+                        </p>
+                        <p className="mt-1 break-words text-sm font-semibold text-slate-900">
+                          {item.requesterName ?? "-"}
+                        </p>
+                      </div>
+                      <p
+                        className={`shrink-0 text-right text-sm font-semibold ${
+                          item.amount < 0 ? "text-rose-700" : "text-emerald-700"
+                        }`}
+                      >
+                        {item.amount < 0 ? "-" : "+"}
+                        {formatCurrency(Math.abs(item.amount))}
+                      </p>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span
+                        className={`rounded-full px-2 py-1 text-[11px] font-semibold ${getCostCategoryStyle(item.category)}`}
+                      >
+                        {getCostCategoryLabel(item.category)}
+                      </span>
+                      {item.specialistType ? (
+                        <span className="rounded-full bg-cyan-50 px-2 py-1 text-[11px] font-semibold text-cyan-700">
+                          Spesialis: {item.specialistType}
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                          Rincian
+                        </dt>
+                        <dd className="mt-1 break-words text-sm text-slate-700">
+                          {item.description ?? "-"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                          Vendor
+                        </dt>
+                        <dd className="mt-1 break-words text-sm text-slate-700">
+                          {item.recipientName ?? "-"}
+                        </dd>
+                      </div>
+                    </dl>
+
+                    <p className="mt-3 break-words rounded-xl bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
+                      {item.usageInfo ?? "-"} | {item.quantity} {item.unitLabel ?? "unit"} @{" "}
+                      {formatCurrency(item.unitPrice)}
+                    </p>
+
+                    <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+                      {canEdit ? (
+                        <>
+                          <Link
+                            href={`/projects/expenses/edit?id=${item.id}`}
+                            className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100"
+                          >
+                            <span className="btn-icon bg-emerald-100 text-emerald-700">
+                              <EditIcon />
+                            </span>
+                            Edit
+                          </Link>
+                          <form action={deleteExpenseAction}>
+                            <input type="hidden" name="expense_id" value={item.id} />
+                            <input
+                              type="hidden"
+                              name="return_to"
+                              value={createProjectsHref({
+                                projectId: selectedProject.project.id,
+                                searchText,
+                                view: "rekap",
+                              })}
+                            />
+                            <ConfirmActionButton
+                              className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-semibold text-rose-700 hover:bg-rose-100"
+                              modalDescription="Yakin ingin menghapus data biaya ini?"
+                            >
+                              <span className="btn-icon bg-rose-100 text-rose-700">
+                                <TrashIcon />
+                              </span>
+                              Hapus
+                            </ConfirmActionButton>
+                          </form>
+                        </>
+                      ) : (
+                        <span className="text-xs font-medium text-slate-500">Viewer</span>
+                      )}
+                    </div>
+                  </article>
+                ))}
+                {recapExpenses.length === 0 ? (
+                  <p className="rounded-2xl border border-slate-200 px-3 py-4 text-center text-sm text-slate-500">
+                    Belum ada transaksi biaya.
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="hidden rounded-2xl border border-slate-200 xl:block">
+                <table className="w-full table-fixed border-collapse text-[12px] leading-5">
                   <thead>
                     <tr className="bg-slate-50 text-left text-slate-600">
-                      <th className="w-[130px] border border-slate-200 px-3 py-2 font-medium">Tanggal</th>
-                      <th className="w-[170px] border border-slate-200 px-3 py-2 font-medium">Nama Pengaju</th>
-                      <th className="w-[170px] border border-slate-200 px-3 py-2 font-medium">Kategori</th>
-                      <th className="border border-slate-200 px-3 py-2 font-medium">Rincian</th>
-                      <th className="w-[150px] border border-slate-200 px-3 py-2 font-medium">Vendor</th>
-                      <th className="w-[140px] border border-slate-200 px-3 py-2 text-right font-medium">Nominal</th>
-                      <th className="w-[140px] border border-slate-200 px-3 py-2 text-right font-medium">Aksi</th>
+                      <th className="w-[11%] border border-slate-200 px-2 py-2 font-medium">Tanggal</th>
+                      <th className="w-[15%] border border-slate-200 px-2 py-2 font-medium">Nama Pengaju</th>
+                      <th className="w-[15%] border border-slate-200 px-2 py-2 font-medium">Kategori</th>
+                      <th className="w-[29%] border border-slate-200 px-2 py-2 font-medium">Rincian</th>
+                      <th className="w-[12%] border border-slate-200 px-2 py-2 font-medium">Vendor</th>
+                      <th className="w-[10%] border border-slate-200 px-2 py-2 text-right font-medium">Nominal</th>
+                      <th className="w-[8%] border border-slate-200 px-2 py-2 text-right font-medium">
+                        Aksi
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {recapExpenses.map((item) => (
                       <tr key={item.id} className="bg-white">
-                        <td className="border border-slate-200 px-3 py-2 align-top">
+                        <td className="border border-slate-200 px-2 py-2 align-top text-[11px] whitespace-nowrap">
                           {formatDate(item.expenseDate)}
                         </td>
-                        <td className="border border-slate-200 px-3 py-2 align-top">
+                        <td className="border border-slate-200 px-2 py-2 align-top break-words">
                           {item.requesterName ?? "-"}
                         </td>
-                        <td className="border border-slate-200 px-3 py-2 align-top">
+                        <td className="border border-slate-200 px-2 py-2 align-top">
                           <span
-                            className={`rounded-full px-2 py-1 text-xs font-semibold ${getCostCategoryStyle(item.category)}`}
+                            className={`inline-flex max-w-full rounded-full px-2 py-1 text-[10px] font-semibold ${getCostCategoryStyle(item.category)}`}
                           >
                             {getCostCategoryLabel(item.category)}
                           </span>
                           {item.specialistType ? (
-                            <p className="mt-1 text-[11px] font-medium text-cyan-700">
+                            <p className="mt-1 break-words text-[10px] font-medium text-cyan-700">
                               Spesialis: {item.specialistType}
                             </p>
                           ) : null}
                         </td>
-                        <td className="border border-slate-200 px-3 py-2 align-top">
-                          <p>{item.description ?? "-"}</p>
-                          <p className="text-xs text-slate-500">
+                        <td className="border border-slate-200 px-2 py-2 align-top">
+                          <p className="break-words">{item.description ?? "-"}</p>
+                          <p className="mt-1 break-words text-[10px] text-slate-500">
                             {item.usageInfo ?? "-"} | {item.quantity} {item.unitLabel ?? "unit"} @{" "}
                             {formatCurrency(item.unitPrice)}
                           </p>
                         </td>
-                        <td className="border border-slate-200 px-3 py-2 align-top">
+                        <td className="border border-slate-200 px-2 py-2 align-top break-words">
                           {item.recipientName ?? "-"}
                         </td>
                         <td
-                          className={`border border-slate-200 px-3 py-2 text-right font-semibold ${
+                          className={`border border-slate-200 px-2 py-2 text-right text-[11px] font-semibold ${
                             item.amount < 0 ? "text-rose-700" : "text-emerald-700"
                           }`}
                         >
                           {item.amount < 0 ? "-" : "+"}
                           {formatCurrency(Math.abs(item.amount))}
                         </td>
-                        <td className="border border-slate-200 px-3 py-2 align-top">
-                          <div className="flex justify-end gap-3">
+                        <td className="border border-slate-200 px-2 py-2 align-top">
+                          <div className="flex flex-col items-end gap-1.5">
                             {canEdit ? (
                               <>
                                 <Link
                                   href={`/projects/expenses/edit?id=${item.id}`}
-                                  className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:text-emerald-900"
+                                  className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100"
                                 >
                                   <span className="btn-icon bg-emerald-100 text-emerald-700">
                                     <EditIcon />
@@ -777,7 +927,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                                     })}
                                   />
                                   <ConfirmActionButton
-                                    className="inline-flex items-center gap-1 text-xs font-medium text-rose-700 hover:text-rose-900"
+                                    className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] font-semibold text-rose-700 hover:bg-rose-100"
                                     modalDescription="Yakin ingin menghapus data biaya ini?"
                                   >
                                     <span className="btn-icon bg-rose-100 text-rose-700">
@@ -841,61 +991,17 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
 
             {activeModal === "detail-search" ? (
               <div className="mt-4 space-y-4">
-                <form method="get" className="space-y-2">
-                  {currentProjectQueryId ? (
-                    <input type="hidden" name="project" value={currentProjectQueryId} />
-                  ) : null}
-                  {searchText ? <input type="hidden" name="q" value={searchText} /> : null}
-                  <input type="hidden" name="view" value={activeView} />
-                  <input type="hidden" name="modal" value="detail-search" />
-                  <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
-                    <input
-                      name="detail_q"
-                      defaultValue={detailSearchQuery}
-                      placeholder="Contoh: hebel, proyek gudang, 1.500.000"
-                      autoFocus
-                      autoComplete="off"
-                    />
-                    <button className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-cyan-600">
-                      <span className="btn-icon bg-white/20 text-white">
-                        <SearchIcon />
-                      </span>
-                      Cari Rincian
-                    </button>
-                    {hasDetailSearchCriteria ? (
-                      <Link
-                        href={openDetailSearchModalHref}
-                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
-                      >
-                        Reset Filter
-                      </Link>
-                    ) : null}
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-3">
-                    <div>
-                      <label className="mb-1 block text-xs font-medium text-slate-500">Dari tanggal</label>
-                      <input type="date" name="detail_from" defaultValue={detailDateFrom} autoComplete="off" />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-xs font-medium text-slate-500">Sampai tanggal</label>
-                      <input type="date" name="detail_to" defaultValue={detailDateTo} autoComplete="off" />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-xs font-medium text-slate-500">Tahun</label>
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        name="detail_year"
-                        min={1900}
-                        max={9999}
-                        step={1}
-                        defaultValue={detailYear ?? ""}
-                        placeholder="Contoh: 2026"
-                        autoComplete="off"
-                      />
-                    </div>
-                  </div>
-                </form>
+                <ExpenseDetailSearchForm
+                  currentProjectId={currentProjectQueryId}
+                  projectSearchText={searchText}
+                  activeView={activeView}
+                  initialQuery={detailSearchQuery}
+                  initialFrom={detailDateFrom}
+                  initialTo={detailDateTo}
+                  initialYear={detailYear}
+                  hasCriteria={hasDetailSearchCriteria}
+                  resetHref={openDetailSearchModalHref}
+                />
 
                 {!hasDetailSearchCriteria ? (
                   <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600">

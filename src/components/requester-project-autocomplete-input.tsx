@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { PROJECT_AUTOCOMPLETE_SELECT_EVENT } from "@/components/project-autocomplete";
 
 type RequesterProjectSuggestion = {
   requesterName: string;
@@ -77,19 +76,6 @@ function getNamedFieldValue(form: HTMLFormElement, fieldName: string) {
   return "";
 }
 
-function dispatchProjectSelection(projectId: string) {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.dispatchEvent(
-    new CustomEvent(PROJECT_AUTOCOMPLETE_SELECT_EVENT, {
-      detail: {
-        projectId,
-      },
-    }),
-  );
-}
-
 function buildProjectContext(option: RequesterProjectSuggestion) {
   const segments = [option.projectName];
   if (option.projectCode?.trim()) {
@@ -112,7 +98,6 @@ export function RequesterProjectAutocompleteInput({
   const inputRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState("");
   const [projectId, setProjectId] = useState("");
-  const [needsProjectChoice, setNeedsProjectChoice] = useState(false);
 
   const resolveCurrentProjectId = useCallback(() => {
     const form = inputRef.current?.form;
@@ -187,6 +172,45 @@ export function RequesterProjectAutocompleteInput({
     );
   }, [dedupedSuggestions, normalizedValue]);
 
+  const typedRequesterMatches = useMemo(() => {
+    if (!normalizedValue) {
+      return [];
+    }
+
+    const groupedMatches = new Map<
+      string,
+      {
+        requesterName: string;
+        projectCount: number;
+      }
+    >();
+
+    for (const option of dedupedSuggestions) {
+      const normalizedRequester = normalizeText(option.requesterName);
+      if (!normalizedRequester.includes(normalizedValue)) {
+        continue;
+      }
+
+      if (!groupedMatches.has(normalizedRequester)) {
+        groupedMatches.set(normalizedRequester, {
+          requesterName: option.requesterName,
+          projectCount: 0,
+        });
+      }
+
+      groupedMatches.get(normalizedRequester)!.projectCount += 1;
+    }
+
+    return Array.from(groupedMatches.values())
+      .sort((a, b) => {
+        if (a.projectCount !== b.projectCount) {
+          return b.projectCount - a.projectCount;
+        }
+        return a.requesterName.localeCompare(b.requesterName, "id-ID");
+      })
+      .slice(0, 6);
+  }, [dedupedSuggestions, normalizedValue]);
+
   const applyBestRequesterMatch = useCallback(
     (inputValue: string) => {
       const normalizedInput = normalizeText(inputValue);
@@ -220,46 +244,6 @@ export function RequesterProjectAutocompleteInput({
     [requesterNameSuggestions],
   );
 
-  const syncProjectByRequester = useCallback(
-    (requesterName: string, currentProjectId: string) => {
-      const normalizedRequesterName = normalizeText(requesterName);
-      if (!normalizedRequesterName) {
-        setNeedsProjectChoice(false);
-        return true;
-      }
-
-      const matchedOptions = dedupedSuggestions.filter(
-        (option) => normalizeText(option.requesterName) === normalizedRequesterName,
-      );
-      if (matchedOptions.length === 0) {
-        setNeedsProjectChoice(false);
-        return true;
-      }
-
-      if (matchedOptions.length === 1) {
-        const resolvedProjectId = matchedOptions[0].projectId;
-        if (resolvedProjectId) {
-          dispatchProjectSelection(resolvedProjectId);
-          setProjectId(resolvedProjectId);
-        }
-        setNeedsProjectChoice(false);
-        return true;
-      }
-
-      const hasSelectedProjectInMatches = matchedOptions.some(
-        (option) => option.projectId === currentProjectId,
-      );
-      if (hasSelectedProjectInMatches) {
-        setNeedsProjectChoice(false);
-        return true;
-      }
-
-      setNeedsProjectChoice(true);
-      return false;
-    },
-    [dedupedSuggestions],
-  );
-
   return (
     <div className="space-y-1">
       <input
@@ -268,7 +252,6 @@ export function RequesterProjectAutocompleteInput({
         value={value}
         onChange={(event) => {
           setValue(event.currentTarget.value);
-          setNeedsProjectChoice(false);
         }}
         onFocus={() => {
           syncCurrentProjectId();
@@ -283,15 +266,8 @@ export function RequesterProjectAutocompleteInput({
           const currentInput = event.currentTarget;
 
           const bestMatch = applyBestRequesterMatch(event.currentTarget.value);
-          const resolvedRequesterName = bestMatch ?? event.currentTarget.value;
           if (bestMatch && bestMatch !== event.currentTarget.value) {
             setValue(bestMatch);
-          }
-
-          const currentProjectId = syncCurrentProjectId();
-          const canContinue = syncProjectByRequester(resolvedRequesterName, currentProjectId);
-          if (!canContinue) {
-            return;
           }
 
           requestAnimationFrame(() => {
@@ -311,42 +287,45 @@ export function RequesterProjectAutocompleteInput({
 
       {matchingProjectOptions.length === 1 ? (
         <p className="text-[11px] font-medium text-emerald-700">
-          Otomatis cocok ke project: {buildProjectContext(matchingProjectOptions[0])}
+          Histori nama ini ada di project: {buildProjectContext(matchingProjectOptions[0])}
         </p>
       ) : matchingProjectOptions.length > 1 ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
           <p className="font-semibold">
-            Nama ini ada di {matchingProjectOptions.length} project. Pilih project agar tidak salah input:
+            Nama ini ada di {matchingProjectOptions.length} project. Ini hanya keterangan, input tetap bisa
+            dilanjutkan:
           </p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {matchingProjectOptions.map((option) => (
-              <button
+              <span
                 key={`${option.projectId}|${option.requesterName}`}
-                type="button"
-                data-ui-button="true"
-                onClick={() => {
-                  dispatchProjectSelection(option.projectId);
-                  setProjectId(option.projectId);
-                  setNeedsProjectChoice(false);
-                  requestAnimationFrame(() => {
-                    focusNextField(inputRef.current);
-                  });
-                }}
                 className={`inline-flex items-center rounded-lg border px-2 py-1 text-[11px] font-semibold ${
                   projectId === option.projectId
                     ? "border-emerald-300 bg-emerald-100 text-emerald-700"
-                    : "border-amber-300 bg-white text-amber-700 hover:bg-amber-100"
+                    : "border-amber-300 bg-white text-amber-700"
                 }`}
               >
                 {buildProjectContext(option)}
-              </button>
+              </span>
             ))}
           </div>
-          {needsProjectChoice ? (
-            <p className="mt-2 font-semibold text-rose-700">
-              Tekan salah satu project di atas dulu, lalu lanjut isi field berikutnya.
-            </p>
-          ) : null}
+          <p className="mt-2 text-[11px] text-amber-700">
+            Keterangan ini tidak akan mengubah pilihan project yang sudah dipilih.
+          </p>
+        </div>
+      ) : typedRequesterMatches.length > 0 ? (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
+          <p className="font-semibold text-slate-700">Histori nama serupa saat Anda mengetik:</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {typedRequesterMatches.map((item) => (
+              <span
+                key={item.requesterName}
+                className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-2 py-1 font-medium text-slate-600"
+              >
+                {item.requesterName} - {item.projectCount} project
+              </span>
+            ))}
+          </div>
         </div>
       ) : (
         <p className="text-[11px] text-slate-500">

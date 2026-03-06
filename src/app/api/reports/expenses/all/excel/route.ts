@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import * as XLSX from "xlsx/xlsx.mjs";
-import { mergeExpenseCategoryOptions } from "@/lib/constants";
+import { mergeExpenseCategoryOptions, resolveSummaryCostCategory } from "@/lib/constants";
 import { getExpenseCategories, getProjectDetail, getProjects } from "@/lib/data";
 import { canExportReports, getCurrentUser } from "@/lib/auth";
 
@@ -69,8 +69,16 @@ export async function GET(request: Request) {
     Promise.all(selectedProjects.map((project) => getProjectDetail(project.id))),
     getExpenseCategories(),
   ]);
-  const detailCategoryValues = details
-    .flatMap((detail) => detail?.expenses.map((expense) => expense.category) ?? []);
+  const detailCategoryValues = details.flatMap(
+    (detail) =>
+      detail?.expenses.map((expense) =>
+        resolveSummaryCostCategory({
+          category: expense.category,
+          description: expense.description,
+          usageInfo: expense.usageInfo,
+        }),
+      ) ?? [],
+  );
   const categoryOptions = mergeExpenseCategoryOptions(expenseCategories, detailCategoryValues);
 
   const summaryRows: ProjectSummaryRow[] = [];
@@ -84,7 +92,12 @@ export async function GET(request: Request) {
     ) as Record<string, number>;
     let total = 0;
     for (const expense of detail.expenses) {
-      totalsByCategory[expense.category] = (totalsByCategory[expense.category] ?? 0) + expense.amount;
+      const category = resolveSummaryCostCategory({
+        category: expense.category,
+        description: expense.description,
+        usageInfo: expense.usageInfo,
+      });
+      totalsByCategory[category] = (totalsByCategory[category] ?? 0) + expense.amount;
       total += expense.amount;
     }
 

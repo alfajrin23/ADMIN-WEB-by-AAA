@@ -1,9 +1,12 @@
+import { unstable_cache } from "next/cache";
+import { CACHE_TAGS } from "@/lib/cache-tags";
 import {
   COST_CATEGORIES,
   type ExpenseCategoryOption,
   getCostCategoryLabel,
   isHiddenCostCategory,
   mergeExpenseCategoryOptions,
+  PROJECT_STATUSES,
   resolveSummaryCostCategory,
   toCategorySlug,
   WORKER_TEAMS,
@@ -371,6 +374,141 @@ async function getAllSupabaseRows(
 
   return rows;
 }
+
+const SUPABASE_CACHE_REVALIDATE_SECONDS = 60;
+const SUPABASE_PROJECT_SELECT =
+  "id, name, code, client_name, start_date, status, created_at";
+const SUPABASE_EXPENSE_METADATA_SELECT = "project_id, requester_name, description, category";
+const SUPABASE_EXPENSE_FULL_SELECT =
+  "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at";
+const SUPABASE_ATTENDANCE_FULL_SELECT =
+  "id, project_id, worker_name, team_type, specialist_team_name, status, work_days, daily_wage, overtime_hours, overtime_wage, kasbon_amount, reimburse_type, reimburse_amount, attendance_date, notes, created_at";
+
+type CachedSupabaseExpenseMetadata = {
+  categoryRows: Record<string, unknown>[];
+  expenseRows: Record<string, unknown>[];
+};
+
+const getCachedSupabaseProjectRows = unstable_cache(
+  async (): Promise<Record<string, unknown>[]> => {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return [];
+    }
+
+    const { data, error } = await supabase
+      .from("projects")
+      .select(SUPABASE_PROJECT_SELECT)
+      .order("created_at", { ascending: false });
+
+    if (error || !data) {
+      return [];
+    }
+
+    return data;
+  },
+  ["supabase-project-rows"],
+  {
+    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
+    tags: [CACHE_TAGS.projects],
+  },
+);
+
+const getCachedSupabaseExpenseMetadata = unstable_cache(
+  async (): Promise<CachedSupabaseExpenseMetadata> => {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return {
+        categoryRows: [],
+        expenseRows: [],
+      };
+    }
+
+    const [{ data: categoryRows, error: categoryError }, expenseRows] = await Promise.all([
+      supabase.from("expense_categories").select("slug, label").order("created_at", { ascending: true }),
+      getAllSupabaseRows(
+        "project_expenses",
+        SUPABASE_EXPENSE_METADATA_SELECT,
+        (query) => query.order("expense_date", { ascending: false }),
+      ),
+    ]);
+
+    return {
+      categoryRows: !categoryError && Array.isArray(categoryRows) ? categoryRows : [],
+      expenseRows,
+    };
+  },
+  ["supabase-expense-metadata"],
+  {
+    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
+    tags: [CACHE_TAGS.expenses, CACHE_TAGS.expenseCategories],
+  },
+);
+
+const getCachedSupabaseProjectRowById = unstable_cache(
+  async (projectId: string): Promise<Record<string, unknown> | null> => {
+    const supabase = getSupabaseServerClient();
+    if (!supabase || !projectId) {
+      return null;
+    }
+
+    const { data, error } = await supabase
+      .from("projects")
+      .select(SUPABASE_PROJECT_SELECT)
+      .eq("id", projectId)
+      .maybeSingle();
+
+    if (error || !data) {
+      return null;
+    }
+
+    return data;
+  },
+  ["supabase-project-row-by-id"],
+  {
+    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
+    tags: [CACHE_TAGS.projects],
+  },
+);
+
+const getCachedSupabaseProjectExpenseRows = unstable_cache(
+  async (projectId: string): Promise<Record<string, unknown>[]> => {
+    if (!projectId) {
+      return [];
+    }
+
+    return getAllSupabaseRows(
+      "project_expenses",
+      SUPABASE_EXPENSE_FULL_SELECT,
+      (query) => query.eq("project_id", projectId).order("expense_date", { ascending: true }),
+    );
+  },
+  ["supabase-project-expenses-by-project"],
+  {
+    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
+    tags: [CACHE_TAGS.expenses],
+  },
+);
+
+const getCachedSupabaseAllExpenseRows = unstable_cache(
+  async (): Promise<Record<string, unknown>[]> =>
+    getAllSupabaseRows("project_expenses", SUPABASE_EXPENSE_FULL_SELECT),
+  ["supabase-all-expenses"],
+  {
+    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
+    tags: [CACHE_TAGS.expenses],
+  },
+);
+
+const getCachedSupabaseAllAttendanceRows = unstable_cache(
+  async (): Promise<Record<string, unknown>[]> =>
+    getAllSupabaseRows("attendance_records", SUPABASE_ATTENDANCE_FULL_SELECT),
+  ["supabase-all-attendance"],
+  {
+    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
+    tags: [CACHE_TAGS.attendance],
+  },
+);
 
 function buildCategoryTotals(
   expenses: ExpenseEntry[],
@@ -771,6 +909,104 @@ function buildProjectExpenseTotals(expenses: ExpenseEntry[], projects: Project[]
   });
 }
 
+function buildProjectStatusTotals(projects: Project[]) {
+  const totals = new Map<Project["status"], number>();
+  for (const project of projects) {
+    totals.set(project.status, (totals.get(project.status) ?? 0) + 1);
+  }
+
+  return PROJECT_STATUSES.map((item) => ({
+    status: item.value,
+    label: item.label,
+    total: totals.get(item.value) ?? 0,
+  }));
+}
+
+function buildExpenseTrend(expenses: ExpenseEntry[], monthCount = 6) {
+  const formatter = new Intl.DateTimeFormat("id-ID", {
+    month: "short",
+    year: "2-digit",
+  });
+  const now = new Date();
+  const buckets = Array.from({ length: monthCount }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - (monthCount - index - 1), 1);
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    return {
+      key,
+      label: formatter.format(date),
+      totalExpense: 0,
+      transactionCount: 0,
+    };
+  });
+  const bucketByKey = new Map(buckets.map((bucket) => [bucket.key, bucket] as const));
+
+  for (const expense of expenses) {
+    const key = toDateOnly(expense.expenseDate).slice(0, 7);
+    const bucket = bucketByKey.get(key);
+    if (!bucket) {
+      continue;
+    }
+    bucket.totalExpense += expense.amount;
+    bucket.transactionCount += 1;
+  }
+
+  return buckets;
+}
+
+function buildAttendanceTrend(attendance: AttendanceRecord[], dayCount = 14) {
+  const formatter = new Intl.DateTimeFormat("id-ID", {
+    day: "2-digit",
+    month: "short",
+  });
+  const today = new Date();
+  const buckets = Array.from({ length: dayCount }, (_, index) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() - (dayCount - index - 1));
+    const key = date.toISOString().slice(0, 10);
+    return {
+      date: key,
+      label: formatter.format(date),
+      total: 0,
+      hadir: 0,
+      izin: 0,
+      sakit: 0,
+      alpa: 0,
+    };
+  });
+  const bucketByDate = new Map(buckets.map((bucket) => [bucket.date, bucket] as const));
+
+  for (const row of attendance) {
+    const key = toDateOnly(row.attendanceDate);
+    const bucket = bucketByDate.get(key);
+    if (!bucket) {
+      continue;
+    }
+    bucket.total += 1;
+    bucket[row.status] += 1;
+  }
+
+  return buckets;
+}
+
+function buildActiveWorkerCount(attendance: AttendanceRecord[], days = 30) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - Math.max(days - 1, 0));
+  const cutoffDate = cutoff.toISOString().slice(0, 10);
+  const workerNames = new Set<string>();
+
+  for (const row of attendance) {
+    if (toDateOnly(row.attendanceDate) < cutoffDate) {
+      continue;
+    }
+    const normalizedName = row.workerName.trim().toLowerCase();
+    if (normalizedName) {
+      workerNames.add(normalizedName);
+    }
+  }
+
+  return workerNames.size;
+}
+
 function getLatestPaidUntil(
   row: AttendanceRecord,
   resets: Array<{
@@ -950,20 +1186,7 @@ export async function getProjects(): Promise<Project[]> {
   }
 
   if (activeDataSource === "supabase") {
-    const supabase = getSupabaseServerClient();
-    if (!supabase) {
-      return [];
-    }
-
-    const { data, error } = await supabase
-      .from("projects")
-      .select("id, name, code, client_name, start_date, status, created_at")
-      .order("created_at", { ascending: false });
-
-    if (error || !data) {
-      return [];
-    }
-
+    const data = await getCachedSupabaseProjectRows();
     return data.map((row) => mapProject(row));
   }
 
@@ -984,18 +1207,10 @@ export async function getExpenseCategories(): Promise<ExpenseCategoryOption[]> {
   }
 
   if (activeDataSource === "supabase") {
-    const supabase = getSupabaseServerClient();
-    if (!supabase) {
-      return mergeExpenseCategoryOptions();
-    }
-
-    const [{ data: categoryRows, error: categoryError }, expenseRows] = await Promise.all([
-      supabase.from("expense_categories").select("slug, label").order("created_at", { ascending: true }),
-      getAllSupabaseRows("project_expenses", "category"),
-    ]);
+    const { categoryRows, expenseRows } = await getCachedSupabaseExpenseMetadata();
 
     const registeredOptions =
-      !categoryError && Array.isArray(categoryRows)
+      Array.isArray(categoryRows)
         ? categoryRows
             .map((row) => {
               const value = toCategorySlug(String(row.slug ?? ""));
@@ -1087,16 +1302,7 @@ export async function getRequesterSuggestionsByProject(): Promise<Record<string,
   }
 
   if (activeDataSource === "supabase") {
-    const supabase = getSupabaseServerClient();
-    if (!supabase) {
-      return {};
-    }
-
-    const data = await getAllSupabaseRows(
-      "project_expenses",
-      "project_id, requester_name, category",
-      (query) => query.order("expense_date", { ascending: false }),
-    );
+    const { expenseRows: data } = await getCachedSupabaseExpenseMetadata();
     if (data.length === 0) {
       return {};
     }
@@ -1151,16 +1357,7 @@ export async function getDescriptionSuggestionsByProject(): Promise<Record<strin
   }
 
   if (activeDataSource === "supabase") {
-    const supabase = getSupabaseServerClient();
-    if (!supabase) {
-      return {};
-    }
-
-    const data = await getAllSupabaseRows(
-      "project_expenses",
-      "project_id, description, category",
-      (query) => query.order("expense_date", { ascending: false }),
-    );
+    const { expenseRows: data } = await getCachedSupabaseExpenseMetadata();
     if (data.length === 0) {
       return {};
     }
@@ -1344,31 +1541,17 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
   }
 
   if (activeDataSource === "supabase") {
-    const supabase = getSupabaseServerClient();
-    if (!supabase) {
-      return null;
-    }
-
-    const [projectResult, expenseRows] = await Promise.all([
-      supabase
-        .from("projects")
-        .select("id, name, code, client_name, start_date, status, created_at")
-        .eq("id", projectId)
-        .maybeSingle(),
-      getAllSupabaseRows(
-        "project_expenses",
-        "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at",
-        (query) => query.eq("project_id", projectId).order("expense_date", { ascending: true }),
-      ),
+    const [projectRow, expenseRows, categoryOptions] = await Promise.all([
+      getCachedSupabaseProjectRowById(projectId),
+      getCachedSupabaseProjectExpenseRows(projectId),
+      getExpenseCategories(),
     ]);
-    const { data: projectRow, error: projectError } = projectResult;
 
-    if (projectError || !projectRow) {
+    if (!projectRow) {
       return null;
     }
 
     if (expenseRows.length === 0) {
-      const categoryOptions = await getExpenseCategories();
       return {
         project: mapProject(projectRow),
         expenses: [],
@@ -1379,7 +1562,6 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
     const expenses = expenseRows
       .map((row) => mapExpense(row, String(projectRow.name ?? "")))
       .filter((row) => isVisibleExpense(row));
-    const categoryOptions = await getExpenseCategories();
     return {
       project: mapProject(projectRow),
       expenses,
@@ -1454,25 +1636,11 @@ export async function getProjectReportDetail(projectId: string): Promise<{
   }
 
   if (activeDataSource === "supabase") {
-    const supabase = getSupabaseServerClient();
-    if (!supabase) {
-      return null;
-    }
-
-    const [projectResult, expenseRows] = await Promise.all([
-      supabase
-        .from("projects")
-        .select("id, name, code, client_name, start_date, status, created_at")
-        .eq("id", projectId)
-        .maybeSingle(),
-      getAllSupabaseRows(
-        "project_expenses",
-        "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at",
-        (query) => query.eq("project_id", projectId).order("expense_date", { ascending: true }),
-      ),
+    const [projectRow, expenseRows] = await Promise.all([
+      getCachedSupabaseProjectRowById(projectId),
+      getCachedSupabaseProjectExpenseRows(projectId),
     ]);
-    const { data: projectRow, error: projectError } = projectResult;
-    if (projectError || !projectRow) {
+    if (!projectRow) {
       return null;
     }
 
@@ -2166,105 +2334,89 @@ export async function getAttendanceFeed(limit = 20): Promise<AttendanceRecord[]>
   return recap.rows;
 }
 
+function buildDashboardDataFromCollections(input: {
+  projects: Project[];
+  expenses: ExpenseEntry[];
+  attendance: AttendanceRecord[];
+  categoryOptions?: ExpenseCategoryOption[];
+  recentExpenses?: ExpenseEntry[];
+}): DashboardData {
+  const monthKey = new Date().toISOString().slice(0, 7);
+  const visibleExpenses = filterVisibleExpenses(input.expenses);
+  const mergedCategoryOptions =
+    input.categoryOptions && input.categoryOptions.length > 0
+      ? input.categoryOptions
+      : mergeExpenseCategoryOptions(visibleExpenses.map((item) => item.category));
+  const projectStatusTotals = buildProjectStatusTotals(input.projects);
+  const statusTotalsByKey = new Map(projectStatusTotals.map((item) => [item.status, item.total] as const));
+  const recentExpenses = (input.recentExpenses ?? visibleExpenses)
+    .slice()
+    .sort((a, b) => b.expenseDate.localeCompare(a.expenseDate))
+    .slice(0, 8);
+
+  return {
+    totalProjects: input.projects.length,
+    activeProjects: statusTotalsByKey.get("aktif") ?? 0,
+    completedProjects: statusTotalsByKey.get("selesai") ?? 0,
+    delayedProjects: statusTotalsByKey.get("tertunda") ?? 0,
+    activeWorkers: buildActiveWorkerCount(input.attendance),
+    totalExpense: visibleExpenses.reduce((sum, item) => sum + item.amount, 0),
+    monthExpense: visibleExpenses
+      .filter((item) => item.expenseDate.startsWith(monthKey))
+      .reduce((sum, item) => sum + item.amount, 0),
+    totalKasbon: input.attendance.reduce((sum, item) => sum + item.kasbonAmount, 0),
+    categoryTotals: buildCategoryTotals(visibleExpenses, mergedCategoryOptions),
+    categoryTotalsByClient: buildCategoryTotalsByClient(
+      visibleExpenses,
+      input.projects,
+      mergedCategoryOptions,
+    ),
+    recentExpenses,
+    projectExpenseTotals: buildProjectExpenseTotals(visibleExpenses, input.projects),
+    projectCountByClient: buildProjectCountByClient(input.projects),
+    projectStatusTotals,
+    attendanceTrend: buildAttendanceTrend(input.attendance),
+    expenseTrend: buildExpenseTrend(visibleExpenses),
+  };
+}
+
 export async function getDashboardData(): Promise<DashboardData> {
   if (activeDataSource === "excel") {
     const db = readExcelDatabase();
     const projectMap = Object.fromEntries(db.projects.map((project) => [project.id, project.name]));
-    const expenses = filterVisibleExpenses(
-      db.project_expenses.map((row) => mapExpense(row, projectMap[row.project_id])),
-    );
+    const expenses = db.project_expenses.map((row) => mapExpense(row, projectMap[row.project_id]));
     const attendance = db.attendance_records.map((row) => mapAttendance(row));
-    const monthKey = new Date().toISOString().slice(0, 7);
     const projects = db.projects.map((row) => mapProject(row));
 
-    return {
-      totalProjects: db.projects.length,
-      totalExpense: expenses.reduce((sum, item) => sum + item.amount, 0),
-      monthExpense: expenses
-        .filter((item) => item.expenseDate.startsWith(monthKey))
-        .reduce((sum, item) => sum + item.amount, 0),
-      totalKasbon: attendance.reduce((sum, item) => sum + item.kasbonAmount, 0),
-      categoryTotals: buildCategoryTotals(
-        expenses,
-        mergeExpenseCategoryOptions(db.project_expenses.map((row) => row.category)),
-      ),
-      categoryTotalsByClient: buildCategoryTotalsByClient(
-        expenses,
-        projects,
-        mergeExpenseCategoryOptions(db.project_expenses.map((row) => row.category)),
-      ),
-      recentExpenses: expenses
-        .slice()
-        .sort((a, b) => b.expenseDate.localeCompare(a.expenseDate))
-        .slice(0, 8),
-      projectExpenseTotals: buildProjectExpenseTotals(expenses, projects),
-      projectCountByClient: buildProjectCountByClient(projects),
-    };
+    return buildDashboardDataFromCollections({
+      projects,
+      expenses,
+      attendance,
+      categoryOptions: mergeExpenseCategoryOptions(db.project_expenses.map((row) => row.category)),
+    });
   }
 
   if (activeDataSource === "supabase") {
-    const supabase = getSupabaseServerClient();
-    if (!supabase) {
-      return {
-        totalProjects: 0,
-        totalExpense: 0,
-        monthExpense: 0,
-        totalKasbon: 0,
-        categoryTotals: buildCategoryTotals([]),
-        categoryTotalsByClient: [],
-        recentExpenses: [],
-        projectExpenseTotals: [],
-        projectCountByClient: [],
-      };
-    }
-
-    const [{ data: projectRows }, expenseRows, attendanceRows, { data: recentRows }, categoryOptions] =
-      await Promise.all([
-        supabase.from("projects").select("id, name, code, client_name, start_date, status, created_at"),
-        getAllSupabaseRows(
-          "project_expenses",
-          "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at",
-        ),
-        getAllSupabaseRows(
-          "attendance_records",
-          "id, project_id, worker_name, team_type, specialist_team_name, status, work_days, daily_wage, overtime_hours, overtime_wage, kasbon_amount, reimburse_type, reimburse_amount, attendance_date, notes, created_at",
-        ),
-        supabase
-          .from("project_expenses")
-          .select(
-            "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at, projects(name)",
-          )
-          .order("expense_date", { ascending: false })
-          .limit(8),
-        getExpenseCategories(),
-      ]);
+    const [projectRows, expenseRows, attendanceRows, categoryOptions] = await Promise.all([
+      getCachedSupabaseProjectRows(),
+      getCachedSupabaseAllExpenseRows(),
+      getCachedSupabaseAllAttendanceRows(),
+      getExpenseCategories(),
+    ]);
 
     const projectNameMap = Object.fromEntries(
-      (projectRows ?? []).map((row) => [String(row.id), String(row.name ?? "Project")]),
+      projectRows.map((row) => [String(row.id), String(row.name ?? "Project")]),
     );
-    const expenses = filterVisibleExpenses(
-      (expenseRows ?? []).map((row) => mapExpense(row, projectNameMap[String(row.project_id)])),
-    );
-    const attendance = (attendanceRows ?? []).map((row) => mapAttendance(row));
-    const recentExpenses = filterVisibleExpenses(
-      (recentRows ?? []).map((row) => mapExpense(row, resolveJoinName(row.projects))),
-    );
-    const projects = (projectRows ?? []).map((row) => mapProject(row));
-    const monthKey = new Date().toISOString().slice(0, 7);
+    const expenses = expenseRows.map((row) => mapExpense(row, projectNameMap[String(row.project_id)]));
+    const attendance = attendanceRows.map((row) => mapAttendance(row));
+    const projects = projectRows.map((row) => mapProject(row));
 
-    return {
-      totalProjects: projects.length,
-      totalExpense: expenses.reduce((sum, item) => sum + item.amount, 0),
-      monthExpense: expenses
-        .filter((item) => item.expenseDate.startsWith(monthKey))
-        .reduce((sum, item) => sum + item.amount, 0),
-      totalKasbon: attendance.reduce((sum, item) => sum + item.kasbonAmount, 0),
-      categoryTotals: buildCategoryTotals(expenses, categoryOptions),
-      categoryTotalsByClient: buildCategoryTotalsByClient(expenses, projects, categoryOptions),
-      recentExpenses,
-      projectExpenseTotals: buildProjectExpenseTotals(expenses, projects),
-      projectCountByClient: buildProjectCountByClient(projects),
-    };
+    return buildDashboardDataFromCollections({
+      projects,
+      expenses,
+      attendance,
+      categoryOptions,
+    });
   }
 
   if (activeDataSource === "firebase") {
@@ -2277,62 +2429,22 @@ export async function getDashboardData(): Promise<DashboardData> {
     const projectNameMap = Object.fromEntries(
       projectRows.map((row) => [String(row.id ?? ""), String(row.name ?? "Project")]),
     );
-    const expenses = filterVisibleExpenses(
-      expenseRows.map((row) => mapExpense(row, projectNameMap[String(row.project_id ?? "")])),
-    );
+    const expenses = expenseRows.map((row) => mapExpense(row, projectNameMap[String(row.project_id ?? "")]));
     const attendance = attendanceRows.map((row) => mapAttendance(row));
     const projects = projectRows.map((row) => mapProject(row));
-    const recentExpenses = expenses
-      .slice()
-      .sort((a, b) => b.expenseDate.localeCompare(a.expenseDate))
-      .slice(0, 8);
-    const monthKey = new Date().toISOString().slice(0, 7);
 
-    return {
-      totalProjects: projects.length,
-      totalExpense: expenses.reduce((sum, item) => sum + item.amount, 0),
-      monthExpense: expenses
-        .filter((item) => item.expenseDate.startsWith(monthKey))
-        .reduce((sum, item) => sum + item.amount, 0),
-      totalKasbon: attendance.reduce((sum, item) => sum + item.kasbonAmount, 0),
-      categoryTotals: buildCategoryTotals(
-        expenses,
-        mergeExpenseCategoryOptions(expenseRows.map((row) => String(row.category ?? ""))),
-      ),
-      categoryTotalsByClient: buildCategoryTotalsByClient(
-        expenses,
-        projects,
-        mergeExpenseCategoryOptions(expenseRows.map((row) => String(row.category ?? ""))),
-      ),
-      recentExpenses,
-      projectExpenseTotals: buildProjectExpenseTotals(expenses, projects),
-      projectCountByClient: buildProjectCountByClient(projects),
-    };
+    return buildDashboardDataFromCollections({
+      projects,
+      expenses,
+      attendance,
+      categoryOptions: mergeExpenseCategoryOptions(expenseRows.map((row) => String(row.category ?? ""))),
+    });
   }
 
-  const thisMonth = new Date().toISOString().slice(0, 7);
-  const sampleVisibleExpenses = filterVisibleExpenses(sampleExpenses);
-  const monthExpense = sampleExpenses
-    .filter((item) => item.expenseDate.startsWith(thisMonth))
-    .filter((item) => isVisibleExpense(item))
-    .reduce((sum, item) => sum + item.amount, 0);
-
-  return {
-    totalProjects: sampleProjects.length,
-    totalExpense: sampleVisibleExpenses.reduce((sum, item) => sum + item.amount, 0),
-    monthExpense,
-    totalKasbon: sampleAttendance.reduce((sum, item) => sum + item.kasbonAmount, 0),
-    categoryTotals: buildCategoryTotals(
-      sampleVisibleExpenses,
-      mergeExpenseCategoryOptions(sampleVisibleExpenses.map((item) => item.category)),
-    ),
-    categoryTotalsByClient: buildCategoryTotalsByClient(
-      sampleVisibleExpenses,
-      sampleProjects,
-      mergeExpenseCategoryOptions(sampleVisibleExpenses.map((item) => item.category)),
-    ),
-    recentExpenses: sampleVisibleExpenses,
-    projectExpenseTotals: buildProjectExpenseTotals(sampleVisibleExpenses, sampleProjects),
-    projectCountByClient: buildProjectCountByClient(sampleProjects),
-  };
+  return buildDashboardDataFromCollections({
+    projects: sampleProjects,
+    expenses: sampleExpenses,
+    attendance: sampleAttendance,
+    categoryOptions: mergeExpenseCategoryOptions(sampleExpenses.map((item) => item.category)),
+  });
 }

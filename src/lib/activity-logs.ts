@@ -19,7 +19,7 @@ export type ActivityLog = {
 };
 
 type CreateActivityLogInput = {
-  actor: AppUser;
+  actor: Pick<AppUser, "id" | "fullName" | "username" | "role" | "createdAt">;
   actionType: string;
   module: string;
   entityId?: string | null;

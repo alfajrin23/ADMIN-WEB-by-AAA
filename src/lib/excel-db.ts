@@ -1963,6 +1963,42 @@ export function updateExcelProject(payload: {
   return updated;
 }
 
+export function updateManyExcelProjects(
+  projectIds: string[],
+  patch: Partial<{
+    client_name: string | null;
+    start_date: string | null;
+    status: ProjectStatus;
+  }>,
+) {
+  const targets = new Set(projectIds.map((item) => item.trim()).filter((item) => item.length > 0));
+  if (targets.size === 0 || Object.keys(patch).length === 0) {
+    return 0;
+  }
+
+  const db = readExcelDatabase();
+  let updatedCount = 0;
+  db.projects = db.projects.map((row) => {
+    if (!targets.has(row.id)) {
+      return row;
+    }
+
+    updatedCount += 1;
+    return {
+      ...row,
+      ...(patch.client_name !== undefined ? { client_name: patch.client_name } : {}),
+      ...(patch.start_date !== undefined ? { start_date: patch.start_date } : {}),
+      ...(patch.status !== undefined ? { status: patch.status } : {}),
+    };
+  });
+
+  if (updatedCount > 0) {
+    writeDatabase(db);
+  }
+
+  return updatedCount;
+}
+
 export function deleteExcelProject(projectId: string) {
   const db = readExcelDatabase();
   const beforeCount = db.projects.length;
@@ -2121,6 +2157,24 @@ export function deleteExcelExpense(expenseId: string) {
   db.project_expenses = nextRows;
   writeDatabase(db);
   return true;
+}
+
+export function deleteManyExcelExpenses(expenseIds: string[]) {
+  const targets = new Set(expenseIds.map((item) => item.trim()).filter((item) => item.length > 0));
+  if (targets.size === 0) {
+    return 0;
+  }
+
+  const db = readExcelDatabase();
+  const nextRows = db.project_expenses.filter((row) => !targets.has(row.id));
+  const deletedCount = db.project_expenses.length - nextRows.length;
+  if (deletedCount <= 0) {
+    return 0;
+  }
+
+  db.project_expenses = nextRows;
+  writeDatabase(db);
+  return deletedCount;
 }
 
 export function insertExcelAttendance(payload: {

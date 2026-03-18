@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { requireEditorUser } from "@/lib/auth";
+import { requireAttendanceViewerUser } from "@/lib/auth";
 import { WORKER_TEAM_LABEL } from "@/lib/constants";
 import { getAttendanceById } from "@/lib/data";
 import { formatCurrency, formatDate } from "@/lib/format";
@@ -10,7 +10,7 @@ type ViewAttendancePageProps = {
 };
 
 export default async function ViewAttendancePage({ searchParams }: ViewAttendancePageProps) {
-  await requireEditorUser();
+  await requireAttendanceViewerUser();
   const params = await searchParams;
   const attendanceId = typeof params.id === "string" ? params.id : "";
   const attendance = await getAttendanceById(attendanceId);

@@ -15,7 +15,12 @@ import {
 import { ReimburseLinesInput } from "@/components/reimburse-lines-input";
 import { RupiahInput } from "@/components/rupiah-input";
 import { WORKER_TEAM_LABEL, WORKER_TEAMS } from "@/lib/constants";
-import { canManageData, requireAuthUser } from "@/lib/auth";
+import {
+  canAccessAttendance,
+  canExportReports,
+  canManageAttendance,
+  requireAuthUser,
+} from "@/lib/auth";
 import { getProjects, getWageRecap } from "@/lib/data";
 import { formatCurrency } from "@/lib/format";
 import { activeDataSource, getStorageLabel } from "@/lib/storage";
@@ -82,8 +87,9 @@ function createAttendanceHref(params: {
 
 export default async function AttendancePage({ searchParams }: AttendancePageProps) {
   const user = await requireAuthUser();
-  const canEdit = canManageData(user.role);
-  if (!canEdit) {
+  const canEdit = canManageAttendance(user);
+  const canExport = canExportReports(user);
+  if (!canAccessAttendance(user)) {
     redirect("/");
   }
 
@@ -96,8 +102,14 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
   const selectedSet = new Set(selectedIds);
 
   const modalParam = typeof params.modal === "string" ? params.modal : "";
-  const activeModal: ModalType | null =
+  let activeModal: ModalType | null =
     modalParam === "rekap-export" || modalParam === "attendance-new" ? modalParam : null;
+  if (activeModal === "rekap-export" && !canExport) {
+    activeModal = null;
+  }
+  if (activeModal === "attendance-new" && !canEdit) {
+    activeModal = null;
+  }
 
   const [projects, wageRecap] = await Promise.all([
     getProjects(),
@@ -209,41 +221,53 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
         </section>
       ) : null}
 
-      <section className="panel p-5">
+      <section className="soft-card p-4 md:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">Filter Rekap</h2>
-            <p className="text-xs text-slate-500">
+            <h2 className="section-title">Filter Rekap</h2>
+            <p className="section-description">
               Pilih periode dan project untuk menyesuaikan daftar absensi.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2 text-xs font-semibold">
-            <span className="rounded-lg bg-slate-100 px-3 py-2 text-slate-700">
-              Total Upah: {formatCurrency(wageRecap.totalDailyWage)}
-            </span>
-            <span className="rounded-lg bg-cyan-100 px-3 py-2 text-cyan-700">
-              Total Lembur: {formatCurrency(wageRecap.totalOvertimePay)}
-            </span>
-            <span className="rounded-lg bg-amber-100 px-3 py-2 text-amber-700">
-              Total Kasbon: {formatCurrency(wageRecap.totalKasbon)}
-            </span>
-            <span className="rounded-lg bg-emerald-100 px-3 py-2 text-emerald-700">
-              Harus Dibayar: {formatCurrency(wageRecap.totalNetPay)}
-            </span>
+          <div className="summary-strip summary-strip--compact sm:min-w-[420px]">
+            <article className="soft-card-muted summary-card">
+              <span className="summary-label">Total Upah</span>
+              <span className="summary-note mt-1 block text-sm font-semibold text-slate-900">
+                Total Upah: {formatCurrency(wageRecap.totalDailyWage)}
+              </span>
+            </article>
+            <article className="soft-card-muted summary-card">
+              <span className="summary-label">Lembur</span>
+              <span className="summary-note mt-1 block text-sm font-semibold text-slate-900">
+                Total Lembur: {formatCurrency(wageRecap.totalOvertimePay)}
+              </span>
+            </article>
+            <article className="soft-card-muted summary-card">
+              <span className="summary-label">Kasbon</span>
+              <span className="summary-note mt-1 block text-sm font-semibold text-slate-900">
+                Total Kasbon: {formatCurrency(wageRecap.totalKasbon)}
+              </span>
+            </article>
+            <article className="soft-card-muted summary-card">
+              <span className="summary-label">Net Pay</span>
+              <span className="summary-note mt-1 block text-sm font-semibold text-slate-900">
+                Harus Dibayar: {formatCurrency(wageRecap.totalNetPay)}
+              </span>
+            </article>
           </div>
         </div>
 
-        <form method="get" className="mt-4 grid gap-3 sm:grid-cols-3">
+        <form method="get" className="toolbar-card toolbar-card--dense mt-4 filter-grid sm:grid-cols-3">
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">Dari</label>
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Dari</label>
             <input type="date" name="from" defaultValue={from} />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">Sampai</label>
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Sampai</label>
             <input type="date" name="to" defaultValue={to} />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">Project</label>
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Project</label>
             <select name="project" defaultValue={projectFilter}>
               <option value="">Semua Project</option>
               {projects.map((project) => (
@@ -253,31 +277,33 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
               ))}
             </select>
           </div>
-          <button className="inline-flex w-full items-center justify-center rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 sm:col-span-3 sm:w-max">
+          <button className="button-primary button-sm sm:col-span-3 sm:w-max">
             Terapkan Filter
           </button>
         </form>
       </section>
 
-      <section className="panel p-5">
+      <section className="soft-card p-4 md:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">Daftar Data Absensi</h2>
-            <p className="text-xs text-slate-500">
+            <h2 className="section-title">Daftar Data Absensi</h2>
+            <p className="section-description">
               Data reguler dipisah per project, tim spesialis dipisah lintas project.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Link
-              href={openAttendanceModalHref}
-              data-ui-button="true"
-              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 sm:w-auto"
-            >
-              <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
-                <PlusIcon />
-              </span>
-              Input Absensi
-            </Link>
+            {canEdit ? (
+              <Link
+                href={openAttendanceModalHref}
+                data-ui-button="true"
+                className="button-primary button-sm sm:w-auto"
+              >
+                <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
+                  <PlusIcon />
+                </span>
+                Input Absensi
+              </Link>
+            ) : null}
             <form
               id="attendance-recap-selection-form"
               action="/attendance"
@@ -289,20 +315,22 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
               <input type="hidden" name="project" value={projectFilter} />
               <input type="hidden" name="modal" value="rekap-export" />
             </form>
-            <button
-              form="attendance-recap-selection-form"
-              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-600 sm:w-auto"
-            >
-              Rekap / Export
-            </button>
+            {canExport ? (
+              <button
+                form="attendance-recap-selection-form"
+                className="button-secondary button-sm sm:w-auto"
+              >
+                Rekap / Export
+              </button>
+            ) : null}
           </div>
         </div>
 
         <div className="mt-4 space-y-4">
           {groupedAttendance.map((group) => (
-            <article key={group.projectId} className="rounded-xl border border-slate-200 p-4">
+            <article key={group.projectId} className="soft-card p-3.5 md:p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="text-xs font-semibold text-slate-900">{group.projectName}</h3>
+                <h3 className="text-sm font-semibold text-slate-900">{group.projectName}</h3>
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="text-xs text-slate-500">{group.rows.length} data</p>
                   <AttendanceProjectSelectionToggle
@@ -312,23 +340,24 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                 </div>
               </div>
 
-              <div className="mt-3">
-                <table className="w-full table-fixed text-[11px] leading-5 sm:text-xs">
+              <div className="mt-3 table-card">
+                <div className="data-table-shell">
+                <table className="data-table data-table--sticky data-table--compact min-w-[860px] table-fixed text-[11px] leading-5 sm:text-xs">
                   <thead>
                     <tr className="text-left text-slate-500">
-                      <th className="w-10 pb-2 text-center font-medium">Pilih</th>
-                      <th className="pb-2 font-medium">Pekerja</th>
-                      <th className="pb-2 font-medium">Kehadiran</th>
-                      <th className="pb-2 font-medium">Tarif</th>
-                      <th className="pb-2 font-medium">Pembayaran</th>
-                      <th className="w-48 pb-2 text-right font-medium">Aksi</th>
+                      <th className="w-10 text-center">Pilih</th>
+                      <th>Pekerja</th>
+                      <th>Kehadiran</th>
+                      <th>Tarif</th>
+                      <th>Pembayaran</th>
+                      <th className="w-48 text-right">Aksi</th>
                     </tr>
                   </thead>
                   <tbody>
                     {group.rows.map((item) => {
                       return (
-                        <tr key={item.id} className="border-t border-slate-100 align-top">
-                          <td className="w-10 py-2 pr-1 text-center">
+                        <tr key={item.id} className="align-top">
+                          <td className="w-10 text-center">
                             <input
                               type="checkbox"
                               name="selected"
@@ -340,7 +369,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                               aria-label={`Pilih ${item.workerName}`}
                             />
                           </td>
-                          <td className="py-2 pr-2">
+                          <td>
                             <p className="font-semibold text-slate-900">{item.workerName}</p>
                             <p className="text-slate-600">
                               {item.teamType === "spesialis"
@@ -348,53 +377,57 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                                 : WORKER_TEAM_LABEL[item.teamType]}
                             </p>
                           </td>
-                          <td className="py-2 pr-2 text-slate-700">
+                          <td className="text-slate-700">
                             <p>Hari kerja: {item.workDays}</p>
                             <p>Lembur: {formatHours(item.overtimeHours)} jam</p>
                           </td>
-                          <td className="py-2 pr-2 text-slate-700">
+                          <td className="text-slate-700">
                             <p>Harian: {formatCurrency(item.dailyWage)}</p>
                             <p>Lembur/Jam: {formatCurrency(item.overtimeWage)}</p>
                           </td>
-                          <td className="py-2 pr-2 text-slate-700">
+                          <td className="text-slate-700">
                             <p>Kasbon: {formatCurrency(item.kasbonAmount)}</p>
                             <p className="font-semibold text-emerald-700">
                               Net: {formatCurrency(item.netPay)}
                             </p>
                           </td>
-                          <td className="w-48 py-2">
+                          <td className="w-48">
                             <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
                               <Link
                                 href={`/attendance/view?id=${item.id}`}
-                                className="inline-flex items-center justify-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 sm:min-w-[96px] sm:justify-start sm:px-2.5 sm:text-xs"
+                                className="button-secondary button-xs sm:min-w-[96px] sm:justify-start"
                               >
                                 <span className="btn-icon bg-blue-100 text-blue-700">
                                   <EyeIcon />
                                 </span>
                                 Lihat
                               </Link>
-                              <Link
-                                href={`/attendance/edit?id=${item.id}`}
-                                className="inline-flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 sm:min-w-[96px] sm:justify-start sm:px-2.5 sm:text-xs"
-                              >
-                                <span className="btn-icon bg-emerald-100 text-emerald-700">
-                                  <EditIcon />
-                                </span>
-                                Edit
-                              </Link>
-                              <form action={deleteAttendanceAction}>
-                                <input type="hidden" name="attendance_id" value={item.id} />
-                                <input type="hidden" name="return_to" value={returnToAttendance} />
-                                <ConfirmActionButton
-                                  className="inline-flex items-center justify-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 sm:min-w-[96px] sm:justify-start sm:px-2.5 sm:text-xs"
-                                  modalDescription="Yakin ingin menghapus data absensi ini?"
-                                >
-                                  <span className="btn-icon bg-rose-100 text-rose-700">
-                                    <TrashIcon />
-                                  </span>
-                                  Hapus
-                                </ConfirmActionButton>
-                              </form>
+                              {canEdit ? (
+                                <>
+                                  <Link
+                                    href={`/attendance/edit?id=${item.id}`}
+                                    className="button-soft button-xs sm:min-w-[96px] sm:justify-start"
+                                  >
+                                    <span className="btn-icon bg-emerald-100 text-emerald-700">
+                                      <EditIcon />
+                                    </span>
+                                    Edit
+                                  </Link>
+                                  <form action={deleteAttendanceAction}>
+                                    <input type="hidden" name="attendance_id" value={item.id} />
+                                    <input type="hidden" name="return_to" value={returnToAttendance} />
+                                    <ConfirmActionButton
+                                      className="button-danger button-xs sm:min-w-[96px] sm:justify-start"
+                                      modalDescription="Yakin ingin menghapus data absensi ini?"
+                                    >
+                                      <span className="btn-icon bg-rose-100 text-rose-700">
+                                        <TrashIcon />
+                                      </span>
+                                      Hapus
+                                    </ConfirmActionButton>
+                                  </form>
+                                </>
+                              ) : null}
                             </div>
                           </td>
                         </tr>
@@ -402,6 +435,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                     })}
                   </tbody>
                 </table>
+                </div>
               </div>
             </article>
           ))}
@@ -409,10 +443,10 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
           {groupedSpecialistAttendance.map((group) => (
             <article
               key={group.teamKey}
-              className="rounded-xl border border-cyan-200 bg-cyan-50/40 p-4"
+              className="soft-card p-3.5 md:p-4"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="text-xs font-semibold text-cyan-900">
+                <h3 className="text-sm font-semibold text-cyan-900">
                   Tim Spesialis - {group.teamLabel}
                 </h3>
                 <div className="flex flex-wrap items-center gap-2">
@@ -424,22 +458,23 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                 </div>
               </div>
 
-              <div className="mt-3">
-                <table className="w-full table-fixed text-[11px] leading-5 sm:text-xs">
+              <div className="mt-3 table-card">
+                <div className="data-table-shell">
+                <table className="data-table data-table--sticky data-table--compact min-w-[860px] table-fixed text-[11px] leading-5 sm:text-xs">
                   <thead>
                     <tr className="text-left text-slate-500">
-                      <th className="w-10 pb-2 text-center font-medium">Pilih</th>
-                      <th className="pb-2 font-medium">Pekerja</th>
-                      <th className="pb-2 font-medium">Kehadiran</th>
-                      <th className="pb-2 font-medium">Tarif</th>
-                      <th className="pb-2 font-medium">Pembayaran</th>
-                      <th className="w-48 pb-2 text-right font-medium">Aksi</th>
+                      <th className="w-10 text-center">Pilih</th>
+                      <th>Pekerja</th>
+                      <th>Kehadiran</th>
+                      <th>Tarif</th>
+                      <th>Pembayaran</th>
+                      <th className="w-48 text-right">Aksi</th>
                     </tr>
                   </thead>
                   <tbody>
                     {group.rows.map((item) => (
-                      <tr key={item.id} className="border-t border-cyan-100 align-top">
-                        <td className="w-10 py-2 pr-1 text-center">
+                      <tr key={item.id} className="align-top">
+                        <td className="w-10 text-center">
                           <input
                             type="checkbox"
                             name="selected"
@@ -451,7 +486,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                             aria-label={`Pilih ${item.workerName}`}
                           />
                         </td>
-                        <td className="py-2 pr-2">
+                        <td>
                           <p className="font-semibold text-slate-900">{item.workerName}</p>
                           <p className="text-cyan-800">
                             Tim: {item.specialistTeamName ?? "Tim Spesialis"}
@@ -460,59 +495,64 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                             Project: {item.projectName ?? "Tanpa Project"}
                           </p>
                         </td>
-                        <td className="py-2 pr-2 text-slate-700">
+                        <td className="text-slate-700">
                           <p>Hari kerja: {item.workDays}</p>
                           <p>Lembur: {formatHours(item.overtimeHours)} jam</p>
                         </td>
-                        <td className="py-2 pr-2 text-slate-700">
+                        <td className="text-slate-700">
                           <p>Harian: {formatCurrency(item.dailyWage)}</p>
                           <p>Lembur/Jam: {formatCurrency(item.overtimeWage)}</p>
                         </td>
-                        <td className="py-2 pr-2 text-slate-700">
+                        <td className="text-slate-700">
                           <p>Kasbon: {formatCurrency(item.kasbonAmount)}</p>
                           <p className="font-semibold text-emerald-700">
                             Net: {formatCurrency(item.netPay)}
                           </p>
                         </td>
-                        <td className="w-48 py-2">
+                        <td className="w-48">
                           <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
                             <Link
                               href={`/attendance/view?id=${item.id}`}
-                              className="inline-flex items-center justify-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 sm:min-w-[96px] sm:justify-start sm:px-2.5 sm:text-xs"
+                              className="button-secondary button-xs sm:min-w-[96px] sm:justify-start"
                             >
                               <span className="btn-icon bg-blue-100 text-blue-700">
                                 <EyeIcon />
                               </span>
                               Lihat
                             </Link>
-                            <Link
-                              href={`/attendance/edit?id=${item.id}`}
-                              className="inline-flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 sm:min-w-[96px] sm:justify-start sm:px-2.5 sm:text-xs"
-                            >
-                              <span className="btn-icon bg-emerald-100 text-emerald-700">
-                                <EditIcon />
-                              </span>
-                              Edit
-                            </Link>
-                            <form action={deleteAttendanceAction}>
-                              <input type="hidden" name="attendance_id" value={item.id} />
-                              <input type="hidden" name="return_to" value={returnToAttendance} />
-                              <ConfirmActionButton
-                                className="inline-flex items-center justify-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 sm:min-w-[96px] sm:justify-start sm:px-2.5 sm:text-xs"
-                                modalDescription="Yakin ingin menghapus data absensi ini?"
-                              >
-                                <span className="btn-icon bg-rose-100 text-rose-700">
-                                  <TrashIcon />
-                                </span>
-                                Hapus
-                              </ConfirmActionButton>
-                            </form>
+                            {canEdit ? (
+                              <>
+                                <Link
+                                  href={`/attendance/edit?id=${item.id}`}
+                                  className="button-soft button-xs sm:min-w-[96px] sm:justify-start"
+                                >
+                                  <span className="btn-icon bg-emerald-100 text-emerald-700">
+                                    <EditIcon />
+                                  </span>
+                                  Edit
+                                </Link>
+                                <form action={deleteAttendanceAction}>
+                                  <input type="hidden" name="attendance_id" value={item.id} />
+                                  <input type="hidden" name="return_to" value={returnToAttendance} />
+                                  <ConfirmActionButton
+                                    className="button-danger button-xs sm:min-w-[96px] sm:justify-start"
+                                    modalDescription="Yakin ingin menghapus data absensi ini?"
+                                  >
+                                    <span className="btn-icon bg-rose-100 text-rose-700">
+                                      <TrashIcon />
+                                    </span>
+                                    Hapus
+                                  </ConfirmActionButton>
+                                </form>
+                              </>
+                            ) : null}
                           </div>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+                </div>
               </div>
             </article>
           ))}

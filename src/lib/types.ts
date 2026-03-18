@@ -152,6 +152,10 @@ export type ProjectExpenseSearchResult = {
 
 export type DashboardData = {
   totalProjects: number;
+  activeProjects: number;
+  completedProjects: number;
+  delayedProjects: number;
+  activeWorkers: number;
   totalExpense: number;
   monthExpense: number;
   totalKasbon: number;
@@ -169,5 +173,25 @@ export type DashboardData = {
   projectCountByClient: Array<{
     clientName: string;
     count: number;
+  }>;
+  projectStatusTotals: Array<{
+    status: ProjectStatus;
+    label: string;
+    total: number;
+  }>;
+  attendanceTrend: Array<{
+    date: string;
+    label: string;
+    total: number;
+    hadir: number;
+    izin: number;
+    sakit: number;
+    alpa: number;
+  }>;
+  expenseTrend: Array<{
+    key: string;
+    label: string;
+    totalExpense: number;
+    transactionCount: number;
   }>;
 };

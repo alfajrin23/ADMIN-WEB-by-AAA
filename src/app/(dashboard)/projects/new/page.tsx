@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
-import { requireEditorUser } from "@/lib/auth";
+import { requireProjectEditorUser } from "@/lib/auth";
 
 export default async function NewProjectPage() {
-  await requireEditorUser();
+  await requireProjectEditorUser();
   redirect("/projects?modal=project-new");
 }

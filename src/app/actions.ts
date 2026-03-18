@@ -1,10 +1,17 @@
 "use server";
 
 import { randomUUID } from "node:crypto";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { createActivityLog } from "@/lib/activity-logs";
-import { canImportData, canManageData, requireAuthUser } from "@/lib/auth";
+import {
+  canImportData,
+  canManageAttendance,
+  canManageModule,
+  canManageProjects,
+  requireAuthUser,
+} from "@/lib/auth";
+import { CACHE_TAGS } from "@/lib/cache-tags";
 import {
   type AttendanceStatus,
   ATTENDANCE_STATUSES,
@@ -23,6 +30,7 @@ import {
 import {
   deleteExcelAttendance,
   deleteExcelExpense,
+  deleteManyExcelExpenses,
   deleteManyExcelProjects,
   deleteExcelProject,
   importTemplateExcelDatabase,
@@ -37,6 +45,7 @@ import {
   updateExcelExpense,
   updateManyExcelExpenseYears,
   updateManyExcelExpenses,
+  updateManyExcelProjects,
   updateExcelProject,
 } from "@/lib/excel-db";
 import { getFirestoreServerClient } from "@/lib/firebase";
@@ -124,17 +133,47 @@ function revalidateProjectPages() {
   revalidatePath("/projects");
 }
 
+function revalidateProjectCache() {
+  revalidateTag(CACHE_TAGS.projects, "max");
+}
+
+function revalidateExpenseCache() {
+  revalidateTag(CACHE_TAGS.expenses, "max");
+  revalidateTag(CACHE_TAGS.expenseCategories, "max");
+}
+
+function revalidateAttendanceCache() {
+  revalidateTag(CACHE_TAGS.attendance, "max");
+  revalidateTag(CACHE_TAGS.payrollResets, "max");
+}
+
 async function requireEditorActionUser() {
   const user = await requireAuthUser();
-  if (!canManageData(user.role)) {
+  if (!canManageProjects(user)) {
     redirect("/");
   }
   return user;
 }
 
-async function requireDevActionUser() {
+async function requireAttendanceActionUser() {
   const user = await requireAuthUser();
-  if (!canImportData(user.role)) {
+  if (!canManageAttendance(user)) {
+    redirect("/");
+  }
+  return user;
+}
+
+async function requireImportActionUser() {
+  const user = await requireAuthUser();
+  if (!canImportData(user)) {
+    redirect("/");
+  }
+  return user;
+}
+
+async function requireLogsActionUser() {
+  const user = await requireAuthUser();
+  if (!canManageModule(user, "logs")) {
     redirect("/");
   }
   return user;
@@ -608,8 +647,10 @@ export async function createProjectAction(formData: FormData) {
     if (!supabase) {
       return;
     }
-    await upsertSupabaseCategories(supabase, initialCategories);
-    await supabase.from("projects").insert(payload);
+    await Promise.all([
+      upsertSupabaseCategories(supabase, initialCategories),
+      supabase.from("projects").insert(payload),
+    ]);
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
     if (!firestore) {
@@ -628,6 +669,8 @@ export async function createProjectAction(formData: FormData) {
   }
 
   revalidateProjectPages();
+  revalidateProjectCache();
+  revalidateExpenseCache();
   revalidatePath("/attendance");
   revalidatePath("/logs");
   await createActivityLog({
@@ -712,6 +755,7 @@ export async function updateProjectAction(formData: FormData) {
   }
 
   revalidateProjectPages();
+  revalidateProjectCache();
   revalidatePath("/attendance");
   revalidatePath("/logs");
   await createActivityLog({
@@ -726,6 +770,95 @@ export async function updateProjectAction(formData: FormData) {
       client_name: payload.client_name,
       start_date: payload.start_date,
       status: payload.status,
+    },
+  });
+  if (returnTo) {
+    redirect(returnTo);
+  }
+}
+
+export async function updateManyProjectsAction(formData: FormData) {
+  const actor = await requireEditorActionUser();
+  const projectIds = getStringList(formData, "project");
+  if (projectIds.length === 0) {
+    return;
+  }
+
+  const returnTo = getReturnTo(formData);
+  const applyStatus = isChecked(formData, "apply_status");
+  const applyClientName = isChecked(formData, "apply_client_name");
+  const applyStartDate = isChecked(formData, "apply_start_date");
+
+  const patch: Partial<{
+    client_name: string | null;
+    start_date: string | null;
+    status: ProjectStatus;
+  }> = {};
+
+  if (applyStatus) {
+    const status = getString(formData, "status");
+    patch.status = PROJECT_STATUSES.some((item) => item.value === status)
+      ? (status as ProjectStatus)
+      : "aktif";
+  }
+  if (applyClientName) {
+    patch.client_name = getString(formData, "client_name") || null;
+  }
+  if (applyStartDate) {
+    patch.start_date = getString(formData, "start_date") || null;
+  }
+
+  const updatedFields = Object.keys(patch);
+  if (updatedFields.length === 0) {
+    return;
+  }
+
+  if (activeDataSource === "excel") {
+    updateManyExcelProjects(projectIds, patch);
+  } else if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return;
+    }
+    await supabase.from("projects").update(patch).in("id", projectIds);
+  } else if (activeDataSource === "firebase") {
+    const firestore = getFirestoreServerClient();
+    if (!firestore) {
+      return;
+    }
+
+    await runFirebaseWriteSafely(async () => {
+      let batch = firestore.batch();
+      let count = 0;
+      for (const projectId of projectIds) {
+        batch.set(firestore.collection("projects").doc(projectId), patch, { merge: true });
+        count += 1;
+        if (count >= 400) {
+          await batch.commit();
+          batch = firestore.batch();
+          count = 0;
+        }
+      }
+      if (count > 0) {
+        await batch.commit();
+      }
+    });
+  } else {
+    return;
+  }
+
+  revalidateProjectPages();
+  revalidateProjectCache();
+  revalidatePath("/attendance");
+  revalidatePath("/logs");
+  await createActivityLog({
+    actor,
+    actionType: "update_bulk",
+    module: "project",
+    description: `Memperbarui ${projectIds.length} project secara massal.`,
+    payload: {
+      project_ids: projectIds,
+      fields: updatedFields,
     },
   });
   if (returnTo) {
@@ -748,8 +881,6 @@ export async function deleteProjectAction(formData: FormData) {
     if (!supabase) {
       return;
     }
-    await supabase.from("project_expenses").delete().eq("project_id", projectId);
-    await supabase.from("attendance_records").delete().eq("project_id", projectId);
     await supabase.from("projects").delete().eq("id", projectId);
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
@@ -769,6 +900,9 @@ export async function deleteProjectAction(formData: FormData) {
   }
 
   revalidateProjectPages();
+  revalidateProjectCache();
+  revalidateExpenseCache();
+  revalidateAttendanceCache();
   revalidatePath("/attendance");
   revalidatePath("/logs");
   await createActivityLog({
@@ -799,12 +933,6 @@ export async function deleteSelectedProjectsAction(formData: FormData) {
     if (!supabase) {
       return;
     }
-
-    await Promise.all([
-      supabase.from("project_expenses").delete().in("project_id", projectIds),
-      supabase.from("attendance_records").delete().in("project_id", projectIds),
-      supabase.from("payroll_resets").delete().in("project_id", projectIds),
-    ]);
     await supabase.from("projects").delete().in("id", projectIds);
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
@@ -829,6 +957,9 @@ export async function deleteSelectedProjectsAction(formData: FormData) {
   }
 
   revalidateProjectPages();
+  revalidateProjectCache();
+  revalidateExpenseCache();
+  revalidateAttendanceCache();
   revalidatePath("/attendance");
   revalidatePath("/logs");
   await createActivityLog({
@@ -948,23 +1079,25 @@ export async function createExpenseAction(formData: FormData) {
     if (!supabase) {
       return;
     }
-    await upsertSupabaseCategories(supabase, [basePayload.category]);
-    await supabase.from("project_expenses").insert(
-      projectIds.map((projectId) => ({
-        project_id: projectId,
-        category: basePayload.category,
-        specialist_type: basePayload.specialist_type,
-        requester_name: basePayload.requester_name,
-        description: basePayload.description,
-        recipient_name: basePayload.recipient_name,
-        quantity: basePayload.quantity,
-        unit_label: basePayload.unit_label,
-        usage_info: basePayload.usage_info,
-        unit_price: basePayload.unit_price,
-        amount: basePayload.amount,
-        expense_date: basePayload.expense_date,
-      })),
-    );
+    await Promise.all([
+      upsertSupabaseCategories(supabase, [basePayload.category]),
+      supabase.from("project_expenses").insert(
+        projectIds.map((projectId) => ({
+          project_id: projectId,
+          category: basePayload.category,
+          specialist_type: basePayload.specialist_type,
+          requester_name: basePayload.requester_name,
+          description: basePayload.description,
+          recipient_name: basePayload.recipient_name,
+          quantity: basePayload.quantity,
+          unit_label: basePayload.unit_label,
+          usage_info: basePayload.usage_info,
+          unit_price: basePayload.unit_price,
+          amount: basePayload.amount,
+          expense_date: basePayload.expense_date,
+        })),
+      ),
+    ]);
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
     if (!firestore) {
@@ -988,6 +1121,7 @@ export async function createExpenseAction(formData: FormData) {
   }
 
   revalidateProjectPages();
+  revalidateExpenseCache();
   revalidatePath("/logs");
   await createActivityLog({
     actor,
@@ -1096,6 +1230,7 @@ export async function updateExpenseAction(formData: FormData) {
   }
 
   revalidateProjectPages();
+  revalidateExpenseCache();
   revalidatePath("/logs");
   await createActivityLog({
     actor,
@@ -1289,6 +1424,7 @@ export async function updateManyExpensesAction(formData: FormData) {
   }
 
   revalidateProjectPages();
+  revalidateExpenseCache();
   revalidatePath("/logs");
   await createActivityLog({
     actor,
@@ -1298,6 +1434,66 @@ export async function updateManyExpensesAction(formData: FormData) {
     payload: {
       expense_ids: expenseIds,
       fields: updateFields,
+    },
+  });
+  if (returnTo) {
+    redirect(returnTo);
+  }
+}
+
+export async function deleteManyExpensesAction(formData: FormData) {
+  const actor = await requireEditorActionUser();
+  const expenseIds = getStringList(formData, "expense_id");
+  if (expenseIds.length === 0) {
+    return;
+  }
+
+  const returnTo = getReturnTo(formData);
+
+  if (activeDataSource === "excel") {
+    deleteManyExcelExpenses(expenseIds);
+  } else if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return;
+    }
+    await supabase.from("project_expenses").delete().in("id", expenseIds);
+  } else if (activeDataSource === "firebase") {
+    const firestore = getFirestoreServerClient();
+    if (!firestore) {
+      return;
+    }
+
+    await runFirebaseWriteSafely(async () => {
+      let batch = firestore.batch();
+      let count = 0;
+      for (const expenseId of expenseIds) {
+        batch.delete(firestore.collection("project_expenses").doc(expenseId));
+        count += 1;
+        if (count >= 400) {
+          await batch.commit();
+          batch = firestore.batch();
+          count = 0;
+        }
+      }
+      if (count > 0) {
+        await batch.commit();
+      }
+    });
+  } else {
+    return;
+  }
+
+  revalidateProjectPages();
+  revalidateExpenseCache();
+  revalidatePath("/logs");
+  await createActivityLog({
+    actor,
+    actionType: "delete_bulk",
+    module: "expense",
+    description: `Menghapus ${expenseIds.length} data biaya secara massal.`,
+    payload: {
+      expense_ids: expenseIds,
     },
   });
   if (returnTo) {
@@ -1334,6 +1530,7 @@ export async function deleteExpenseAction(formData: FormData) {
   }
 
   revalidateProjectPages();
+  revalidateExpenseCache();
   revalidatePath("/logs");
   await createActivityLog({
     actor,
@@ -1348,7 +1545,7 @@ export async function deleteExpenseAction(formData: FormData) {
 }
 
 export async function importExcelTemplateAction(formData: FormData) {
-  const actor = await requireDevActionUser();
+  const actor = await requireImportActionUser();
   const returnTo = getReturnTo(formData);
   const uploadedFile = formData.get("template_file");
   let uploadedBuffer: Uint8Array | null = null;
@@ -1386,6 +1583,9 @@ export async function importExcelTemplateAction(formData: FormData) {
   }
 
   revalidateProjectPages();
+  revalidateProjectCache();
+  revalidateExpenseCache();
+  revalidateAttendanceCache();
   revalidatePath("/attendance");
   revalidatePath("/logs");
   await createActivityLog({
@@ -1405,7 +1605,7 @@ export async function importExcelTemplateAction(formData: FormData) {
 }
 
 export async function createAttendanceAction(formData: FormData) {
-  const actor = await requireEditorActionUser();
+  const actor = await requireAttendanceActionUser();
   const projectId = getString(formData, "project_id");
   const workerName = getString(formData, "worker_name");
   if (!projectId || !workerName) {
@@ -1498,6 +1698,7 @@ export async function createAttendanceAction(formData: FormData) {
 
   revalidatePath("/");
   revalidatePath("/attendance");
+  revalidateAttendanceCache();
   revalidatePath("/logs");
   await createActivityLog({
     actor,
@@ -1526,7 +1727,7 @@ export async function createAttendanceAction(formData: FormData) {
 }
 
 export async function updateAttendanceAction(formData: FormData) {
-  const actor = await requireEditorActionUser();
+  const actor = await requireAttendanceActionUser();
   const attendanceId = getString(formData, "attendance_id");
   const projectId = getString(formData, "project_id");
   const workerName = getString(formData, "worker_name");
@@ -1636,6 +1837,7 @@ export async function updateAttendanceAction(formData: FormData) {
 
   revalidatePath("/");
   revalidatePath("/attendance");
+  revalidateAttendanceCache();
   revalidatePath("/logs");
   await createActivityLog({
     actor,
@@ -1660,7 +1862,7 @@ export async function updateAttendanceAction(formData: FormData) {
 }
 
 export async function deleteAttendanceAction(formData: FormData) {
-  const actor = await requireEditorActionUser();
+  const actor = await requireAttendanceActionUser();
   const attendanceId = getString(formData, "attendance_id");
   if (!attendanceId) {
     return;
@@ -1689,6 +1891,7 @@ export async function deleteAttendanceAction(formData: FormData) {
 
   revalidatePath("/");
   revalidatePath("/attendance");
+  revalidateAttendanceCache();
   revalidatePath("/logs");
   await createActivityLog({
     actor,
@@ -1703,7 +1906,7 @@ export async function deleteAttendanceAction(formData: FormData) {
 }
 
 export async function confirmPayrollPaidAction(formData: FormData) {
-  const actor = await requireEditorActionUser();
+  const actor = await requireAttendanceActionUser();
   const projectId = getString(formData, "project_id");
   const teamType = getParsedWorkerTeam(formData);
   if (!projectId) {
@@ -1754,6 +1957,7 @@ export async function confirmPayrollPaidAction(formData: FormData) {
 
   revalidatePath("/");
   revalidatePath("/attendance");
+  revalidateAttendanceCache();
   revalidatePath("/logs");
   await createActivityLog({
     actor,
@@ -1774,7 +1978,7 @@ export async function confirmPayrollPaidAction(formData: FormData) {
 }
 
 export async function updateActivityLogAction(formData: FormData) {
-  const actor = await requireDevActionUser();
+  const actor = await requireLogsActionUser();
   const logId = getString(formData, "log_id");
   const description = getString(formData, "description");
   const payloadJson = getString(formData, "payload_json");

@@ -38,7 +38,7 @@ function resolveFilePrefix(projectNames: string[]) {
 
 export async function GET(request: Request) {
   const user = await getCurrentUser();
-  if (!user || !canExportReports(user.role)) {
+  if (!user || !canExportReports(user)) {
     return new Response("Akses export ditolak untuk role ini.", { status: 403 });
   }
 

@@ -7,9 +7,17 @@ import {
   LogsIcon,
   LogoutIcon,
   ProjectIcon,
+  RolesIcon,
+  ShieldIcon,
 } from "@/components/icons";
 import { NavLink } from "@/components/nav-link";
-import { canManageData, canViewLogs, requireAuthUser, ROLE_LABEL } from "@/lib/auth";
+import {
+  canAccessAttendance,
+  canAccessProjects,
+  canEditRoles,
+  canViewLogs,
+  requireAuthUser,
+} from "@/lib/auth";
 
 export default async function DashboardLayout({
   children,
@@ -17,89 +25,118 @@ export default async function DashboardLayout({
   children: React.ReactNode;
 }>) {
   const user = await requireAuthUser();
-  const today = new Intl.DateTimeFormat("id-ID", {
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-  }).format(new Date());
 
   return (
     <div className="app-surface">
-      <div className="mx-auto grid min-h-screen max-w-[1280px] grid-cols-1 gap-4 p-4 md:grid-cols-[280px_minmax(0,1fr)] md:p-6">
-        <aside className="motion-display panel p-6">
+      <div className="mx-auto grid min-h-screen max-w-[1480px] grid-cols-1 gap-4 p-4 lg:grid-cols-[272px_minmax(0,1fr)] lg:p-5">
+        <aside className="panel flex flex-col overflow-hidden p-4 lg:sticky lg:top-5 lg:h-[calc(100vh-2.5rem)]">
           <Link href="/" className="flex items-center gap-3">
-            <Image
-              src="/logo-admin.svg"
-              alt="Logo Admin Proyek"
-              width={48}
-              height={48}
-              priority
-            />
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-md shadow-slate-900/10">
+              <Image
+                src="/logo-admin.svg"
+                alt="Logo Admin Proyek"
+                width={26}
+                height={26}
+                priority
+              />
+            </div>
             <div>
-              <p className="font-mono text-xs uppercase tracking-[0.2em] text-slate-500">
+              <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-slate-400">
                 Admin Web
               </p>
-              <h1 className="mt-1 text-xl font-semibold text-slate-900">Rekap Proyek</h1>
+              <h1 className="mt-1 text-lg font-bold tracking-[-0.03em] text-slate-950">
+                Rekap Proyek
+              </h1>
             </div>
           </Link>
 
-          <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <p className="text-sm font-semibold text-slate-900">{user.fullName}</p>
-            <p className="text-xs text-slate-500">@{user.username}</p>
-            <p className="mt-1 inline-flex rounded-full bg-blue-100 px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-blue-700">
-              {ROLE_LABEL[user.role]}
-            </p>
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/90 p-3.5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-slate-900">{user.fullName}</p>
+                <p className="mt-1 truncate text-xs text-slate-500">@{user.username}</p>
+              </div>
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-900 text-white">
+                <ShieldIcon className="h-4 w-4" />
+              </span>
+            </div>
+            <div className="mt-3">
+              <span className="badge badge-primary">{user.roleLabel}</span>
+            </div>
           </div>
 
-          <nav className="mt-6 space-y-2">
-            <NavLink href="/" icon={<DashboardIcon />} tone="overview">
-              Ringkasan
-            </NavLink>
-            {canManageData(user.role) ? (
-              <>
+          <div className="mt-5 flex-1 overflow-y-auto pr-1">
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+              Navigasi
+            </p>
+            <nav className="space-y-1.5">
+              <NavLink href="/" icon={<DashboardIcon />} tone="overview">
+                Ringkasan
+              </NavLink>
+              {canAccessProjects(user) ? (
                 <NavLink href="/projects" icon={<ProjectIcon />} tone="projects">
                   Proyek & Biaya
                 </NavLink>
+              ) : null}
+              {canAccessAttendance(user) ? (
                 <NavLink href="/attendance" icon={<AttendanceIcon />} tone="attendance">
                   Absen Harian
                 </NavLink>
-              </>
-            ) : null}
-            {canViewLogs(user.role) ? (
-              <NavLink href="/logs" icon={<LogsIcon />} tone="logs">
-                Logs Input
-              </NavLink>
-            ) : null}
-          </nav>
+              ) : null}
+              {canViewLogs(user) ? (
+                <NavLink href="/logs" icon={<LogsIcon />} tone="logs">
+                  Logs Input
+                </NavLink>
+              ) : null}
+              {canEditRoles(user) ? (
+                <NavLink href="/roles" icon={<RolesIcon />} tone="roles">
+                  Roles & Permission
+                </NavLink>
+              ) : null}
+            </nav>
+          </div>
 
-          <form action={logoutAction} className="mt-6">
-            <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">
-              <span className="btn-icon bg-slate-100 text-slate-700">
-                <LogoutIcon />
-              </span>
-              Keluar
-            </button>
-          </form>
+          <div className="mt-4 border-t border-slate-200 pt-4">
+            <form action={logoutAction}>
+              <button className="button-danger button-sm w-full justify-start">
+                <span className="btn-icon bg-rose-100 text-rose-700">
+                  <LogoutIcon />
+                </span>
+                Logout
+              </button>
+            </form>
+          </div>
         </aside>
 
         <div className="min-w-0 space-y-4">
-          <header className="motion-display panel flex flex-wrap items-center justify-between gap-2 px-5 py-4">
-            <div>
-              <p className="text-sm font-medium text-slate-500">Sistem Administrasi</p>
-              <p className="text-lg font-semibold text-slate-900">
-                Rekap Pengeluaran Per Project
-              </p>
+          <header className="panel sticky top-4 z-20 px-4 py-3 backdrop-blur">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                  Workspace
+                </p>
+                <h2 className="mt-1 text-lg font-semibold tracking-[-0.03em] text-slate-950">
+                  Administrasi proyek yang lebih ringkas dan lebih mudah dibaca.
+                </h2>
+              </div>
+              <Link href="/" className="button-ghost button-sm">
+                <span className="btn-icon bg-slate-100 text-slate-700">
+                  <DashboardIcon />
+                </span>
+                Dashboard
+              </Link>
             </div>
-            <p className="shrink-0 font-mono text-sm text-slate-500">{today}</p>
           </header>
+
           <main className="min-w-0 space-y-4">{children}</main>
-          <footer className="panel px-5 py-4">
+
+          <footer className="panel px-4 py-3">
             <p className="text-xs text-slate-500">Terima kasih sudah menggunakan Admin Web.</p>
             <a
               href="https://alfajrin23.github.io/Personal-Portofolio/"
               target="_blank"
               rel="noopener noreferrer"
-              className="footer-signature mt-2 inline-flex text-sm font-semibold"
+              className="footer-signature mt-1.5 inline-flex text-xs font-semibold"
             >
               Copyright by Al Fajrin A Alamsyah
             </a>

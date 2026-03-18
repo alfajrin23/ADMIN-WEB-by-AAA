@@ -3,23 +3,36 @@ import "server-only";
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { getRoleCatalog, getRoleDefinitionByKey } from "@/lib/role-store";
+import {
+  APP_ROLES,
+  ROLE_LABEL,
+  clonePermissionMatrix,
+  getBuiltInRoleDefinition,
+  hasAnyPermission,
+  hasPermission,
+  isAppRole,
+  normalizeRoleKey,
+  type AppPermissionMatrix,
+  type AppRole,
+  type PermissionAction,
+  type PermissionModule,
+} from "@/lib/roles";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
-export const APP_ROLES = ["dev", "staff", "viewer"] as const;
-export type AppRole = (typeof APP_ROLES)[number];
+export { APP_ROLES, ROLE_LABEL, isAppRole };
+export type { AppPermissionMatrix, AppRole, PermissionAction, PermissionModule };
 
 export type AppUser = {
   id: string;
   fullName: string;
   username: string;
   role: AppRole;
+  roleKey: string;
+  roleLabel: string;
+  permissions: AppPermissionMatrix;
+  isSystemRole: boolean;
   createdAt: string;
-};
-
-export const ROLE_LABEL: Record<AppRole, string> = {
-  dev: "Developer",
-  staff: "Staff",
-  viewer: "Viewer",
 };
 
 const SESSION_COOKIE_NAME = "admin_web_session";
@@ -35,6 +48,7 @@ type AppUserRow = {
   full_name: string;
   username: string;
   role: string;
+  role_key?: string | null;
   created_at: string;
 };
 
@@ -97,22 +111,58 @@ function parseSessionToken(token: string | undefined | null): SessionPayload | n
   }
 }
 
-function isAppRoleValue(value: string): value is AppRole {
-  return APP_ROLES.includes(value as AppRole);
+async function findUserRowById(id: string): Promise<AppUserRow | null> {
+  const supabase = getSupabaseServerClient();
+  if (!supabase) {
+    return null;
+  }
+
+  const withRoleKey = await supabase
+    .from("app_users")
+    .select("id, full_name, username, role, role_key, created_at")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (!withRoleKey.error && withRoleKey.data) {
+    return withRoleKey.data as AppUserRow;
+  }
+
+  const fallback = await supabase
+    .from("app_users")
+    .select("id, full_name, username, role, created_at")
+    .eq("id", id)
+    .maybeSingle();
+
+  return !fallback.error && fallback.data ? (fallback.data as AppUserRow) : null;
 }
 
-function mapAppUser(row: AppUserRow): AppUser {
+async function mapAppUser(row: AppUserRow): Promise<AppUser> {
+  const roleDefinition = await getRoleDefinitionByKey(
+    typeof row.role_key === "string" ? row.role_key : null,
+    row.role,
+  );
+
   return {
     id: row.id,
     fullName: row.full_name,
     username: row.username,
-    role: isAppRoleValue(row.role) ? row.role : "viewer",
+    role: roleDefinition.derivedRole,
+    roleKey: roleDefinition.key,
+    roleLabel: roleDefinition.name,
+    permissions: clonePermissionMatrix(roleDefinition.permissions),
+    isSystemRole: roleDefinition.isSystem,
     createdAt: row.created_at,
   };
 }
 
-export function isAppRole(value: string): value is AppRole {
-  return isAppRoleValue(value);
+function resolvePermissionMatrix(input: AppUser | AppPermissionMatrix | AppRole): AppPermissionMatrix {
+  if (typeof input === "string") {
+    return getBuiltInRoleDefinition(isAppRole(input) ? input : "viewer").permissions;
+  }
+  if ("permissions" in input) {
+    return input.permissions;
+  }
+  return input;
 }
 
 export function normalizeUsername(value: string) {
@@ -147,39 +197,63 @@ export function verifyPassword(password: string, storedHash: string) {
   return timingSafeEqual(Buffer.from(computed), Buffer.from(hash));
 }
 
-export function canManageData(role: AppRole) {
-  return role === "dev" || role === "staff";
+export function canViewModule(
+  input: AppUser | AppPermissionMatrix | AppRole,
+  module: PermissionModule,
+) {
+  return hasPermission(resolvePermissionMatrix(input), module, "view");
 }
 
-export function canExportReports(role: AppRole) {
-  return canManageData(role);
+export function canManageModule(
+  input: AppUser | AppPermissionMatrix | AppRole,
+  module: PermissionModule,
+) {
+  return hasAnyPermission(resolvePermissionMatrix(input), module, ["create", "edit", "delete"]);
 }
 
-export function canImportData(role: AppRole) {
-  return role === "dev";
+export function canManageData(input: AppUser | AppPermissionMatrix | AppRole) {
+  return canManageModule(input, "projects") || canManageModule(input, "attendance");
 }
 
-export function canViewLogs(role: AppRole) {
-  return role === "dev";
+export function canAccessProjects(input: AppUser | AppPermissionMatrix | AppRole) {
+  return canViewModule(input, "projects") || canManageModule(input, "projects");
 }
 
-async function findUserById(id: string): Promise<AppUser | null> {
-  const supabase = getSupabaseServerClient();
-  if (!supabase) {
-    return null;
-  }
+export function canManageProjects(input: AppUser | AppPermissionMatrix | AppRole) {
+  return canManageModule(input, "projects");
+}
 
-  const { data } = await supabase
-    .from("app_users")
-    .select("id, full_name, username, role, created_at")
-    .eq("id", id)
-    .maybeSingle();
+export function canAccessAttendance(input: AppUser | AppPermissionMatrix | AppRole) {
+  return canViewModule(input, "attendance") || canManageModule(input, "attendance");
+}
 
-  if (!data) {
-    return null;
-  }
+export function canManageAttendance(input: AppUser | AppPermissionMatrix | AppRole) {
+  return canManageModule(input, "attendance");
+}
 
-  return mapAppUser(data as AppUserRow);
+export function canExportReports(input: AppUser | AppPermissionMatrix | AppRole) {
+  return canViewModule(input, "reports");
+}
+
+export function canImportData(input: AppUser | AppPermissionMatrix | AppRole) {
+  const permissions = resolvePermissionMatrix(input);
+  return (
+    hasPermission(permissions, "projects", "import") ||
+    hasPermission(permissions, "attendance", "import") ||
+    hasPermission(permissions, "reports", "import")
+  );
+}
+
+export function canViewLogs(input: AppUser | AppPermissionMatrix | AppRole) {
+  return canViewModule(input, "logs");
+}
+
+export function canManageRoles(input: AppUser | AppPermissionMatrix | AppRole) {
+  return canViewModule(input, "roles") || canManageModule(input, "roles");
+}
+
+export function canEditRoles(input: AppUser | AppPermissionMatrix | AppRole) {
+  return hasAnyPermission(resolvePermissionMatrix(input), "roles", ["create", "edit", "delete"]);
 }
 
 export async function getCurrentUser(): Promise<AppUser | null> {
@@ -190,7 +264,8 @@ export async function getCurrentUser(): Promise<AppUser | null> {
     return null;
   }
 
-  return findUserById(payload.userId);
+  const row = await findUserRowById(payload.userId);
+  return row ? mapAppUser(row) : null;
 }
 
 export async function requireAuthUser() {
@@ -201,17 +276,61 @@ export async function requireAuthUser() {
   return user;
 }
 
-export async function requireEditorUser() {
+async function requireModulePermission(
+  module: PermissionModule,
+  action: PermissionAction = "view",
+) {
   const user = await requireAuthUser();
-  if (!canManageData(user.role)) {
+  const permissions = resolvePermissionMatrix(user);
+  const allowed =
+    action === "view"
+      ? hasPermission(permissions, module, "view") || canManageModule(user, module)
+      : hasPermission(permissions, module, action);
+  if (!allowed) {
     redirect("/");
   }
   return user;
 }
 
-export async function requireDevUser() {
+export async function requireEditorUser() {
   const user = await requireAuthUser();
-  if (!canViewLogs(user.role)) {
+  if (!canManageData(user)) {
+    redirect("/");
+  }
+  return user;
+}
+
+export async function requireProjectViewerUser() {
+  return requireModulePermission("projects", "view");
+}
+
+export async function requireProjectEditorUser() {
+  const user = await requireAuthUser();
+  if (!canManageProjects(user)) {
+    redirect("/");
+  }
+  return user;
+}
+
+export async function requireAttendanceViewerUser() {
+  return requireModulePermission("attendance", "view");
+}
+
+export async function requireAttendanceEditorUser() {
+  const user = await requireAuthUser();
+  if (!canManageAttendance(user)) {
+    redirect("/");
+  }
+  return user;
+}
+
+export async function requireLogsUser() {
+  return requireModulePermission("logs", "view");
+}
+
+export async function requireRoleManagerUser() {
+  const user = await requireAuthUser();
+  if (!canEditRoles(user)) {
     redirect("/");
   }
   return user;
@@ -239,10 +358,48 @@ export async function getAppUsers() {
     return [];
   }
 
-  const { data } = await supabase
+  const withRoleKey = await supabase
     .from("app_users")
-    .select("id, full_name, username, role, created_at")
+    .select("id, full_name, username, role, role_key, created_at")
     .order("created_at", { ascending: false });
 
-  return (data ?? []).map((row) => mapAppUser(row as AppUserRow));
+  const fallback =
+    withRoleKey.error || !Array.isArray(withRoleKey.data)
+      ? await supabase
+          .from("app_users")
+          .select("id, full_name, username, role, created_at")
+          .order("created_at", { ascending: false })
+      : null;
+
+  const rows = !withRoleKey.error && Array.isArray(withRoleKey.data)
+    ? (withRoleKey.data as AppUserRow[])
+    : fallback && !fallback.error && Array.isArray(fallback.data)
+      ? (fallback.data as AppUserRow[])
+      : [];
+
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const roleCatalog = await getRoleCatalog();
+  const roleByKey = new Map(roleCatalog.map((role) => [role.key, role] as const));
+
+  return rows.map((row) => {
+    const roleDefinition =
+      roleByKey.get(normalizeRoleKey(String(row.role_key ?? ""))) ||
+      roleByKey.get(isAppRole(row.role) ? row.role : "viewer") ||
+      getBuiltInRoleDefinition("viewer");
+
+    return {
+      id: row.id,
+      fullName: row.full_name,
+      username: row.username,
+      role: roleDefinition.derivedRole,
+      roleKey: roleDefinition.key,
+      roleLabel: roleDefinition.name,
+      permissions: clonePermissionMatrix(roleDefinition.permissions),
+      isSystemRole: roleDefinition.isSystem,
+      createdAt: row.created_at,
+    } satisfies AppUser;
+  });
 }

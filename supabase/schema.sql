@@ -137,8 +137,11 @@ create index if not exists idx_expense_categories_slug on public.expense_categor
 create index if not exists idx_project_expenses_project_id on public.project_expenses(project_id);
 create index if not exists idx_project_expenses_category on public.project_expenses(category);
 create index if not exists idx_project_expenses_expense_date on public.project_expenses(expense_date desc);
+create index if not exists idx_project_expenses_project_id_expense_date on public.project_expenses(project_id, expense_date desc);
+create index if not exists idx_project_expenses_expense_date_id on public.project_expenses(expense_date desc, id desc);
 create index if not exists idx_attendance_project_id on public.attendance_records(project_id);
 create index if not exists idx_attendance_date on public.attendance_records(attendance_date desc);
+create index if not exists idx_attendance_project_id_attendance_date on public.attendance_records(project_id, attendance_date desc);
 create index if not exists idx_payroll_resets_project_id on public.payroll_resets(project_id);
 create index if not exists idx_payroll_resets_paid_until_date on public.payroll_resets(paid_until_date desc);
 
@@ -267,6 +270,27 @@ create table if not exists public.app_users (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.app_roles (
+  id uuid primary key default gen_random_uuid(),
+  role_key text not null unique,
+  name text not null,
+  description text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.role_permissions (
+  id uuid primary key default gen_random_uuid(),
+  role_key text not null references public.app_roles(role_key) on delete cascade,
+  module text not null check (module in ('dashboard', 'projects', 'attendance', 'reports', 'logs', 'roles')),
+  can_view boolean not null default false,
+  can_create boolean not null default false,
+  can_edit boolean not null default false,
+  can_delete boolean not null default false,
+  can_import boolean not null default false,
+  created_at timestamptz not null default now(),
+  unique (role_key, module)
+);
+
 create table if not exists public.activity_logs (
   id uuid primary key default gen_random_uuid(),
   actor_id uuid references public.app_users(id) on delete set null,
@@ -282,12 +306,21 @@ create table if not exists public.activity_logs (
   created_at timestamptz not null default now()
 );
 
+alter table public.app_users
+add column if not exists role_key text references public.app_roles(role_key) on delete set null;
+
 create index if not exists idx_app_users_username on public.app_users(username);
 create index if not exists idx_app_users_role on public.app_users(role);
+create index if not exists idx_app_users_role_key on public.app_users(role_key);
+create index if not exists idx_app_roles_role_key on public.app_roles(role_key);
+create index if not exists idx_role_permissions_role_key on public.role_permissions(role_key);
+create index if not exists idx_role_permissions_module on public.role_permissions(module);
 create index if not exists idx_activity_logs_created_at on public.activity_logs(created_at desc);
 create index if not exists idx_activity_logs_actor_id on public.activity_logs(actor_id);
 
 alter table public.app_users enable row level security;
+alter table public.app_roles enable row level security;
+alter table public.role_permissions enable row level security;
 alter table public.activity_logs enable row level security;
 
 drop policy if exists "app_users_select_all" on public.app_users;
@@ -309,6 +342,50 @@ with check (true);
 drop policy if exists "app_users_delete_all" on public.app_users;
 create policy "app_users_delete_all"
 on public.app_users
+for delete
+using (true);
+
+drop policy if exists "app_roles_select_all" on public.app_roles;
+create policy "app_roles_select_all"
+on public.app_roles
+for select
+using (true);
+drop policy if exists "app_roles_insert_all" on public.app_roles;
+create policy "app_roles_insert_all"
+on public.app_roles
+for insert
+with check (true);
+drop policy if exists "app_roles_update_all" on public.app_roles;
+create policy "app_roles_update_all"
+on public.app_roles
+for update
+using (true)
+with check (true);
+drop policy if exists "app_roles_delete_all" on public.app_roles;
+create policy "app_roles_delete_all"
+on public.app_roles
+for delete
+using (true);
+
+drop policy if exists "role_permissions_select_all" on public.role_permissions;
+create policy "role_permissions_select_all"
+on public.role_permissions
+for select
+using (true);
+drop policy if exists "role_permissions_insert_all" on public.role_permissions;
+create policy "role_permissions_insert_all"
+on public.role_permissions
+for insert
+with check (true);
+drop policy if exists "role_permissions_update_all" on public.role_permissions;
+create policy "role_permissions_update_all"
+on public.role_permissions
+for update
+using (true)
+with check (true);
+drop policy if exists "role_permissions_delete_all" on public.role_permissions;
+create policy "role_permissions_delete_all"
+on public.role_permissions
 for delete
 using (true);
 

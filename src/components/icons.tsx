@@ -73,6 +73,93 @@ export function WalletIcon(props: IconProps) {
   );
 }
 
+export function UsersIcon(props: IconProps) {
+  return (
+    <svg
+      width="100%"
+      height="100%"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      {...props}
+    >
+      <path d="M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1" />
+      <circle cx="9.5" cy="7" r="3" />
+      <path d="M20.5 19v-1a4 4 0 0 0-2.7-3.8" />
+      <path d="M16.5 4.4a3 3 0 0 1 0 5.2" />
+    </svg>
+  );
+}
+
+export function TrendUpIcon(props: IconProps) {
+  return (
+    <svg
+      width="100%"
+      height="100%"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      {...props}
+    >
+      <path d="M4 16.5 9.2 11l3.6 3.6L20 7.5" />
+      <path d="M14 7.5h6v6" />
+    </svg>
+  );
+}
+
+export function PulseIcon(props: IconProps) {
+  return (
+    <svg
+      width="100%"
+      height="100%"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      {...props}
+    >
+      <path d="M3 12h4l2.5-6 5 12 2.5-6H21" />
+    </svg>
+  );
+}
+
+export function ShieldIcon(props: IconProps) {
+  return (
+    <svg
+      width="100%"
+      height="100%"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      {...props}
+    >
+      <path d="M12 3 5 6v5c0 4.9 2.8 7.7 7 10 4.2-2.3 7-5.1 7-10V6l-7-3Z" />
+      <path d="m9.5 12 1.8 1.8 3.4-3.8" />
+    </svg>
+  );
+}
+
+export function SparkIcon(props: IconProps) {
+  return (
+    <svg
+      width="100%"
+      height="100%"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      {...props}
+    >
+      <path d="m12 2 1.8 5.2L19 9l-5.2 1.8L12 16l-1.8-5.2L5 9l5.2-1.8L12 2Z" />
+      <path d="m19 15 .9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15Z" />
+      <path d="m5 15 .9 2.1L8 18l-2.1.9L5 21l-.9-2.1L2 18l2.1-.9L5 15Z" />
+    </svg>
+  );
+}
+
 export function PlusIcon(props: IconProps) {
   return (
     <svg
@@ -364,6 +451,23 @@ export function LogsIcon(props: IconProps) {
       <rect x="3" y="4" width="18" height="17" rx="2" />
       <path d="M7 8h10M7 12h10M7 16h6" />
       <path d="M16.5 16h.01" />
+    </svg>
+  );
+}
+
+export function RolesIcon(props: IconProps) {
+  return (
+    <svg
+      width="100%"
+      height="100%"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      {...props}
+    >
+      <path d="M12 21s7-3.3 7-10V5l-7-2-7 2v6c0 6.7 7 10 7 10Z" />
+      <path d="M9 12.2 11 14l4-4.2" />
     </svg>
   );
 }

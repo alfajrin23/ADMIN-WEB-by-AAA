@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { updateManyExpensesAction } from "@/app/actions";
-import { EditIcon, EyeIcon, SaveIcon } from "@/components/icons";
+import { deleteManyExpensesAction, updateManyExpensesAction } from "@/app/actions";
+import { ConfirmActionButton } from "@/components/confirm-action-button";
+import { EditIcon, EyeIcon, SaveIcon, TrashIcon } from "@/components/icons";
 import { SPECIALIST_COST_PRESETS } from "@/lib/constants";
 import { formatCurrency, formatDate } from "@/lib/format";
 import type { ProjectExpenseSearchResult } from "@/lib/types";
@@ -152,20 +153,45 @@ export function ExpenseDetailSearchResults({
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="text-xs font-semibold text-emerald-700">Edit All berdasarkan hasil filter</p>
+              <p className="text-xs font-semibold text-emerald-700">Aksi massal berdasarkan hasil filter</p>
               <p className="text-[11px] text-emerald-700/90">
-                Update massal akan diterapkan ke {filteredExpenseIds.length} rincian yang sedang tampil.
+                Edit All dan Delete All akan diterapkan ke {filteredExpenseIds.length} rincian yang sedang tampil.
               </p>
             </div>
-            <button
-              type="button"
-              data-ui-button="true"
-              disabled={isBulkActionDisabled}
-              onClick={() => setIsBulkEditorOpen((prev) => !prev)}
-              className="inline-flex items-center justify-center rounded-xl border border-emerald-300 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isBulkEditorOpen ? "Tutup Edit All" : "Buka Edit All"}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                data-ui-button="true"
+                disabled={isBulkActionDisabled}
+                onClick={() => setIsBulkEditorOpen((prev) => !prev)}
+                className="inline-flex items-center justify-center rounded-xl border border-emerald-300 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isBulkEditorOpen ? "Tutup Edit All" : "Buka Edit All"}
+              </button>
+              <form action={deleteManyExpensesAction}>
+                <input type="hidden" name="return_to" value={bulkEditReturnTo} />
+                {filteredExpenseIds.map((expenseId) => (
+                  <input
+                    key={`bulk-delete-expense-${expenseId}`}
+                    type="hidden"
+                    name="expense_id"
+                    value={expenseId}
+                  />
+                ))}
+                <ConfirmActionButton
+                  disabled={isBulkActionDisabled}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-300 bg-white px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  modalTitle="Konfirmasi Delete All"
+                  modalDescription={`Yakin ingin menghapus ${filteredExpenseIds.length} rincian biaya yang sedang tampil?`}
+                  confirmLabel="Ya, Delete All"
+                >
+                  <span className="btn-icon bg-rose-100 text-rose-700">
+                    <TrashIcon />
+                  </span>
+                  Delete All
+                </ConfirmActionButton>
+              </form>
+            </div>
           </div>
 
           {isBulkEditorOpen ? (

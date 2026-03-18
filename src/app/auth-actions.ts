@@ -2,7 +2,7 @@
 
 import { revalidatePath, revalidateTag } from "next/cache";
 import { redirect } from "next/navigation";
-import { createActivityLog } from "@/lib/activity-logs";
+import { queueActivityLog } from "@/lib/activity-logs";
 import {
   canEditRoles,
   createUserSession,
@@ -147,7 +147,7 @@ export async function loginAction(formData: FormData) {
   }
 
   await createUserSession(foundUser.id);
-  await createActivityLog({
+  queueActivityLog({
     actor: {
       id: foundUser.id,
       fullName: foundUser.full_name,
@@ -222,7 +222,7 @@ export async function registerAction(formData: FormData) {
   }
 
   await createUserSession(inserted.id);
-  await createActivityLog({
+  queueActivityLog({
     actor: {
       id: inserted.id,
       fullName: inserted.full_name,
@@ -361,7 +361,7 @@ export async function updateUserRoleAction(formData: FormData) {
     }
   }
 
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "role_update",
     module: "user",
@@ -429,7 +429,7 @@ export async function createRoleAction(formData: FormData) {
     redirect(toErrorRedirect(returnTo, permissionResult.reason));
   }
 
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "create",
     module: "role",
@@ -483,7 +483,7 @@ export async function updateRolePermissionsAction(formData: FormData) {
     redirect(toErrorRedirect(returnTo, permissionResult.reason));
   }
 
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "update",
     module: "role",
@@ -531,7 +531,7 @@ export async function deleteRoleAction(formData: FormData) {
     redirect(toErrorRedirect(returnTo, "Gagal menghapus role."));
   }
 
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "delete",
     module: "role",

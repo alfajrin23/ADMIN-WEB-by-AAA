@@ -1,5 +1,6 @@
 import "server-only";
 
+import { after } from "next/server";
 import type { AppRole, AppUser } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
@@ -18,7 +19,7 @@ export type ActivityLog = {
   createdAt: string;
 };
 
-type CreateActivityLogInput = {
+export type CreateActivityLogInput = {
   actor: Pick<AppUser, "id" | "fullName" | "username" | "role" | "createdAt">;
   actionType: string;
   module: string;
@@ -76,6 +77,12 @@ export async function createActivityLog(input: CreateActivityLogInput) {
   if (error) {
     console.warn("[activity-log] gagal menulis log.", error.message);
   }
+}
+
+export function queueActivityLog(input: CreateActivityLogInput) {
+  after(async () => {
+    await createActivityLog(input);
+  });
 }
 
 export async function getActivityLogs(limit = 200): Promise<ActivityLog[]> {

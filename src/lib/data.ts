@@ -383,6 +383,8 @@ const SUPABASE_EXPENSE_FULL_SELECT =
   "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at";
 const SUPABASE_ATTENDANCE_FULL_SELECT =
   "id, project_id, worker_name, team_type, specialist_team_name, status, work_days, daily_wage, overtime_hours, overtime_wage, kasbon_amount, reimburse_type, reimburse_amount, attendance_date, notes, created_at";
+const SUPABASE_PAYROLL_RESET_SELECT =
+  "project_id, team_type, specialist_team_name, worker_name, paid_until_date";
 
 type CachedSupabaseExpenseMetadata = {
   categoryRows: Record<string, unknown>[];
@@ -509,6 +511,40 @@ const getCachedSupabaseAllAttendanceRows = unstable_cache(
     tags: [CACHE_TAGS.attendance],
   },
 );
+
+const getCachedSupabasePayrollResetRows = unstable_cache(
+  async (): Promise<Record<string, unknown>[]> =>
+    getAllSupabaseRows("payroll_resets", SUPABASE_PAYROLL_RESET_SELECT),
+  ["supabase-payroll-resets"],
+  {
+    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
+    tags: [CACHE_TAGS.payrollResets],
+  },
+);
+
+type PayrollResetRow = {
+  projectId: string;
+  teamType: "tukang" | "laden" | "spesialis";
+  specialistTeamName: string | null;
+  workerName: string | null;
+  paidUntilDate: string;
+};
+
+function mapPayrollResetRow(row: Record<string, unknown>): PayrollResetRow | null {
+  const teamTypeValue = String(row.team_type ?? "");
+  if (teamTypeValue !== "tukang" && teamTypeValue !== "laden" && teamTypeValue !== "spesialis") {
+    return null;
+  }
+
+  return {
+    projectId: String(row.project_id ?? ""),
+    teamType: teamTypeValue,
+    specialistTeamName:
+      typeof row.specialist_team_name === "string" ? row.specialist_team_name : null,
+    workerName: typeof row.worker_name === "string" ? row.worker_name : null,
+    paidUntilDate: String(row.paid_until_date ?? ""),
+  };
+}
 
 function buildCategoryTotals(
   expenses: ExpenseEntry[],
@@ -1403,6 +1439,11 @@ export async function getProjectById(projectId: string): Promise<Project | null>
     return null;
   }
 
+  if (activeDataSource === "supabase") {
+    const row = await getCachedSupabaseProjectRowById(projectId);
+    return row ? mapProject(row) : null;
+  }
+
   const projects = await getProjects();
   return projects.find((project) => project.id === projectId) ?? null;
 }
@@ -1937,6 +1978,17 @@ export async function searchExpenseDetails(
       if (data.length < pageSize) {
         break;
       }
+
+      if (mappedResults.length >= limit) {
+        const cutoffIndex = Math.min(limit, mappedResults.length) - 1;
+        const cutoffDate = mappedResults
+          .slice()
+          .sort(sortExpenseSearchResults)[cutoffIndex]?.expenseDate;
+        const lastRowExpenseDate = String(data[data.length - 1]?.expense_date ?? "").slice(0, 10);
+        if (cutoffDate && lastRowExpenseDate && lastRowExpenseDate < cutoffDate) {
+          break;
+        }
+      }
       offset += pageSize;
     }
 
@@ -2097,6 +2149,16 @@ export async function getWageRecap(options?: {
       .lte("attendance_date", to)
       .order("attendance_date", { ascending: false });
 
+    if (projectId) {
+      query = query.eq("project_id", projectId);
+    }
+    if (teamType) {
+      query = query.eq("team_type", teamType);
+    }
+    if (normalizedAttendanceIds.length > 0) {
+      query = query.in("id", normalizedAttendanceIds);
+    }
+
     if (typeof limit === "number") {
       query = query.limit(limit);
     }
@@ -2120,32 +2182,21 @@ export async function getWageRecap(options?: {
       };
     }
 
-    const { data: resetRows } = await supabase
-      .from("payroll_resets")
-      .select("project_id, team_type, specialist_team_name, worker_name, paid_until_date");
-
-    const payrollResets = Array.isArray(resetRows)
-      ? resetRows
-          .map((row) => {
-            const teamTypeValue = String(row.team_type ?? "");
-            if (
-              teamTypeValue !== "tukang" &&
-              teamTypeValue !== "laden" &&
-              teamTypeValue !== "spesialis"
-            ) {
-              return null;
-            }
-            return {
-              projectId: String(row.project_id ?? ""),
-              teamType: teamTypeValue as "tukang" | "laden" | "spesialis",
-              specialistTeamName:
-                typeof row.specialist_team_name === "string" ? row.specialist_team_name : null,
-              workerName: typeof row.worker_name === "string" ? row.worker_name : null,
-              paidUntilDate: String(row.paid_until_date ?? ""),
-            };
-          })
-          .filter((row): row is NonNullable<typeof row> => Boolean(row))
-      : [];
+    const payrollResets = (await getCachedSupabasePayrollResetRows())
+      .map((row) => mapPayrollResetRow(row))
+      .filter((row): row is NonNullable<typeof row> => Boolean(row))
+      .filter((row) => (projectId ? row.projectId === projectId : true))
+      .filter((row) => (teamType ? row.teamType === teamType : true))
+      .filter((row) =>
+        specialistTeamName
+          ? (row.specialistTeamName ?? "").toLowerCase().includes(specialistTeamName)
+          : true,
+      )
+      .filter((row) =>
+        normalizedWorkerNames.length > 0
+          ? normalizedWorkerNames.includes((row.workerName ?? "").trim().toLowerCase())
+          : true,
+      );
 
     const rows = applyPayrollResets(
       data

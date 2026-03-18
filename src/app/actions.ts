@@ -3,7 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { redirect } from "next/navigation";
-import { createActivityLog } from "@/lib/activity-logs";
+import { queueActivityLog } from "@/lib/activity-logs";
 import {
   canImportData,
   canManageAttendance,
@@ -673,7 +673,7 @@ export async function createProjectAction(formData: FormData) {
   revalidateExpenseCache();
   revalidatePath("/attendance");
   revalidatePath("/logs");
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "create",
     module: "project",
@@ -758,7 +758,7 @@ export async function updateProjectAction(formData: FormData) {
   revalidateProjectCache();
   revalidatePath("/attendance");
   revalidatePath("/logs");
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "update",
     module: "project",
@@ -851,7 +851,7 @@ export async function updateManyProjectsAction(formData: FormData) {
   revalidateProjectCache();
   revalidatePath("/attendance");
   revalidatePath("/logs");
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "update_bulk",
     module: "project",
@@ -905,7 +905,7 @@ export async function deleteProjectAction(formData: FormData) {
   revalidateAttendanceCache();
   revalidatePath("/attendance");
   revalidatePath("/logs");
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "delete",
     module: "project",
@@ -962,7 +962,7 @@ export async function deleteSelectedProjectsAction(formData: FormData) {
   revalidateAttendanceCache();
   revalidatePath("/attendance");
   revalidatePath("/logs");
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "delete_bulk",
     module: "project",
@@ -1123,7 +1123,7 @@ export async function createExpenseAction(formData: FormData) {
   revalidateProjectPages();
   revalidateExpenseCache();
   revalidatePath("/logs");
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "create",
     module: "expense",
@@ -1232,7 +1232,7 @@ export async function updateExpenseAction(formData: FormData) {
   revalidateProjectPages();
   revalidateExpenseCache();
   revalidatePath("/logs");
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "update",
     module: "expense",
@@ -1426,7 +1426,7 @@ export async function updateManyExpensesAction(formData: FormData) {
   revalidateProjectPages();
   revalidateExpenseCache();
   revalidatePath("/logs");
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "update_bulk",
     module: "expense",
@@ -1487,7 +1487,7 @@ export async function deleteManyExpensesAction(formData: FormData) {
   revalidateProjectPages();
   revalidateExpenseCache();
   revalidatePath("/logs");
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "delete_bulk",
     module: "expense",
@@ -1532,7 +1532,7 @@ export async function deleteExpenseAction(formData: FormData) {
   revalidateProjectPages();
   revalidateExpenseCache();
   revalidatePath("/logs");
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "delete",
     module: "expense",
@@ -1588,7 +1588,7 @@ export async function importExcelTemplateAction(formData: FormData) {
   revalidateAttendanceCache();
   revalidatePath("/attendance");
   revalidatePath("/logs");
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "import",
     module: "expense",
@@ -1700,7 +1700,7 @@ export async function createAttendanceAction(formData: FormData) {
   revalidatePath("/attendance");
   revalidateAttendanceCache();
   revalidatePath("/logs");
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "create",
     module: "attendance",
@@ -1839,7 +1839,7 @@ export async function updateAttendanceAction(formData: FormData) {
   revalidatePath("/attendance");
   revalidateAttendanceCache();
   revalidatePath("/logs");
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "update",
     module: "attendance",
@@ -1893,7 +1893,7 @@ export async function deleteAttendanceAction(formData: FormData) {
   revalidatePath("/attendance");
   revalidateAttendanceCache();
   revalidatePath("/logs");
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "delete",
     module: "attendance",
@@ -1959,7 +1959,7 @@ export async function confirmPayrollPaidAction(formData: FormData) {
   revalidatePath("/attendance");
   revalidateAttendanceCache();
   revalidatePath("/logs");
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "confirm",
     module: "payroll",
@@ -2028,7 +2028,7 @@ export async function updateActivityLogAction(formData: FormData) {
   }
 
   revalidatePath("/logs");
-  await createActivityLog({
+  queueActivityLog({
     actor,
     actionType: "update",
     module: "activity_log",

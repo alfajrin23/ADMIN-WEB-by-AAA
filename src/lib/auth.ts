@@ -1,8 +1,10 @@
 import "server-only";
 
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { unstable_cache } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { CACHE_TAGS } from "@/lib/cache-tags";
 import { getRoleCatalog, getRoleDefinitionByKey } from "@/lib/role-store";
 import {
   APP_ROLES,
@@ -51,6 +53,42 @@ type AppUserRow = {
   role_key?: string | null;
   created_at: string;
 };
+
+const getCachedUserRowById = unstable_cache(
+  async (id: string): Promise<AppUserRow | null> => {
+    if (!id) {
+      return null;
+    }
+
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return null;
+    }
+
+    const withRoleKey = await supabase
+      .from("app_users")
+      .select("id, full_name, username, role, role_key, created_at")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (!withRoleKey.error && withRoleKey.data) {
+      return withRoleKey.data as AppUserRow;
+    }
+
+    const fallback = await supabase
+      .from("app_users")
+      .select("id, full_name, username, role, created_at")
+      .eq("id", id)
+      .maybeSingle();
+
+    return !fallback.error && fallback.data ? (fallback.data as AppUserRow) : null;
+  },
+  ["app-user-row-by-id"],
+  {
+    revalidate: 60,
+    tags: [CACHE_TAGS.users],
+  },
+);
 
 function getSessionSecret() {
   return (
@@ -112,28 +150,10 @@ function parseSessionToken(token: string | undefined | null): SessionPayload | n
 }
 
 async function findUserRowById(id: string): Promise<AppUserRow | null> {
-  const supabase = getSupabaseServerClient();
-  if (!supabase) {
+  if (!id) {
     return null;
   }
-
-  const withRoleKey = await supabase
-    .from("app_users")
-    .select("id, full_name, username, role, role_key, created_at")
-    .eq("id", id)
-    .maybeSingle();
-
-  if (!withRoleKey.error && withRoleKey.data) {
-    return withRoleKey.data as AppUserRow;
-  }
-
-  const fallback = await supabase
-    .from("app_users")
-    .select("id, full_name, username, role, created_at")
-    .eq("id", id)
-    .maybeSingle();
-
-  return !fallback.error && fallback.data ? (fallback.data as AppUserRow) : null;
+  return getCachedUserRowById(id);
 }
 
 async function mapAppUser(row: AppUserRow): Promise<AppUser> {

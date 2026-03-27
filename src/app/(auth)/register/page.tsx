@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { registerAction } from "@/app/auth-actions";
+import { PasswordRevealInput } from "@/components/password-reveal-input";
 import { getCurrentUser } from "@/lib/auth";
 
 type RegisterPageProps = {
@@ -34,8 +35,8 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
       ) : null}
 
       <form action={registerAction} className="auth-form">
-        <div>
-          <label className="mb-1 block text-xs font-semibold text-slate-600">Nama lengkap</label>
+        <div className="auth-field">
+          <label className="auth-field-label">Nama lengkap</label>
           <input
             name="full_name"
             placeholder="contoh: Andi Saputra"
@@ -43,8 +44,8 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
             required
           />
         </div>
-        <div>
-          <label className="mb-1 block text-xs font-semibold text-slate-600">Username</label>
+        <div className="auth-field">
+          <label className="auth-field-label">Username</label>
           <input
             name="username"
             placeholder="huruf kecil, angka, titik, _ atau -"
@@ -52,28 +53,20 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
             required
           />
         </div>
-        <div>
-          <label className="mb-1 block text-xs font-semibold text-slate-600">Password</label>
-          <input
-            type="password"
-            name="password"
-            placeholder="Minimal 6 karakter"
-            autoComplete="new-password"
-            required
-          />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-semibold text-slate-600">
-            Konfirmasi Password
-          </label>
-          <input
-            type="password"
-            name="password_confirm"
-            placeholder="Ulangi password"
-            autoComplete="new-password"
-            required
-          />
-        </div>
+        <PasswordRevealInput
+          name="password"
+          label="Password"
+          placeholder="Minimal 6 karakter"
+          autoComplete="new-password"
+          required
+        />
+        <PasswordRevealInput
+          name="password_confirm"
+          label="Konfirmasi Password"
+          placeholder="Ulangi password"
+          autoComplete="new-password"
+          required
+        />
         <button className="auth-submit">Buat Akun</button>
       </form>
 

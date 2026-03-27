@@ -10,6 +10,7 @@ import {
   updateManyProjectsAction,
 } from "@/app/actions";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
+import { ExpenseInputModeFields } from "@/components/expense-input-mode-fields";
 import { ExpenseDetailSearchForm } from "@/components/expense-detail-search-form";
 import { ExpenseDetailSearchResults } from "@/components/expense-detail-search-results";
 import {
@@ -26,15 +27,10 @@ import {
   WalletIcon,
 } from "@/components/icons";
 import { ExcelDropInput } from "@/components/excel-drop-input";
-import { EnterToNextField } from "@/components/enter-to-next-field";
-import { ProjectChecklistSearch } from "@/components/project-checklist-search";
-import { ProjectAutocomplete } from "@/components/project-autocomplete";
-import { ProjectScopedAutocompleteInput } from "@/components/project-scoped-autocomplete-input";
-import { RequesterProjectAutocompleteInput } from "@/components/requester-project-autocomplete-input";
+import { ReportCopyButton } from "@/components/report-copy-button";
 import { ReportDownloadPreviewButton } from "@/components/report-download-preview-button";
 import { ProjectsSelectionToggle } from "@/components/projects-selection-toggle";
 import { ProjectsSearchInput } from "@/components/projects-search-input";
-import { RupiahInput } from "@/components/rupiah-input";
 import { SuccessToast } from "@/components/success-toast";
 import {
   COST_CATEGORIES,
@@ -44,11 +40,11 @@ import {
   PROJECT_STATUSES,
   PROJECT_STATUS_STYLE,
   resolveSummaryCostCategory,
-  SPECIALIST_COST_PRESETS,
 } from "@/lib/constants";
 import {
   getDescriptionSuggestionsByProject,
   getExpenseCategories,
+  getKmpCianjurHokProjectPresets,
   getProjectDetail,
   getProjects,
   getRequesterSuggestionsByProject,
@@ -77,6 +73,7 @@ type ProjectPageProps = {
     detail_to?: string;
     detail_year?: string;
     success?: string;
+    error?: string;
     view?: string;
   }>;
 };
@@ -337,6 +334,8 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
           year: detailYear ?? undefined,
         })
       : [];
+  const hokProjectPresets =
+    activeModal === "expense-new" ? await getKmpCianjurHokProjectPresets() : [];
   const closeModalHref = createProjectsHref({
     projectId: currentProjectQueryId,
     searchText,
@@ -392,10 +391,16 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
     detailYear,
     view: activeView,
   });
+  const error = typeof params.error === "string" ? params.error : "";
 
   return (
     <div className="space-y-4">
       <SuccessToast message={success} />
+      {error ? (
+        <section className="panel border-rose-200 bg-rose-50 p-4">
+          <p className="text-sm text-rose-700">{error}</p>
+        </section>
+      ) : null}
       {activeDataSource === "demo" ? (
         <section className="panel border-amber-300 bg-amber-50 p-4">
           <p className="text-sm text-amber-700">
@@ -428,6 +433,8 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
               <>
                 <Link
                   href={openProjectModalHref}
+                  prefetch
+                  scroll={false}
                   data-ui-button="true"
                   className="button-primary button-sm"
                 >
@@ -438,6 +445,8 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 </Link>
                 <Link
                   href={openExpenseModalHref}
+                  prefetch
+                  scroll={false}
                   data-ui-button="true"
                   className="button-sm inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
                 >
@@ -450,6 +459,8 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
             ) : null}
             <Link
               href={openDetailSearchModalHref}
+              prefetch
+              scroll={false}
               data-ui-button="true"
               className="button-soft button-sm"
             >
@@ -461,6 +472,8 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
             {activeDataSource !== "demo" && canImport ? (
               <Link
                 href={openImportModalHref}
+                prefetch
+                scroll={false}
                 data-ui-button="true"
                 className="button-sm inline-flex items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 hover:bg-amber-100"
               >
@@ -476,7 +489,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
           <div className="info-banner xl:col-span-2">
             <p className="info-banner__title">Export Laporan</p>
             <p className="info-banner__text">{reportScopeLabel}</p>
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
               <ReportDownloadPreviewButton
                 label="PDF Rekapan Project"
                 iconType="pdf"
@@ -492,6 +505,13 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 projectIds={scopedReportProjectIds}
                 className="button-secondary button-sm"
               />
+              <ReportCopyButton
+                label="Salin Rekapan Project"
+                copyPath="/api/reports/expenses/all/text"
+                projectIds={scopedReportProjectIds}
+                className="button-secondary button-sm"
+                successLabel="Rekapan Tersalin"
+              />
               <ReportDownloadPreviewButton
                 label="PDF Rincian Biaya"
                 iconType="detail"
@@ -506,6 +526,13 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 previewPath="/api/reports/expenses/all/detail"
                 projectIds={scopedReportProjectIds}
                 className="button-soft button-sm"
+              />
+              <ReportCopyButton
+                label="Salin Rincian Biaya"
+                copyPath="/api/reports/expenses/all/detail/text"
+                projectIds={scopedReportProjectIds}
+                className="button-soft button-sm"
+                successLabel="Rincian Tersalin"
               />
             </div>
           </div>
@@ -569,6 +596,8 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
               <ProjectsSelectionToggle formId="selected-projects-report-form" />
               <Link
                 href={openDetailSearchModalHref}
+                prefetch
+                scroll={false}
                 data-ui-button="true"
                 className="button-soft button-sm"
               >
@@ -581,7 +610,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
             <form
               id="selected-projects-report-form"
               action={deleteSelectedProjectsAction}
-              className="grid w-full gap-2 sm:grid-cols-2 xl:w-auto xl:grid-cols-5"
+              className="grid w-full gap-2 sm:grid-cols-2 xl:grid-cols-6"
             >
               <input
                 type="hidden"
@@ -614,6 +643,16 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
               />
               ) : null}
               {canExport ? (
+              <ReportCopyButton
+                label="Salin Rekapan Terpilih"
+                copyPath="/api/reports/expenses/all/text"
+                selectedFormId="selected-projects-report-form"
+                selectedOnly
+                className="button-secondary button-sm"
+                successLabel="Rekapan Tersalin"
+              />
+              ) : null}
+              {canExport ? (
               <ReportDownloadPreviewButton
                 label="PDF Rincian Biaya Terpilih"
                 iconType="detail"
@@ -634,8 +673,18 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 className="button-soft button-sm"
               />
               ) : null}
+              {canExport ? (
+              <ReportCopyButton
+                label="Salin Rincian Terpilih"
+                copyPath="/api/reports/expenses/all/detail/text"
+                selectedFormId="selected-projects-report-form"
+                selectedOnly
+                className="button-soft button-sm"
+                successLabel="Rincian Tersalin"
+              />
+              ) : null}
               {canEdit ? (
-                <details className="rounded-xl border border-amber-200 bg-amber-50 p-3 sm:col-span-2 xl:col-span-5">
+                <details className="rounded-xl border border-amber-200 bg-amber-50 p-3 sm:col-span-2 xl:col-span-6">
                   <summary className="cursor-pointer text-xs font-semibold text-amber-700">
                     Edit Project Terpilih
                   </summary>
@@ -1072,6 +1121,8 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
         <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4">
           <Link
             href={closeModalHref}
+            prefetch
+            scroll={false}
             aria-label="Tutup modal"
             className="absolute inset-0 bg-slate-950/45"
           />
@@ -1088,6 +1139,8 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
               </h2>
               <Link
                 href={closeModalHref}
+                prefetch
+                scroll={false}
                 data-ui-button="true"
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100"
               >
@@ -1207,177 +1260,18 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
               <p className="mt-4 text-sm text-slate-500">Belum ada project. Buat project dulu.</p>
             ) : (
               <form id="expense-modal-form" action={createExpenseAction} className="mt-4 space-y-3">
-                <EnterToNextField formId="expense-modal-form" />
                 <input type="hidden" name="return_to" value={expenseModalReturnHref} />
-                <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">
-                  Field wajib
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-500">Project</label>
-                  <ProjectAutocomplete
-                    projects={projects}
-                    initialProjectId={currentProjectQueryId}
-                    autoFocus
-                  />
-                  <details className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                    <summary className="cursor-pointer text-xs font-semibold text-slate-700">
-                      Masukkan data yang sama ke project lain (opsional)
-                    </summary>
-                    <p className="mt-2 text-[11px] text-slate-500">
-                      Data akan disimpan ke project utama di atas, plus project tambahan yang Anda centang.
-                    </p>
-                    <ProjectChecklistSearch
-                      projects={projects}
-                      inputName="project_ids"
-                    />
-                  </details>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">Kategori</label>
-                    <select name="category" defaultValue={defaultExpenseCategory} required>
-                      {expenseCategories.map((item) => (
-                        <option key={item.value} value={item.value}>
-                          {item.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">Tanggal</label>
-                    <input type="date" name="expense_date" defaultValue={today} required />
-                  </div>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">
-                      Nama pengajuan
-                    </label>
-                    <RequesterProjectAutocompleteInput
-                      name="requester_name"
-                      placeholder="Contoh: Mandor Lapangan"
-                      required
-                      suggestions={requesterHistorySuggestions}
-                      projectClientNameById={projectClientNameById}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-500">Keterangan</label>
-                  <ProjectScopedAutocompleteInput
-                    name="description"
-                    placeholder="Contoh: KAS / MATERIAL / OPERASIONAL"
-                    required
-                    suggestionsByProject={descriptionSuggestionsForProjects}
-                    projectClientNameById={projectClientNameById}
-                  />
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <input type="hidden" name="amount_mode" value="tambah" />
-                    <label className="mb-1 block text-xs font-medium text-slate-500">Mode transaksi</label>
-                    <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                      Otomatis <strong>Tambah</strong>.
-                    </p>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">
-                      Nominal biaya total
-                    </label>
-                    <RupiahInput
-                      name="amount"
-                      required
-                      placeholder="Contoh: 1.000.000"
-                      submitOnEnter
-                    />
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700">
-                  Field opsional
-                </div>
-                <details className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                  <summary className="cursor-pointer text-xs font-semibold text-slate-700">
-                    Rincian Baru (opsional)
-                  </summary>
-                  <div className="mt-3 space-y-3">
-                    <div>
-                      <label className="mb-1 block text-xs font-medium text-slate-500">
-                        Kategori baru (opsional)
-                      </label>
-                      <input
-                        name="category_custom"
-                        placeholder="Isi jika ingin menambah kategori baru"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-xs font-medium text-slate-500">
-                        Penerima / vendor
-                      </label>
-                      <input name="recipient_name" placeholder="Opsional" />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-xs font-medium text-slate-500">
-                        Informasi penggunaan
-                      </label>
-                      <input name="usage_info" placeholder="Contoh: OPS bensin lapangan" />
-                    </div>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div>
-                        <label className="mb-1 block text-xs font-medium text-slate-500">
-                          Spesialis (preset)
-                        </label>
-                        <select name="specialist_type" defaultValue="">
-                          <option value="">Pilih jika kategori Upah Tim Spesialis</option>
-                          {SPECIALIST_COST_PRESETS.map((item) => (
-                            <option key={item.value} value={item.value}>
-                              {item.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs font-medium text-slate-500">
-                          Spesialis (custom)
-                        </label>
-                        <input
-                          name="specialist_type_custom"
-                          placeholder="Contoh: Plumbing, Finishing, Mekanikal"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </details>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">Qty</label>
-                    <input type="number" min={0} step={1} name="quantity" />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">Satuan</label>
-                    <input name="unit_label" placeholder="PCS / LTR / BH" />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">
-                      Harga satuan
-                    </label>
-                    <RupiahInput name="unit_price" placeholder="0" />
-                  </div>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-500">
-                    Catatan mode
-                  </label>
-                  <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                    Mode transaksi untuk form ini otomatis <strong>Tambah</strong>.
-                  </p>
-                </div>
-                <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-600">
-                  <span className="btn-icon icon-float-soft bg-white/20 text-white">
-                    <SaveIcon />
-                  </span>
-                  Simpan Biaya
-                </button>
+                <ExpenseInputModeFields
+                  projects={projects}
+                  initialProjectId={currentProjectQueryId}
+                  today={today}
+                  defaultExpenseCategory={defaultExpenseCategory}
+                  expenseCategories={expenseCategories}
+                  requesterHistorySuggestions={requesterHistorySuggestions}
+                  projectClientNameById={projectClientNameById}
+                  descriptionSuggestionsForProjects={descriptionSuggestionsForProjects}
+                  hokProjectPresets={hokProjectPresets}
+                />
               </form>
             )}
           </section>

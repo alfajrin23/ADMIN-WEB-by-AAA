@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { CloseIcon, DetailIcon, DownloadIcon, ExcelIcon, PdfIcon } from "@/components/icons";
+import { buildReportUrl } from "@/lib/report-client";
 
 type ReportIconType = "pdf" | "excel" | "detail";
 
@@ -15,74 +16,6 @@ type ReportDownloadPreviewButtonProps = {
   selectedOnly?: boolean;
   projectIds?: string[];
 };
-
-function getSelectedProjectIds(formId: string) {
-  return Array.from(
-    document.querySelectorAll<HTMLInputElement>(
-      `input[data-project-selection="true"][form="${formId}"]:checked`,
-    ),
-  )
-    .map((checkbox) => checkbox.value.trim())
-    .filter((value) => value.length > 0);
-}
-
-function normalizeProjectIds(projectIds: string[] | undefined) {
-  return Array.from(
-    new Set(
-      (projectIds ?? [])
-        .map((projectId) => projectId.trim())
-        .filter((projectId) => projectId.length > 0),
-    ),
-  );
-}
-
-function buildUrl(
-  basePath: string,
-  options: { selectedFormId?: string; selectedOnly?: boolean; projectIds?: string[] },
-) {
-  const url = new URL(basePath, window.location.origin);
-  const fixedProjectIds = normalizeProjectIds(options.projectIds);
-  if (fixedProjectIds.length > 0) {
-    url.searchParams.delete("selected_only");
-    url.searchParams.delete("project");
-    url.searchParams.set("selected_only", "1");
-    for (const projectId of fixedProjectIds) {
-      url.searchParams.append("project", projectId);
-    }
-    return {
-      href: `${url.pathname}${url.search}`,
-      hasSelection: true,
-    };
-  }
-
-  if (!options.selectedOnly) {
-    return {
-      href: `${url.pathname}${url.search}`,
-      hasSelection: true,
-    };
-  }
-
-  const selectedIds = options.selectedFormId
-    ? getSelectedProjectIds(options.selectedFormId)
-    : [];
-  if (selectedIds.length === 0) {
-    return {
-      href: `${url.pathname}${url.search}`,
-      hasSelection: false,
-    };
-  }
-
-  url.searchParams.delete("selected_only");
-  url.searchParams.delete("project");
-  url.searchParams.set("selected_only", "1");
-  for (const projectId of selectedIds) {
-    url.searchParams.append("project", projectId);
-  }
-  return {
-    href: `${url.pathname}${url.search}`,
-    hasSelection: true,
-  };
-}
 
 function withPreviewQuery(href: string) {
   return href.includes("?") ? `${href}&preview=1` : `${href}?preview=1`;
@@ -139,13 +72,13 @@ export function ReportDownloadPreviewButton({
   }, [downloadHref, isOpen]);
 
   const handleOpenPreview = () => {
-    const download = buildUrl(downloadPath, { selectedFormId, selectedOnly, projectIds });
+    const download = buildReportUrl(downloadPath, { selectedFormId, selectedOnly, projectIds });
     if (!download.hasSelection) {
       window.alert("Pilih minimal satu project terlebih dahulu.");
       return;
     }
     const previewBase = previewPath ?? downloadPath;
-    const preview = buildUrl(previewBase, { selectedFormId, selectedOnly, projectIds });
+    const preview = buildReportUrl(previewBase, { selectedFormId, selectedOnly, projectIds });
     setDownloadHref(download.href);
     setPreviewHref(withPreviewQuery(preview.href));
     setIsOpen(true);

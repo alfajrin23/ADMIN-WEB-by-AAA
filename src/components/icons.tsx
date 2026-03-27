@@ -228,6 +228,25 @@ export function EyeIcon(props: IconProps) {
   );
 }
 
+export function EyeOffIcon(props: IconProps) {
+  return (
+    <svg
+      width="100%"
+      height="100%"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      {...props}
+    >
+      <path d="M3 3 21 21" />
+      <path d="M10.6 10.7A3 3 0 0 0 14 14" />
+      <path d="M9.4 5.4A10.2 10.2 0 0 1 12 5c6 0 9.5 7 9.5 7a17.3 17.3 0 0 1-3.1 3.9" />
+      <path d="M6.6 6.7C4.2 8.3 2.5 12 2.5 12a17.5 17.5 0 0 0 6.8 5.9A10.6 10.6 0 0 0 12 19c1.3 0 2.6-.2 3.7-.6" />
+    </svg>
+  );
+}
+
 export function EditIcon(props: IconProps) {
   return (
     <svg
@@ -348,6 +367,40 @@ export function SearchIcon(props: IconProps) {
   );
 }
 
+export function ArrowLeftIcon(props: IconProps) {
+  return (
+    <svg
+      width="100%"
+      height="100%"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      {...props}
+    >
+      <path d="m15 5-7 7 7 7" />
+      <path d="M8 12h11" />
+    </svg>
+  );
+}
+
+export function ArrowRightIcon(props: IconProps) {
+  return (
+    <svg
+      width="100%"
+      height="100%"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      {...props}
+    >
+      <path d="m9 5 7 7-7 7" />
+      <path d="M5 12h11" />
+    </svg>
+  );
+}
+
 export function DownloadIcon(props: IconProps) {
   return (
     <svg
@@ -362,6 +415,25 @@ export function DownloadIcon(props: IconProps) {
       <path d="M12 4v10" />
       <path d="m8 10 4 4 4-4" />
       <path d="M4 20h16" />
+    </svg>
+  );
+}
+
+export function ClipboardIcon(props: IconProps) {
+  return (
+    <svg
+      width="100%"
+      height="100%"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      {...props}
+    >
+      <rect x="6" y="4.5" width="12" height="16.5" rx="2" />
+      <path d="M9 4.5h6" />
+      <path d="M9 3h6a1.5 1.5 0 0 1 1.5 1.5v1H7.5v-1A1.5 1.5 0 0 1 9 3Z" />
+      <path d="M9 10h6M9 14h6M9 18h4" />
     </svg>
   );
 }

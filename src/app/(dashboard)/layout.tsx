@@ -30,7 +30,7 @@ export default async function DashboardLayout({
     <div className="app-surface">
       <div className="mx-auto grid min-h-screen max-w-[1480px] grid-cols-1 gap-4 p-4 lg:grid-cols-[272px_minmax(0,1fr)] lg:p-5">
         <aside className="panel flex flex-col overflow-hidden p-4 lg:sticky lg:top-5 lg:h-[calc(100vh-2.5rem)]">
-          <Link href="/" className="flex items-center gap-3">
+          <Link href="/" prefetch className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-md shadow-slate-900/10">
               <Image
                 src="/logo-admin.svg"
@@ -119,7 +119,7 @@ export default async function DashboardLayout({
                   Administrasi proyek yang lebih ringkas dan lebih mudah dibaca.
                 </h2>
               </div>
-              <Link href="/" className="button-ghost button-sm">
+              <Link href="/" prefetch className="button-ghost button-sm">
                 <span className="btn-icon bg-slate-100 text-slate-700">
                   <DashboardIcon />
                 </span>

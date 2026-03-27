@@ -419,6 +419,8 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
                               logId: log.id,
                               mode: "view",
                             })}
+                            prefetch
+                            scroll={false}
                             data-ui-button="true"
                             className="button-secondary button-xs"
                           >
@@ -461,6 +463,8 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
         <div className="modal-overlay fixed inset-0 z-[70] flex items-center justify-center p-4">
           <Link
             href={closeModalHref}
+            prefetch
+            scroll={false}
             aria-label="Tutup modal log"
             className="absolute inset-0 bg-slate-950/45"
           />
@@ -474,7 +478,13 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
                   {selectedLog.actionType} pada modul {selectedLog.module}.
                 </p>
               </div>
-              <Link href={closeModalHref} data-ui-button="true" className="button-ghost button-sm">
+              <Link
+                href={closeModalHref}
+                prefetch
+                scroll={false}
+                data-ui-button="true"
+                className="button-ghost button-sm"
+              >
                 <span className="btn-icon bg-slate-100 text-slate-700">
                   <CloseIcon />
                 </span>
@@ -536,6 +546,8 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
                       logId: selectedLog.id,
                       mode: "view",
                     })}
+                    prefetch
+                    scroll={false}
                     data-ui-button="true"
                     className="button-ghost button-sm"
                   >
@@ -624,6 +636,8 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
                         logId: selectedLog.id,
                         mode: "edit",
                       })}
+                      prefetch
+                      scroll={false}
                       data-ui-button="true"
                       className="button-primary button-sm"
                     >

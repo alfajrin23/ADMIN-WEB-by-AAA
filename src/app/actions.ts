@@ -27,6 +27,7 @@ import {
   type WorkerTeam,
   WORKER_TEAMS,
 } from "@/lib/constants";
+import { getKmpCianjurHokProjectPresets } from "@/lib/data";
 import {
   deleteExcelAttendance,
   deleteExcelExpense,
@@ -1032,8 +1033,202 @@ function getExpenseTargetProjectIds(formData: FormData) {
   return Array.from(new Set(selectedIds));
 }
 
+function parsePositiveAmount(value: unknown) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value > 0 ? Math.abs(value) : 0;
+  }
+
+  if (typeof value !== "string") {
+    return 0;
+  }
+
+  const normalizedDigits = value.replace(/[^\d]/g, "");
+  if (!normalizedDigits) {
+    return 0;
+  }
+
+  const parsed = Number(normalizedDigits);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+async function createHokExpenseEntries(
+  actor: Awaited<ReturnType<typeof requireEditorActionUser>>,
+  formData: FormData,
+  returnTo: string | null,
+) {
+  const rawRows = getString(formData, "hok_rows_json");
+  let parsedRows: unknown;
+  try {
+    parsedRows = rawRows ? JSON.parse(rawRows) : [];
+  } catch {
+    if (returnTo) {
+      redirect(withReturnMessage(returnTo, "error", "Data project HOK tidak valid."));
+    }
+    return;
+  }
+
+  if (!Array.isArray(parsedRows) || parsedRows.length === 0) {
+    if (returnTo) {
+      redirect(withReturnMessage(returnTo, "error", "Pilih minimal satu project HOK."));
+    }
+    return;
+  }
+
+  const availablePresets = await getKmpCianjurHokProjectPresets();
+  const presetByProjectId = new Map(
+    availablePresets.map((item) => [item.projectId, item] as const),
+  );
+
+  const rows = parsedRows
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+
+      const projectId =
+        typeof (item as { projectId?: unknown }).projectId === "string"
+          ? (item as { projectId: string }).projectId.trim()
+          : "";
+      const amount = parsePositiveAmount((item as { amount?: unknown }).amount);
+      if (!projectId || amount <= 0) {
+        return null;
+      }
+
+      const preset = presetByProjectId.get(projectId);
+      if (!preset) {
+        return null;
+      }
+
+      return {
+        projectId,
+        projectName: preset.projectName,
+        requesterName: preset.requesterName,
+        amount,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+  if (rows.length === 0) {
+    if (returnTo) {
+      redirect(
+        withReturnMessage(
+          returnTo,
+          "error",
+          "Nominal HOK wajib diisi untuk setiap project yang dipilih.",
+        ),
+      );
+    }
+    return;
+  }
+
+  const expenseDate = getString(formData, "expense_date") || new Date().toISOString().slice(0, 10);
+  const basePayload = {
+    category: "upah_kasbon_tukang",
+    specialist_type: null,
+    description: "HOK",
+    recipient_name: null,
+    quantity: 1,
+    unit_label: null,
+    usage_info: null,
+    unit_price: 0,
+    expense_date: expenseDate,
+  };
+
+  if (activeDataSource === "excel") {
+    for (const row of rows) {
+      insertExcelExpense({
+        ...basePayload,
+        project_id: row.projectId,
+        requester_name: row.requesterName,
+        amount: row.amount,
+      });
+    }
+  } else if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return;
+    }
+    await Promise.all([
+      upsertSupabaseCategories(supabase, [basePayload.category]),
+      supabase.from("project_expenses").insert(
+        rows.map((row) => ({
+          project_id: row.projectId,
+          category: basePayload.category,
+          specialist_type: basePayload.specialist_type,
+          requester_name: row.requesterName,
+          description: basePayload.description,
+          recipient_name: basePayload.recipient_name,
+          quantity: basePayload.quantity,
+          unit_label: basePayload.unit_label,
+          usage_info: basePayload.usage_info,
+          unit_price: basePayload.unit_price,
+          amount: row.amount,
+          expense_date: basePayload.expense_date,
+        })),
+      ),
+    ]);
+  } else if (activeDataSource === "firebase") {
+    const firestore = getFirestoreServerClient();
+    if (!firestore) {
+      return;
+    }
+    await runFirebaseWriteSafely(async () => {
+      const batch = firestore.batch();
+      for (const row of rows) {
+        const id = randomUUID();
+        batch.set(firestore.collection("project_expenses").doc(id), {
+          id,
+          ...basePayload,
+          project_id: row.projectId,
+          requester_name: row.requesterName,
+          amount: row.amount,
+          created_at: createTimestamp(),
+        });
+      }
+      await batch.commit();
+    });
+  } else {
+    return;
+  }
+
+  revalidateProjectPages();
+  revalidateExpenseCache();
+  revalidatePath("/logs");
+  queueActivityLog({
+    actor,
+    actionType: "create",
+    module: "expense",
+    description: `Menambah data HOK KMP Cianjur ke ${rows.length} project.`,
+    payload: {
+      expense_mode: "hok_kmp_cianjur",
+      project_ids: rows.map((row) => row.projectId),
+      project_names: rows.map((row) => row.projectName),
+      requester_names: rows.map((row) => row.requesterName),
+      description: basePayload.description,
+      category: basePayload.category,
+      expense_date: basePayload.expense_date,
+      total_amount: rows.reduce((sum, row) => sum + row.amount, 0),
+    },
+  });
+  if (returnTo) {
+    redirect(
+      withReturnMessage(
+        returnTo,
+        "success",
+        `HOK berhasil disimpan ke ${rows.length} project.`,
+      ),
+    );
+  }
+}
+
 export async function createExpenseAction(formData: FormData) {
   const actor = await requireEditorActionUser();
+  const returnTo = getReturnTo(formData);
+  if (getString(formData, "expense_input_mode") === "hok_kmp_cianjur") {
+    await createHokExpenseEntries(actor, formData, returnTo);
+    return;
+  }
+
   const projectIds = getExpenseTargetProjectIds(formData);
   const requesterName = getString(formData, "requester_name");
   const description = getString(formData, "description");
@@ -1048,9 +1243,11 @@ export async function createExpenseAction(formData: FormData) {
     !Number.isFinite(amount) ||
     amount === 0
   ) {
+    if (returnTo) {
+      redirect(withReturnMessage(returnTo, "error", "Lengkapi field wajib biaya terlebih dahulu."));
+    }
     return;
   }
-  const returnTo = getReturnTo(formData);
   const specialistType = getSpecialistType(formData, parsedCategory);
 
   const basePayload = {

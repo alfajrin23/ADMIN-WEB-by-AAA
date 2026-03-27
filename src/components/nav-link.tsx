@@ -26,6 +26,7 @@ export function NavLink({ children, href, icon, tone = "overview" }: NavLinkProp
   return (
     <Link
       href={href}
+      prefetch
       data-ui-button="true"
       data-active={isActive ? "true" : "false"}
       className={`block rounded-xl border px-3 py-2.5 text-[13px] font-semibold transition-all duration-300 ${

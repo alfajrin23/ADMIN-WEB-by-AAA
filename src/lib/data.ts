@@ -1216,14 +1216,25 @@ function getExcelProjectsMapped() {
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+const getCachedSupabaseProjects = unstable_cache(
+  async (): Promise<Project[]> => {
+    const rows = await getCachedSupabaseProjectRows();
+    return rows.map((row) => mapProject(row));
+  },
+  ["supabase-projects-mapped"],
+  {
+    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
+    tags: [CACHE_TAGS.projects],
+  },
+);
+
 export async function getProjects(): Promise<Project[]> {
   if (activeDataSource === "excel") {
     return getExcelProjectsMapped();
   }
 
   if (activeDataSource === "supabase") {
-    const data = await getCachedSupabaseProjectRows();
-    return data.map((row) => mapProject(row));
+    return getCachedSupabaseProjects();
   }
 
   if (activeDataSource === "firebase") {
@@ -1236,6 +1247,180 @@ export async function getProjects(): Promise<Project[]> {
   return sampleProjects;
 }
 
+function normalizeRequesterName(value: string | null | undefined) {
+  return (value ?? "").trim().replace(/\s+/g, " ");
+}
+
+function isKmpCianjurClientName(value: string | null | undefined) {
+  return resolveClientScopeKey(value).includes("kmp cianjur");
+}
+
+function isHokExpenseDescription(entry: Pick<ExpenseEntry, "description" | "usageInfo">) {
+  const haystack = [entry.description, entry.usageInfo]
+    .map((value) => value?.trim().toLowerCase() ?? "")
+    .filter((value) => value.length > 0)
+    .join(" ");
+  return /\bhok\b/.test(haystack);
+}
+
+function incrementRequesterCounter(counter: Map<string, number>, requesterName: string) {
+  counter.set(requesterName, (counter.get(requesterName) ?? 0) + 1);
+}
+
+function incrementRequesterCounterByProject(
+  target: Map<string, Map<string, number>>,
+  projectId: string,
+  requesterName: string,
+) {
+  const current = target.get(projectId) ?? new Map<string, number>();
+  incrementRequesterCounter(current, requesterName);
+  target.set(projectId, current);
+}
+
+function pickTopRequester(counter: Map<string, number> | undefined) {
+  if (!counter || counter.size === 0) {
+    return "";
+  }
+
+  return (
+    Array.from(counter.entries())
+      .sort((a, b) => {
+        if (b[1] !== a[1]) {
+          return b[1] - a[1];
+        }
+        return a[0].localeCompare(b[0], "id-ID");
+      })[0]?.[0] ?? ""
+  );
+}
+
+function buildKmpCianjurHokProjectPresets(projects: Project[], expenses: ExpenseEntry[]) {
+  const kmpProjects = projects
+    .filter((project) => isKmpCianjurClientName(project.clientName))
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name, "id-ID"));
+  if (kmpProjects.length === 0) {
+    return [];
+  }
+
+  const projectIdSet = new Set(kmpProjects.map((project) => project.id));
+  const projectHokRequesterCounts = new Map<string, Map<string, number>>();
+  const projectUpahRequesterCounts = new Map<string, Map<string, number>>();
+  const clientHokRequesterCounts = new Map<string, number>();
+  const clientUpahRequesterCounts = new Map<string, number>();
+
+  for (const expense of expenses) {
+    if (!isVisibleExpense(expense) || !projectIdSet.has(expense.projectId)) {
+      continue;
+    }
+
+    const requesterName = normalizeRequesterName(expense.requesterName);
+    if (!requesterName) {
+      continue;
+    }
+
+    const isUpahKasbonTukang = toCategorySlug(expense.category) === "upah_kasbon_tukang";
+    const isHokExpense = isHokExpenseDescription(expense);
+
+    if (isHokExpense) {
+      incrementRequesterCounter(clientHokRequesterCounts, requesterName);
+      incrementRequesterCounterByProject(projectHokRequesterCounts, expense.projectId, requesterName);
+    }
+
+    if (isUpahKasbonTukang) {
+      incrementRequesterCounter(clientUpahRequesterCounts, requesterName);
+      incrementRequesterCounterByProject(projectUpahRequesterCounts, expense.projectId, requesterName);
+    }
+  }
+
+  const clientHokRequester = pickTopRequester(clientHokRequesterCounts);
+  const clientUpahRequester = pickTopRequester(clientUpahRequesterCounts);
+  const fallbackRequester = clientHokRequester || clientUpahRequester || "MANDOR HOK";
+
+  return kmpProjects.map((project) => {
+    const projectHokRequester = pickTopRequester(projectHokRequesterCounts.get(project.id));
+    const projectUpahRequester = pickTopRequester(projectUpahRequesterCounts.get(project.id));
+    const requesterName = projectHokRequester || projectUpahRequester || fallbackRequester;
+    const requesterSource: "project_hok" | "project_upah" | "client_hok" | "client_upah" | "fallback" =
+      projectHokRequester
+        ? "project_hok"
+        : projectUpahRequester
+          ? "project_upah"
+          : clientHokRequester
+            ? "client_hok"
+            : clientUpahRequester
+              ? "client_upah"
+              : "fallback";
+
+    return {
+      projectId: project.id,
+      projectName: project.name,
+      clientName: project.clientName,
+      requesterName,
+      requesterSource,
+      defaultSelected: Boolean(projectHokRequester || projectUpahRequester),
+    };
+  });
+}
+
+type KmpCianjurHokProjectPreset = {
+  projectId: string;
+  projectName: string;
+  clientName: string | null;
+  requesterName: string;
+  requesterSource: "project_hok" | "project_upah" | "client_hok" | "client_upah" | "fallback";
+  defaultSelected: boolean;
+};
+
+const getCachedSupabaseKmpCianjurHokProjectPresets = unstable_cache(
+  async (): Promise<KmpCianjurHokProjectPreset[]> => {
+    const [projects, expenseRows] = await Promise.all([
+      getCachedSupabaseProjects(),
+      getCachedSupabaseAllExpenseRows(),
+    ]);
+    const projectNameMap = Object.fromEntries(
+      projects.map((project) => [project.id, project.name] as const),
+    );
+    const expenses = expenseRows.map((row) => mapExpense(row, projectNameMap[String(row.project_id)]));
+    return buildKmpCianjurHokProjectPresets(projects, expenses);
+  },
+  ["supabase-kmp-cianjur-hok-project-presets"],
+  {
+    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
+    tags: [CACHE_TAGS.projects, CACHE_TAGS.expenses],
+  },
+);
+
+export async function getKmpCianjurHokProjectPresets(): Promise<
+  KmpCianjurHokProjectPreset[]
+> {
+  if (activeDataSource === "excel") {
+    const db = readExcelDatabase();
+    const projects = db.projects.map((row) => mapProject(row));
+    const projectNameMap = Object.fromEntries(db.projects.map((project) => [project.id, project.name]));
+    const expenses = db.project_expenses.map((row) => mapExpense(row, projectNameMap[row.project_id]));
+    return buildKmpCianjurHokProjectPresets(projects, expenses);
+  }
+
+  if (activeDataSource === "supabase") {
+    return getCachedSupabaseKmpCianjurHokProjectPresets();
+  }
+
+  if (activeDataSource === "firebase") {
+    const [projectRows, expenseRows] = await Promise.all([
+      getFirebaseCollectionRows("projects"),
+      getFirebaseCollectionRows("project_expenses"),
+    ]);
+    const projectNameMap = Object.fromEntries(
+      projectRows.map((row) => [String(row.id ?? ""), String(row.name ?? "Project")]),
+    );
+    const projects = projectRows.map((row) => mapProject(row));
+    const expenses = expenseRows.map((row) => mapExpense(row, projectNameMap[String(row.project_id ?? "")]));
+    return buildKmpCianjurHokProjectPresets(projects, expenses);
+  }
+
+  return buildKmpCianjurHokProjectPresets(sampleProjects, sampleExpenses);
+}
+
 export async function getExpenseCategories(): Promise<ExpenseCategoryOption[]> {
   if (activeDataSource === "excel") {
     const db = readExcelDatabase();
@@ -1243,29 +1428,8 @@ export async function getExpenseCategories(): Promise<ExpenseCategoryOption[]> {
   }
 
   if (activeDataSource === "supabase") {
-    const { categoryRows, expenseRows } = await getCachedSupabaseExpenseMetadata();
-
-    const registeredOptions =
-      Array.isArray(categoryRows)
-        ? categoryRows
-            .map((row) => {
-              const value = toCategorySlug(String(row.slug ?? ""));
-              if (!value) {
-                return null;
-              }
-              const labelRaw = typeof row.label === "string" ? row.label.trim() : "";
-              return {
-                value,
-                label: labelRaw || getCostCategoryLabel(value),
-              };
-            })
-            .filter((row): row is ExpenseCategoryOption => Boolean(row))
-        : [];
-    const expenseValues = expenseRows
-      .map((row) => toCategorySlug(String(row.category ?? "")))
-      .filter((value) => value.length > 0);
-
-    return mergeExpenseCategoryOptions(registeredOptions, expenseValues);
+    const { expenseCategories } = await getCachedSupabaseExpenseDerivedData();
+    return expenseCategories;
   }
 
   if (activeDataSource === "firebase") {
@@ -1324,6 +1488,72 @@ function buildProjectTextSuggestionMap(rows: ProjectTextSuggestionRow[]) {
   );
 }
 
+type CachedSupabaseExpenseDerivedData = {
+  expenseCategories: ExpenseCategoryOption[];
+  requesterSuggestionsByProject: Record<string, string[]>;
+  descriptionSuggestionsByProject: Record<string, string[]>;
+};
+
+function buildSupabaseExpenseDerivedData(
+  metadata: CachedSupabaseExpenseMetadata,
+): CachedSupabaseExpenseDerivedData {
+  const registeredOptions =
+    Array.isArray(metadata.categoryRows)
+      ? metadata.categoryRows
+          .map((row) => {
+            const value = toCategorySlug(String(row.slug ?? ""));
+            if (!value) {
+              return null;
+            }
+            const labelRaw = typeof row.label === "string" ? row.label.trim() : "";
+            return {
+              value,
+              label: labelRaw || getCostCategoryLabel(value),
+            };
+          })
+          .filter((row): row is ExpenseCategoryOption => Boolean(row))
+      : [];
+
+  const expenseValues: string[] = [];
+  const requesterRows: ProjectTextSuggestionRow[] = [];
+  const descriptionRows: ProjectTextSuggestionRow[] = [];
+
+  for (const row of metadata.expenseRows) {
+    const parsedCategory = toCategorySlug(String(row.category ?? ""));
+    if (!parsedCategory || isHiddenCostCategory(parsedCategory)) {
+      continue;
+    }
+
+    expenseValues.push(parsedCategory);
+
+    const projectId = String(row.project_id ?? "");
+    requesterRows.push({
+      projectId,
+      value: typeof row.requester_name === "string" ? row.requester_name : null,
+    });
+    descriptionRows.push({
+      projectId,
+      value: typeof row.description === "string" ? row.description : null,
+    });
+  }
+
+  return {
+    expenseCategories: mergeExpenseCategoryOptions(registeredOptions, expenseValues),
+    requesterSuggestionsByProject: buildProjectTextSuggestionMap(requesterRows),
+    descriptionSuggestionsByProject: buildProjectTextSuggestionMap(descriptionRows),
+  };
+}
+
+const getCachedSupabaseExpenseDerivedData = unstable_cache(
+  async (): Promise<CachedSupabaseExpenseDerivedData> =>
+    buildSupabaseExpenseDerivedData(await getCachedSupabaseExpenseMetadata()),
+  ["supabase-expense-derived-data"],
+  {
+    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
+    tags: [CACHE_TAGS.expenses, CACHE_TAGS.expenseCategories],
+  },
+);
+
 export async function getRequesterSuggestionsByProject(): Promise<Record<string, string[]>> {
   if (activeDataSource === "excel") {
     const db = readExcelDatabase();
@@ -1338,24 +1568,8 @@ export async function getRequesterSuggestionsByProject(): Promise<Record<string,
   }
 
   if (activeDataSource === "supabase") {
-    const { expenseRows: data } = await getCachedSupabaseExpenseMetadata();
-    if (data.length === 0) {
-      return {};
-    }
-
-    const rows = data
-      .map((row) => {
-        const parsedCategory = toCategorySlug(String(row.category ?? ""));
-        if (!parsedCategory || isHiddenCostCategory(parsedCategory)) {
-          return null;
-        }
-        return {
-          projectId: String(row.project_id ?? ""),
-          value: typeof row.requester_name === "string" ? row.requester_name : null,
-        };
-      })
-      .filter((row): row is NonNullable<typeof row> => Boolean(row));
-    return buildProjectTextSuggestionMap(rows);
+    const { requesterSuggestionsByProject } = await getCachedSupabaseExpenseDerivedData();
+    return requesterSuggestionsByProject;
   }
 
   if (activeDataSource === "firebase") {
@@ -1393,24 +1607,8 @@ export async function getDescriptionSuggestionsByProject(): Promise<Record<strin
   }
 
   if (activeDataSource === "supabase") {
-    const { expenseRows: data } = await getCachedSupabaseExpenseMetadata();
-    if (data.length === 0) {
-      return {};
-    }
-
-    const rows = data
-      .map((row) => {
-        const parsedCategory = toCategorySlug(String(row.category ?? ""));
-        if (!parsedCategory || isHiddenCostCategory(parsedCategory)) {
-          return null;
-        }
-        return {
-          projectId: String(row.project_id ?? ""),
-          value: typeof row.description === "string" ? row.description : null,
-        };
-      })
-      .filter((row): row is NonNullable<typeof row> => Boolean(row));
-    return buildProjectTextSuggestionMap(rows);
+    const { descriptionSuggestionsByProject } = await getCachedSupabaseExpenseDerivedData();
+    return descriptionSuggestionsByProject;
   }
 
   if (activeDataSource === "firebase") {
@@ -1554,6 +1752,48 @@ export async function getAttendanceById(attendanceId: string): Promise<Attendanc
   return sampleAttendance.find((item) => item.id === attendanceId) ?? null;
 }
 
+const getCachedSupabaseProjectDetail = unstable_cache(
+  async (projectId: string): Promise<ProjectDetail | null> => {
+    if (!projectId) {
+      return null;
+    }
+
+    const [projectRow, expenseRows, categoryOptions] = await Promise.all([
+      getCachedSupabaseProjectRowById(projectId),
+      getCachedSupabaseProjectExpenseRows(projectId),
+      getExpenseCategories(),
+    ]);
+
+    if (!projectRow) {
+      return null;
+    }
+
+    if (expenseRows.length === 0) {
+      return {
+        project: mapProject(projectRow),
+        expenses: [],
+        categoryTotals: buildCategoryTotals([], categoryOptions),
+      };
+    }
+
+    const projectName = String(projectRow.name ?? "");
+    const expenses = expenseRows
+      .map((row) => mapExpense(row, projectName))
+      .filter((row) => isVisibleExpense(row));
+
+    return {
+      project: mapProject(projectRow),
+      expenses,
+      categoryTotals: buildCategoryTotals(expenses, categoryOptions),
+    };
+  },
+  ["supabase-project-detail"],
+  {
+    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
+    tags: [CACHE_TAGS.projects, CACHE_TAGS.expenses, CACHE_TAGS.expenseCategories],
+  },
+);
+
 export async function getProjectDetail(projectId: string): Promise<ProjectDetail | null> {
   if (!projectId) {
     return null;
@@ -1582,32 +1822,7 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
   }
 
   if (activeDataSource === "supabase") {
-    const [projectRow, expenseRows, categoryOptions] = await Promise.all([
-      getCachedSupabaseProjectRowById(projectId),
-      getCachedSupabaseProjectExpenseRows(projectId),
-      getExpenseCategories(),
-    ]);
-
-    if (!projectRow) {
-      return null;
-    }
-
-    if (expenseRows.length === 0) {
-      return {
-        project: mapProject(projectRow),
-        expenses: [],
-        categoryTotals: buildCategoryTotals([], categoryOptions),
-      };
-    }
-
-    const expenses = expenseRows
-      .map((row) => mapExpense(row, String(projectRow.name ?? "")))
-      .filter((row) => isVisibleExpense(row));
-    return {
-      project: mapProject(projectRow),
-      expenses,
-      categoryTotals: buildCategoryTotals(expenses, categoryOptions),
-    };
+    return getCachedSupabaseProjectDetail(projectId);
   }
 
   if (activeDataSource === "firebase") {
@@ -1925,74 +2140,24 @@ export async function searchExpenseDetails(
   }
 
   if (activeDataSource === "supabase") {
-    const supabase = getSupabaseServerClient();
-    if (!supabase) {
-      return [];
-    }
+    const [projects, expenseRows] = await Promise.all([
+      getCachedSupabaseProjects(),
+      getCachedSupabaseAllExpenseRows(),
+    ]);
+    const projectNameMap = Object.fromEntries(
+      projects.map((project) => [project.id, project.name] as const),
+    );
 
-    const pageSize = 1000;
-    const mappedResults: ProjectExpenseSearchResult[] = [];
-    let offset = 0;
-
-    while (true) {
-      let supabaseQuery = supabase
-        .from("project_expenses")
-        .select(
-          "id, project_id, requester_name, description, recipient_name, usage_info, category, amount, expense_date, projects(name)",
-        )
-        .order("expense_date", { ascending: false })
-        .order("id", { ascending: false })
-        .range(offset, offset + pageSize - 1);
-      if (dateFilters.from) {
-        supabaseQuery = supabaseQuery.gte("expense_date", dateFilters.from);
-      }
-      if (dateFilters.to) {
-        supabaseQuery = supabaseQuery.lte("expense_date", dateFilters.to);
-      }
-
-      const { data, error } = await supabaseQuery;
-      if (error || !data) {
-        return [];
-      }
-      if (data.length === 0) {
-        break;
-      }
-
-      const currentPage = data
-        .map((row) => {
-          const mapped = mapExpense(row, resolveJoinName(row.projects));
-          return {
-            mapped,
-            projectName: resolveJoinName(row.projects)?.trim() || mapped.projectName?.trim() || "Project",
-          };
-        })
-        .filter((item) => isVisibleExpense(item.mapped))
-        .filter((item) => matchesExpenseDetailDateFilter(item.mapped.expenseDate, dateFilters))
-        .filter((item) =>
-          normalizedQuery ? matchExpenseSearchQuery(item.mapped, normalizedQuery, queryDigits) : true,
-        )
-        .map((item) => mapExpenseSearchResult(item.mapped, item.projectName));
-
-      mappedResults.push(...currentPage);
-
-      if (data.length < pageSize) {
-        break;
-      }
-
-      if (mappedResults.length >= limit) {
-        const cutoffIndex = Math.min(limit, mappedResults.length) - 1;
-        const cutoffDate = mappedResults
-          .slice()
-          .sort(sortExpenseSearchResults)[cutoffIndex]?.expenseDate;
-        const lastRowExpenseDate = String(data[data.length - 1]?.expense_date ?? "").slice(0, 10);
-        if (cutoffDate && lastRowExpenseDate && lastRowExpenseDate < cutoffDate) {
-          break;
-        }
-      }
-      offset += pageSize;
-    }
-
-    return mappedResults.sort(sortExpenseSearchResults).slice(0, limit);
+    return expenseRows
+      .map((row) => mapExpense(row, projectNameMap[String(row.project_id)]))
+      .filter((row) => isVisibleExpense(row))
+      .filter((row) => matchesExpenseDetailDateFilter(row.expenseDate, dateFilters))
+      .filter((row) =>
+        normalizedQuery ? matchExpenseSearchQuery(row, normalizedQuery, queryDigits) : true,
+      )
+      .map((row) => mapExpenseSearchResult(row, row.projectName?.trim() || "Project"))
+      .sort(sortExpenseSearchResults)
+      .slice(0, limit);
   }
 
   if (activeDataSource === "firebase") {
@@ -2121,68 +2286,16 @@ export async function getWageRecap(options?: {
   }
 
   if (activeDataSource === "supabase") {
-    const supabase = getSupabaseServerClient();
-    if (!supabase) {
-      return {
-        from,
-        to,
-        recapMode,
-        rows: [],
-        projectSummaries: [],
-        teamSummaries: [],
-        projectTeamSummaries: [],
-        workerSummaries: [],
-        totalDailyWage: 0,
-        totalOvertimePay: 0,
-        totalKasbon: 0,
-        totalReimburse: 0,
-        totalNetPay: 0,
-      };
-    }
+    const [projects, attendanceRowsRaw, payrollResetRowsRaw] = await Promise.all([
+      getCachedSupabaseProjects(),
+      getCachedSupabaseAllAttendanceRows(),
+      getCachedSupabasePayrollResetRows(),
+    ]);
+    const projectNameMap = Object.fromEntries(
+      projects.map((project) => [project.id, project.name] as const),
+    );
 
-    let query = supabase
-      .from("attendance_records")
-      .select(
-        "id, project_id, worker_name, team_type, specialist_team_name, status, work_days, daily_wage, overtime_hours, overtime_wage, kasbon_amount, reimburse_type, reimburse_amount, attendance_date, notes, created_at, projects(name)",
-      )
-      .gte("attendance_date", from)
-      .lte("attendance_date", to)
-      .order("attendance_date", { ascending: false });
-
-    if (projectId) {
-      query = query.eq("project_id", projectId);
-    }
-    if (teamType) {
-      query = query.eq("team_type", teamType);
-    }
-    if (normalizedAttendanceIds.length > 0) {
-      query = query.in("id", normalizedAttendanceIds);
-    }
-
-    if (typeof limit === "number") {
-      query = query.limit(limit);
-    }
-
-    const { data, error } = await query;
-    if (error || !data) {
-      return {
-        from,
-        to,
-        recapMode,
-        rows: [],
-        projectSummaries: [],
-        teamSummaries: [],
-        projectTeamSummaries: [],
-        workerSummaries: [],
-        totalDailyWage: 0,
-        totalOvertimePay: 0,
-        totalKasbon: 0,
-        totalReimburse: 0,
-        totalNetPay: 0,
-      };
-    }
-
-    const payrollResets = (await getCachedSupabasePayrollResetRows())
+    const payrollResets = payrollResetRowsRaw
       .map((row) => mapPayrollResetRow(row))
       .filter((row): row is NonNullable<typeof row> => Boolean(row))
       .filter((row) => (projectId ? row.projectId === projectId : true))
@@ -2198,9 +2311,11 @@ export async function getWageRecap(options?: {
           : true,
       );
 
-    const rows = applyPayrollResets(
-      data
-        .map((row) => mapAttendance(row, resolveJoinName(row.projects)))
+    let rows = applyPayrollResets(
+      attendanceRowsRaw
+        .map((row) => mapAttendance(row, projectNameMap[String(row.project_id ?? "")]))
+        .filter((row) => toDateOnly(row.attendanceDate) >= from)
+        .filter((row) => toDateOnly(row.attendanceDate) <= to)
         .filter((row) => (projectId ? row.projectId === projectId : true))
         .filter((row) => (teamType ? row.teamType === teamType : true))
         .filter((row) =>
@@ -2221,6 +2336,12 @@ export async function getWageRecap(options?: {
       payrollResets,
       includePaid,
     );
+
+    rows = rows.sort((a, b) => b.attendanceDate.localeCompare(a.attendanceDate));
+    if (typeof limit === "number") {
+      rows = rows.slice(0, limit);
+    }
+
     const projectSummaries = buildWageSummary(rows);
     const teamSummaries = buildWageTeamSummary(rows);
     const projectTeamSummaries = buildWageProjectTeamSummary(rows);
@@ -2431,6 +2552,35 @@ function buildDashboardDataFromCollections(input: {
   };
 }
 
+const getCachedSupabaseDashboardData = unstable_cache(
+  async (): Promise<DashboardData> => {
+    const [projects, expenseRows, attendanceRows, categoryOptions] = await Promise.all([
+      getCachedSupabaseProjects(),
+      getCachedSupabaseAllExpenseRows(),
+      getCachedSupabaseAllAttendanceRows(),
+      getExpenseCategories(),
+    ]);
+
+    const projectNameMap = Object.fromEntries(
+      projects.map((project) => [project.id, project.name] as const),
+    );
+    const expenses = expenseRows.map((row) => mapExpense(row, projectNameMap[String(row.project_id)]));
+    const attendance = attendanceRows.map((row) => mapAttendance(row));
+
+    return buildDashboardDataFromCollections({
+      projects,
+      expenses,
+      attendance,
+      categoryOptions,
+    });
+  },
+  ["supabase-dashboard-data"],
+  {
+    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
+    tags: [CACHE_TAGS.projects, CACHE_TAGS.expenses, CACHE_TAGS.expenseCategories, CACHE_TAGS.attendance],
+  },
+);
+
 export async function getDashboardData(): Promise<DashboardData> {
   if (activeDataSource === "excel") {
     const db = readExcelDatabase();
@@ -2448,26 +2598,7 @@ export async function getDashboardData(): Promise<DashboardData> {
   }
 
   if (activeDataSource === "supabase") {
-    const [projectRows, expenseRows, attendanceRows, categoryOptions] = await Promise.all([
-      getCachedSupabaseProjectRows(),
-      getCachedSupabaseAllExpenseRows(),
-      getCachedSupabaseAllAttendanceRows(),
-      getExpenseCategories(),
-    ]);
-
-    const projectNameMap = Object.fromEntries(
-      projectRows.map((row) => [String(row.id), String(row.name ?? "Project")]),
-    );
-    const expenses = expenseRows.map((row) => mapExpense(row, projectNameMap[String(row.project_id)]));
-    const attendance = attendanceRows.map((row) => mapAttendance(row));
-    const projects = projectRows.map((row) => mapProject(row));
-
-    return buildDashboardDataFromCollections({
-      projects,
-      expenses,
-      attendance,
-      categoryOptions,
-    });
+    return getCachedSupabaseDashboardData();
   }
 
   if (activeDataSource === "firebase") {

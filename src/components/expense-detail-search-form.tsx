@@ -188,6 +188,8 @@ function ExpenseDetailSearchFormInner({
         {hasCriteria ? (
           <Link
             href={resetHref}
+            prefetch
+            scroll={false}
             className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
           >
             <span className="btn-icon bg-slate-100 text-slate-600">

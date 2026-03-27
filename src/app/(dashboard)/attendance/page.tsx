@@ -295,6 +295,8 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
             {canEdit ? (
               <Link
                 href={openAttendanceModalHref}
+                prefetch
+                scroll={false}
                 data-ui-button="true"
                 className="button-primary button-sm sm:w-auto"
               >
@@ -569,6 +571,8 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
         <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4">
           <Link
             href={closeModalHref}
+            prefetch
+            scroll={false}
             aria-label="Tutup modal"
             className="absolute inset-0 bg-slate-950/45"
           />
@@ -579,6 +583,8 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
               </h2>
               <Link
                 href={closeModalHref}
+                prefetch
+                scroll={false}
                 data-ui-button="true"
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100"
               >

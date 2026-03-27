@@ -12,7 +12,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { formatCurrency } from "@/lib/format";
+import { formatCompactCurrency, formatCurrency } from "@/lib/format";
 import type { DashboardData } from "@/lib/types";
 
 type DashboardChartsProps = {
@@ -23,17 +23,6 @@ type DashboardChartsProps = {
 
 const projectStatusColors = ["#10b981", "#2563eb", "#f59e0b"];
 const categoryBarColors = ["#2563eb", "#0f766e", "#f59e0b", "#7c3aed", "#db2777", "#0891b2"];
-
-const compactCurrencyFormatter = new Intl.NumberFormat("id-ID", {
-  style: "currency",
-  currency: "IDR",
-  notation: "compact",
-  maximumFractionDigits: 1,
-});
-
-function formatCompactCurrency(value: number) {
-  return compactCurrencyFormatter.format(value).replace("Rp", "Rp ");
-}
 
 function TooltipCard({
   active,

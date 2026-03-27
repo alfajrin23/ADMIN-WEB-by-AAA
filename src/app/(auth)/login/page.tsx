@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { loginAction } from "@/app/auth-actions";
+import { PasswordRevealInput } from "@/components/password-reveal-input";
 import { getCurrentUser } from "@/lib/auth";
 
 type LoginPageProps = {
@@ -21,13 +22,24 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const success = typeof params.success === "string" ? params.success : "";
 
   return (
-    <section className="auth-card">
+    <section className="auth-card auth-card--login">
       <div className="auth-card-header">
         <p className="auth-tagline">Admin Web Rekap Proyek</p>
-        <h1 className="auth-title">Selamat Datang</h1>
+        <h1 className="auth-title">Control Access</h1>
         <p className="auth-subtitle">
-          Login untuk masuk ke dashboard administrasi proyek.
+          Login ke dashboard administrasi proyek dengan akses yang lebih rapi, terang, dan fokus.
         </p>
+      </div>
+
+      <div className="auth-highlight-row">
+        <div className="auth-highlight-pill">
+          <span className="auth-highlight-label">Access</span>
+          <span className="auth-highlight-value">Secure Login</span>
+        </div>
+        <div className="auth-highlight-pill">
+          <span className="auth-highlight-label">Panel</span>
+          <span className="auth-highlight-value">Project + Cost</span>
+        </div>
       </div>
 
       {error ? (
@@ -38,20 +50,18 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
       ) : null}
 
       <form action={loginAction} className="auth-form">
-        <div>
-          <label className="mb-1 block text-xs font-semibold text-slate-600">Username</label>
+        <div className="auth-field">
+          <label className="auth-field-label">Username</label>
           <input name="username" placeholder="contoh: admin.project" autoComplete="username" required />
         </div>
-        <div>
-          <label className="mb-1 block text-xs font-semibold text-slate-600">Password</label>
-          <input
-            type="password"
-            name="password"
-            placeholder="Masukkan password"
-            autoComplete="current-password"
-            required
-          />
-        </div>
+        <PasswordRevealInput
+          name="password"
+          label="Password"
+          placeholder="Masukkan password"
+          autoComplete="current-password"
+          required
+          hint="Gunakan ikon mata untuk reveal password."
+        />
         <button className="auth-submit">Masuk</button>
       </form>
 

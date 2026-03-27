@@ -1,5 +1,8 @@
-import { ProjectIcon, WalletIcon } from "@/components/icons";
-import { formatCurrency } from "@/lib/format";
+"use client";
+
+import { useEffect, useState } from "react";
+import { ArrowLeftIcon, ArrowRightIcon, ProjectIcon, WalletIcon } from "@/components/icons";
+import { formatCompactCurrency, formatCurrency } from "@/lib/format";
 
 export type DashboardClientBoardItem = {
   clientName: string;
@@ -16,49 +19,79 @@ type DashboardClientBoardProps = {
   clients: DashboardClientBoardItem[];
 };
 
-const compactCurrencyFormatter = new Intl.NumberFormat("id-ID", {
-  style: "currency",
-  currency: "IDR",
-  notation: "compact",
-  maximumFractionDigits: 1,
-});
+function getRelativeOffset(index: number, activeIndex: number, total: number) {
+  let offset = index - activeIndex;
+  const half = total / 2;
+  if (offset > half) {
+    offset -= total;
+  } else if (offset < -half) {
+    offset += total;
+  }
+  return offset;
+}
 
-function formatCompactCurrency(value: number) {
-  return compactCurrencyFormatter.format(value).replace("Rp", "Rp ");
+function getSlot(offset: number) {
+  const distance = Math.abs(offset);
+  if (distance === 0) {
+    return "active";
+  }
+  if (distance === 1) {
+    return "near";
+  }
+  if (distance === 2) {
+    return "far";
+  }
+  return "hidden";
 }
 
 export function DashboardClientBoard({ clients }: DashboardClientBoardProps) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+
+  useEffect(() => {
+    if (clients.length <= 1 || isPaused) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setActiveIndex((prev) => (prev + 1) % clients.length);
+    }, 4200);
+
+    return () => window.clearInterval(intervalId);
+  }, [clients.length, isPaused]);
+
   if (clients.length === 0) {
     return <div className="empty-state">Belum ada biaya per klien yang bisa ditampilkan.</div>;
   }
 
-  const animationDuration = Math.max(clients.length * 4, 8);
+  const safeActiveIndex = activeIndex % clients.length;
+  const activeClient = clients[safeActiveIndex] ?? clients[0];
 
   return (
-    <div className="client-slider">
-      {/* Client slider: cards animate one by one like turning through a compact project ledger. */}
-      <div className="client-slider-track">
-        {clients.map((client, index) => (
-          <div
-            key={client.clientName}
-            className="client-slider-item"
-          >
+    <div
+      className="client-carousel"
+      onMouseEnter={() => setIsPaused(true)}
+      onMouseLeave={() => setIsPaused(false)}
+    >
+      <div className="client-carousel-stage">
+        {clients.map((client, index) => {
+          const offset = getRelativeOffset(index, safeActiveIndex, clients.length);
+          const slot = getSlot(offset);
+          const side = offset < 0 ? "left" : offset > 0 ? "right" : "center";
+
+          return (
             <article
-              className={`client-slider-card ${clients.length > 1 ? "client-slider-card--animated" : ""}`}
-              style={
-                clients.length > 1
-                  ? {
-                      animationDuration: `${animationDuration}s`,
-                      animationDelay: `${index * 4}s`,
-                    }
-                  : undefined
-              }
+              key={client.clientName}
+              className={`client-carousel-card client-carousel-card--${slot}`}
+              data-side={side}
+              aria-hidden={slot === "hidden"}
+              style={{ zIndex: clients.length - Math.abs(offset) }}
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-slate-950">{client.clientName}</p>
                   <p className="mt-1 text-[11px] text-slate-500">
-                    Rekap biaya per klien dengan kategori terbesar langsung terlihat di satu kartu.
+                    Ringkasan biaya klien tampil bergantian seperti carousel portfolio.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -93,9 +126,51 @@ export function DashboardClientBoard({ clients }: DashboardClientBoardProps) {
                 ))}
               </div>
             </article>
-          </div>
-        ))}
+          );
+        })}
       </div>
+
+      {clients.length > 1 ? (
+        <div className="client-carousel-footer">
+          <div className="client-carousel-summary">
+            <p className="client-carousel-summary__label">Klien Aktif</p>
+            <p className="client-carousel-summary__value">{activeClient.clientName}</p>
+          </div>
+          <div className="client-carousel-controls">
+            <button
+              type="button"
+              className="client-carousel-control"
+              aria-label="Klien sebelumnya"
+              onClick={() =>
+                setActiveIndex((prev) => (prev - 1 + clients.length) % clients.length)
+              }
+            >
+              <ArrowLeftIcon />
+            </button>
+            <div className="client-carousel-dots">
+              {clients.map((client, index) => (
+                <button
+                  key={`${client.clientName}-dot`}
+                  type="button"
+                  className={`client-carousel-dot ${
+                    index === safeActiveIndex ? "client-carousel-dot--active" : ""
+                  }`}
+                  aria-label={`Tampilkan ${client.clientName}`}
+                  onClick={() => setActiveIndex(index)}
+                />
+              ))}
+            </div>
+            <button
+              type="button"
+              className="client-carousel-control"
+              aria-label="Klien berikutnya"
+              onClick={() => setActiveIndex((prev) => (prev + 1) % clients.length)}
+            >
+              <ArrowRightIcon />
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

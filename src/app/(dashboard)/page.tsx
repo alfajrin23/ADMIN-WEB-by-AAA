@@ -3,6 +3,7 @@ import { DashboardClientBoard } from "@/components/dashboard-client-board";
 import { AttendanceIcon, ProjectIcon, ShieldIcon, WalletIcon } from "@/components/icons";
 import { requireAuthUser } from "@/lib/auth";
 import { getDashboardData } from "@/lib/data";
+import { formatCompactCurrency } from "@/lib/format";
 import { activeDataSource, getStorageLabel } from "@/lib/storage";
 
 const dateFormatter = new Intl.DateTimeFormat("id-ID", {
@@ -10,17 +11,6 @@ const dateFormatter = new Intl.DateTimeFormat("id-ID", {
   month: "long",
   year: "numeric",
 });
-
-function formatCompactCurrency(value: number) {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    notation: "compact",
-    maximumFractionDigits: 1,
-  })
-    .format(value)
-    .replace("Rp", "Rp ");
-}
 
 export default async function DashboardPage() {
   const user = await requireAuthUser();

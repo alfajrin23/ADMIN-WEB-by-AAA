@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useFormStatus } from "react-dom";
 import { EnterToNextField } from "@/components/enter-to-next-field";
 import { ProjectAutocomplete } from "@/components/project-autocomplete";
 import { ProjectChecklistSearch } from "@/components/project-checklist-search";
@@ -100,6 +101,44 @@ function getRequesterSourceLabel(value: HokProjectPreset["requesterSource"]) {
   return "Fallback";
 }
 
+function createExpenseSubmissionToken() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `expense-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function ExpenseSubmitButton({
+  disabled,
+  mode,
+  selectedHokRowCount,
+}: {
+  disabled: boolean;
+  mode: typeof STANDARD_MODE | typeof HOK_MODE;
+  selectedHokRowCount: number;
+}) {
+  const { pending } = useFormStatus();
+  const isDisabled = disabled || pending;
+
+  return (
+    <button
+      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+      disabled={isDisabled}
+      aria-disabled={isDisabled}
+      aria-busy={pending}
+    >
+      <span className="btn-icon icon-float-soft bg-white/20 text-white">
+        <SaveIcon />
+      </span>
+      {pending
+        ? "Menyimpan..."
+        : mode === HOK_MODE
+          ? `Simpan HOK ${selectedHokRowCount > 0 ? `(${selectedHokRowCount} project)` : ""}`
+          : "Simpan Biaya"}
+    </button>
+  );
+}
+
 export function ExpenseInputModeFields({
   projects,
   initialProjectId,
@@ -113,6 +152,7 @@ export function ExpenseInputModeFields({
   formId = "expense-modal-form",
 }: ExpenseInputModeFieldsProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const [submissionToken] = useState(createExpenseSubmissionToken);
   const [mode, setMode] = useState<typeof STANDARD_MODE | typeof HOK_MODE>(STANDARD_MODE);
   const [hokQuery, setHokQuery] = useState("");
   const [hokRows, setHokRows] = useState<HokProjectRow[]>(() => createInitialHokRows(hokProjectPresets));
@@ -203,6 +243,8 @@ export function ExpenseInputModeFields({
       JSON.stringify(
         selectedHokRows.map((row) => ({
           projectId: row.projectId,
+          projectName: row.projectName,
+          requesterName: row.requesterName,
           amount: normalizeDigits(row.amountRaw),
         })),
       ),
@@ -235,6 +277,7 @@ export function ExpenseInputModeFields({
   return (
     <div ref={rootRef} className="space-y-3">
       <EnterToNextField formId={formId} />
+      <input type="hidden" name="expense_submission_token" value={submissionToken} />
       <input type="hidden" name="expense_input_mode" value={mode} />
 
       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -588,17 +631,11 @@ export function ExpenseInputModeFields({
         </>
       )}
 
-      <button
-        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+      <ExpenseSubmitButton
         disabled={isHokSubmitDisabled}
-      >
-        <span className="btn-icon icon-float-soft bg-white/20 text-white">
-          <SaveIcon />
-        </span>
-        {mode === HOK_MODE
-          ? `Simpan HOK ${selectedHokRows.length > 0 ? `(${selectedHokRows.length} project)` : ""}`
-          : "Simpan Biaya"}
-      </button>
+        mode={mode}
+        selectedHokRowCount={selectedHokRows.length}
+      />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { queueActivityLog } from "@/lib/activity-logs";
@@ -27,7 +27,6 @@ import {
   type WorkerTeam,
   WORKER_TEAMS,
 } from "@/lib/constants";
-import { getKmpCianjurHokProjectPresets } from "@/lib/data";
 import {
   deleteExcelAttendance,
   deleteExcelExpense,
@@ -111,8 +110,8 @@ function replaceDateYearKeepingMonthDay(value: string, year: number) {
   return `${year}-${String(month).padStart(2, "0")}-${String(safeDay).padStart(2, "0")}`;
 }
 
-function getReturnTo(formData: FormData) {
-  const value = getString(formData, "return_to");
+function getReturnTo(formData: FormData, key = "return_to") {
+  const value = getString(formData, key);
   return value.startsWith("/") ? value : null;
 }
 
@@ -182,6 +181,32 @@ async function requireLogsActionUser() {
 
 function createTimestamp() {
   return new Date().toISOString();
+}
+
+function createDeterministicUuid(seed: string) {
+  const hash = createHash("sha256").update(seed).digest("hex");
+  const version = `5${hash.slice(13, 16)}`;
+  const variant = `${(8 + (parseInt(hash.slice(16, 17), 16) % 4)).toString(16)}${hash.slice(17, 20)}`;
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${version}-${variant}-${hash.slice(20, 32)}`;
+}
+
+function getExpenseSubmissionToken(formData: FormData) {
+  return getString(formData, "expense_submission_token") || randomUUID();
+}
+
+function createExpenseMutationId(input: {
+  mode: "standard" | "hok_kmp_cianjur";
+  submissionToken: string;
+  projectId: string;
+}) {
+  return createDeterministicUuid(
+    ["expense", input.mode, input.submissionToken.trim(), input.projectId.trim()].join("|"),
+  );
+}
+
+function shouldSyncExpenseCategory(formData: FormData) {
+  const customCategory = toCategorySlug(getString(formData, "category_custom"));
+  return Boolean(customCategory && !isHiddenCostCategory(customCategory));
 }
 
 function parseProjectInitialCategories(formData: FormData) {
@@ -1054,30 +1079,26 @@ function parsePositiveAmount(value: unknown) {
 async function createHokExpenseEntries(
   actor: Awaited<ReturnType<typeof requireEditorActionUser>>,
   formData: FormData,
-  returnTo: string | null,
+  successReturnTo: string | null,
+  errorReturnTo: string | null,
 ) {
   const rawRows = getString(formData, "hok_rows_json");
   let parsedRows: unknown;
   try {
     parsedRows = rawRows ? JSON.parse(rawRows) : [];
   } catch {
-    if (returnTo) {
-      redirect(withReturnMessage(returnTo, "error", "Data project HOK tidak valid."));
+    if (errorReturnTo) {
+      redirect(withReturnMessage(errorReturnTo, "error", "Data project HOK tidak valid."));
     }
     return;
   }
 
   if (!Array.isArray(parsedRows) || parsedRows.length === 0) {
-    if (returnTo) {
-      redirect(withReturnMessage(returnTo, "error", "Pilih minimal satu project HOK."));
+    if (errorReturnTo) {
+      redirect(withReturnMessage(errorReturnTo, "error", "Pilih minimal satu project HOK."));
     }
     return;
   }
-
-  const availablePresets = await getKmpCianjurHokProjectPresets();
-  const presetByProjectId = new Map(
-    availablePresets.map((item) => [item.projectId, item] as const),
-  );
 
   const rows = parsedRows
     .map((item) => {
@@ -1089,30 +1110,33 @@ async function createHokExpenseEntries(
         typeof (item as { projectId?: unknown }).projectId === "string"
           ? (item as { projectId: string }).projectId.trim()
           : "";
+      const projectName =
+        typeof (item as { projectName?: unknown }).projectName === "string"
+          ? (item as { projectName: string }).projectName.trim()
+          : "";
+      const requesterName =
+        typeof (item as { requesterName?: unknown }).requesterName === "string"
+          ? (item as { requesterName: string }).requesterName.trim()
+          : "";
       const amount = parsePositiveAmount((item as { amount?: unknown }).amount);
-      if (!projectId || amount <= 0) {
-        return null;
-      }
-
-      const preset = presetByProjectId.get(projectId);
-      if (!preset) {
+      if (!projectId || !projectName || !requesterName || amount <= 0) {
         return null;
       }
 
       return {
         projectId,
-        projectName: preset.projectName,
-        requesterName: preset.requesterName,
+        projectName,
+        requesterName,
         amount,
       };
     })
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
 
   if (rows.length === 0) {
-    if (returnTo) {
+    if (errorReturnTo) {
       redirect(
         withReturnMessage(
-          returnTo,
+          errorReturnTo,
           "error",
           "Nominal HOK wajib diisi untuk setiap project yang dipilih.",
         ),
@@ -1133,6 +1157,7 @@ async function createHokExpenseEntries(
     unit_price: 0,
     expense_date: expenseDate,
   };
+  const submissionToken = getExpenseSubmissionToken(formData);
 
   if (activeDataSource === "excel") {
     for (const row of rows) {
@@ -1148,25 +1173,36 @@ async function createHokExpenseEntries(
     if (!supabase) {
       return;
     }
-    await Promise.all([
-      upsertSupabaseCategories(supabase, [basePayload.category]),
-      supabase.from("project_expenses").insert(
-        rows.map((row) => ({
-          project_id: row.projectId,
-          category: basePayload.category,
-          specialist_type: basePayload.specialist_type,
-          requester_name: row.requesterName,
-          description: basePayload.description,
-          recipient_name: basePayload.recipient_name,
-          quantity: basePayload.quantity,
-          unit_label: basePayload.unit_label,
-          usage_info: basePayload.usage_info,
-          unit_price: basePayload.unit_price,
-          amount: row.amount,
-          expense_date: basePayload.expense_date,
-        })),
-      ),
-    ]);
+    const { error } = await supabase.from("project_expenses").upsert(
+      rows.map((row) => ({
+        id: createExpenseMutationId({
+          mode: "hok_kmp_cianjur",
+          submissionToken,
+          projectId: row.projectId,
+        }),
+        project_id: row.projectId,
+        category: basePayload.category,
+        specialist_type: basePayload.specialist_type,
+        requester_name: row.requesterName,
+        description: basePayload.description,
+        recipient_name: basePayload.recipient_name,
+        quantity: basePayload.quantity,
+        unit_label: basePayload.unit_label,
+        usage_info: basePayload.usage_info,
+        unit_price: basePayload.unit_price,
+        amount: row.amount,
+        expense_date: basePayload.expense_date,
+      })),
+      {
+        onConflict: "id",
+      },
+    );
+    if (error) {
+      if (errorReturnTo) {
+        redirect(withReturnMessage(errorReturnTo, "error", "Gagal menyimpan data HOK. Silakan coba lagi."));
+      }
+      return;
+    }
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
     if (!firestore) {
@@ -1175,7 +1211,11 @@ async function createHokExpenseEntries(
     await runFirebaseWriteSafely(async () => {
       const batch = firestore.batch();
       for (const row of rows) {
-        const id = randomUUID();
+        const id = createExpenseMutationId({
+          mode: "hok_kmp_cianjur",
+          submissionToken,
+          projectId: row.projectId,
+        });
         batch.set(firestore.collection("project_expenses").doc(id), {
           id,
           ...basePayload,
@@ -1183,7 +1223,7 @@ async function createHokExpenseEntries(
           requester_name: row.requesterName,
           amount: row.amount,
           created_at: createTimestamp(),
-        });
+        }, { merge: true });
       }
       await batch.commit();
     });
@@ -1210,10 +1250,10 @@ async function createHokExpenseEntries(
       total_amount: rows.reduce((sum, row) => sum + row.amount, 0),
     },
   });
-  if (returnTo) {
+  if (successReturnTo) {
     redirect(
       withReturnMessage(
-        returnTo,
+        successReturnTo,
         "success",
         `HOK berhasil disimpan ke ${rows.length} project.`,
       ),
@@ -1223,9 +1263,10 @@ async function createHokExpenseEntries(
 
 export async function createExpenseAction(formData: FormData) {
   const actor = await requireEditorActionUser();
-  const returnTo = getReturnTo(formData);
+  const successReturnTo = getReturnTo(formData);
+  const errorReturnTo = getReturnTo(formData, "error_return_to") ?? successReturnTo;
   if (getString(formData, "expense_input_mode") === "hok_kmp_cianjur") {
-    await createHokExpenseEntries(actor, formData, returnTo);
+    await createHokExpenseEntries(actor, formData, successReturnTo, errorReturnTo);
     return;
   }
 
@@ -1243,12 +1284,14 @@ export async function createExpenseAction(formData: FormData) {
     !Number.isFinite(amount) ||
     amount === 0
   ) {
-    if (returnTo) {
-      redirect(withReturnMessage(returnTo, "error", "Lengkapi field wajib biaya terlebih dahulu."));
+    if (errorReturnTo) {
+      redirect(withReturnMessage(errorReturnTo, "error", "Lengkapi field wajib biaya terlebih dahulu."));
     }
     return;
   }
   const specialistType = getSpecialistType(formData, parsedCategory);
+  const submissionToken = getExpenseSubmissionToken(formData);
+  const shouldSyncCategory = shouldSyncExpenseCategory(formData);
 
   const basePayload = {
     category: parsedCategory,
@@ -1276,25 +1319,39 @@ export async function createExpenseAction(formData: FormData) {
     if (!supabase) {
       return;
     }
-    await Promise.all([
-      upsertSupabaseCategories(supabase, [basePayload.category]),
-      supabase.from("project_expenses").insert(
-        projectIds.map((projectId) => ({
-          project_id: projectId,
-          category: basePayload.category,
-          specialist_type: basePayload.specialist_type,
-          requester_name: basePayload.requester_name,
-          description: basePayload.description,
-          recipient_name: basePayload.recipient_name,
-          quantity: basePayload.quantity,
-          unit_label: basePayload.unit_label,
-          usage_info: basePayload.usage_info,
-          unit_price: basePayload.unit_price,
-          amount: basePayload.amount,
-          expense_date: basePayload.expense_date,
-        })),
-      ),
-    ]);
+    const saveExpensePromise = supabase.from("project_expenses").upsert(
+      projectIds.map((projectId) => ({
+        id: createExpenseMutationId({
+          mode: "standard",
+          submissionToken,
+          projectId,
+        }),
+        project_id: projectId,
+        category: basePayload.category,
+        specialist_type: basePayload.specialist_type,
+        requester_name: basePayload.requester_name,
+        description: basePayload.description,
+        recipient_name: basePayload.recipient_name,
+        quantity: basePayload.quantity,
+        unit_label: basePayload.unit_label,
+        usage_info: basePayload.usage_info,
+        unit_price: basePayload.unit_price,
+        amount: basePayload.amount,
+        expense_date: basePayload.expense_date,
+      })),
+      {
+        onConflict: "id",
+      },
+    );
+    const expenseResult = shouldSyncCategory
+      ? (await Promise.all([upsertSupabaseCategories(supabase, [basePayload.category]), saveExpensePromise]))[1]
+      : await saveExpensePromise;
+    if (expenseResult.error) {
+      if (errorReturnTo) {
+        redirect(withReturnMessage(errorReturnTo, "error", "Gagal menyimpan biaya. Silakan coba lagi."));
+      }
+      return;
+    }
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
     if (!firestore) {
@@ -1303,13 +1360,17 @@ export async function createExpenseAction(formData: FormData) {
     await runFirebaseWriteSafely(async () => {
       const batch = firestore.batch();
       for (const projectId of projectIds) {
-        const id = randomUUID();
+        const id = createExpenseMutationId({
+          mode: "standard",
+          submissionToken,
+          projectId,
+        });
         batch.set(firestore.collection("project_expenses").doc(id), {
           id,
           ...basePayload,
           project_id: projectId,
           created_at: createTimestamp(),
-        });
+        }, { merge: true });
       }
       await batch.commit();
     });
@@ -1334,12 +1395,12 @@ export async function createExpenseAction(formData: FormData) {
       expense_date: basePayload.expense_date,
     },
   });
-  if (returnTo) {
+  if (successReturnTo) {
     const successMessage =
       projectIds.length > 1
         ? `Biaya berhasil disimpan ke ${projectIds.length} project.`
         : "Biaya berhasil disimpan.";
-    redirect(withReturnMessage(returnTo, "success", successMessage));
+    redirect(withReturnMessage(successReturnTo, "success", successMessage));
   }
 }
 

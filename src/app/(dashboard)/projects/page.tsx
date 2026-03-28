@@ -156,15 +156,37 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
   const canImport = canImportData(user);
   const canExport = canExportReports(user);
   const params = await searchParams;
-  const [projects, expenseCategories, requesterSuggestionsByProject, descriptionSuggestionsByProject] =
-    await Promise.all([
-      getProjects(),
-      getExpenseCategories(),
-      getRequesterSuggestionsByProject(),
-      getDescriptionSuggestionsByProject(),
-    ]);
-  const today = new Date().toISOString().slice(0, 10);
-  const defaultExpenseCategory = expenseCategories[0]?.value ?? COST_CATEGORIES[0].value;
+  const modalParam = typeof params.modal === "string" ? params.modal : "";
+  const requestedModal: ModalType | null =
+    modalParam === "project-new" ||
+    modalParam === "expense-new" ||
+    modalParam === "excel-import" ||
+    modalParam === "detail-search"
+      ? modalParam
+      : null;
+  const viewParam = typeof params.view === "string" ? params.view : "";
+  const activeView: ProjectView = viewParam === "rekap" ? "rekap" : "list";
+  const searchText = typeof params.q === "string" ? params.q.trim() : "";
+  const detailSearchQuery = typeof params.detail_q === "string" ? params.detail_q.trim() : "";
+  const detailDateFrom = isDateString(params.detail_from) ? String(params.detail_from) : "";
+  const detailDateTo = isDateString(params.detail_to) ? String(params.detail_to) : "";
+  const detailYear = parseFilterYear(
+    typeof params.detail_year === "string" ? params.detail_year : undefined,
+  );
+  const hasDetailSearchCriteria = Boolean(detailSearchQuery || detailDateFrom || detailDateTo || detailYear);
+  const success = typeof params.success === "string" ? params.success : "";
+  let activeModal = requestedModal;
+  let blockedModalMessage = "";
+  if (!canEdit && (requestedModal === "project-new" || requestedModal === "expense-new")) {
+    activeModal = null;
+    blockedModalMessage = "Role viewer hanya bisa melihat data. Tambah/edit dinonaktifkan.";
+  }
+  if (!canImport && requestedModal === "excel-import") {
+    activeModal = null;
+    blockedModalMessage = "Import Excel hanya tersedia untuk role developer.";
+  }
+
+  const projects = await getProjects();
 
   const requestedProjectId = typeof params.project === "string" ? params.project : undefined;
   const hasRequestedProjectId =
@@ -172,12 +194,41 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
     projects.some((item) => item.id === requestedProjectId);
   const currentProjectQueryId = hasRequestedProjectId ? requestedProjectId : undefined;
   const selectedProjectId = currentProjectQueryId ?? projects[0]?.id;
-  const viewParam = typeof params.view === "string" ? params.view : "";
-  const activeView: ProjectView = viewParam === "rekap" ? "rekap" : "list";
-  const selectedProject =
-    activeView === "rekap" && selectedProjectId
-      ? await getProjectDetail(selectedProjectId)
-      : null;
+  const shouldLoadExpenseCategories =
+    activeView === "rekap" || activeModal === "expense-new" || activeModal === "detail-search";
+  const shouldLoadExpenseSuggestions = activeModal === "expense-new";
+  const emptyProjectSuggestions: Record<string, string[]> = {};
+  const emptyExpenseSearchResults: Awaited<ReturnType<typeof searchExpenseDetails>> = [];
+  const emptyHokProjectPresets: Awaited<ReturnType<typeof getKmpCianjurHokProjectPresets>> = [];
+  const [
+    expenseCategories,
+    requesterSuggestionsByProject,
+    descriptionSuggestionsByProject,
+    selectedProject,
+    detailSearchResults,
+    hokProjectPresets,
+  ] = await Promise.all([
+    shouldLoadExpenseCategories ? getExpenseCategories() : Promise.resolve(mergeExpenseCategoryOptions()),
+    shouldLoadExpenseSuggestions
+      ? getRequesterSuggestionsByProject()
+      : Promise.resolve(emptyProjectSuggestions),
+    shouldLoadExpenseSuggestions
+      ? getDescriptionSuggestionsByProject()
+      : Promise.resolve(emptyProjectSuggestions),
+    activeView === "rekap" && selectedProjectId ? getProjectDetail(selectedProjectId) : Promise.resolve(null),
+    activeModal === "detail-search" && hasDetailSearchCriteria
+      ? searchExpenseDetails(detailSearchQuery, 1200, {
+          from: detailDateFrom || undefined,
+          to: detailDateTo || undefined,
+          year: detailYear ?? undefined,
+        })
+      : Promise.resolve(emptyExpenseSearchResults),
+    activeModal === "expense-new"
+      ? getKmpCianjurHokProjectPresets()
+      : Promise.resolve(emptyHokProjectPresets),
+  ]);
+  const today = new Date().toISOString().slice(0, 10);
+  const defaultExpenseCategory = expenseCategories[0]?.value ?? COST_CATEGORIES[0].value;
   const scopedReportProjectIds =
     activeView === "rekap" && selectedProject?.project.id && currentProjectQueryId
       ? [selectedProject.project.id]
@@ -233,7 +284,6 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
       })()
     : [];
 
-  const searchText = typeof params.q === "string" ? params.q.trim() : "";
   const searchKeyword = normalizeSearchText(searchText);
   const filteredProjects = searchKeyword
     ? projects.filter((project) => {
@@ -300,42 +350,6 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
     }),
   );
 
-  const modalParam = typeof params.modal === "string" ? params.modal : "";
-  const detailSearchQuery = typeof params.detail_q === "string" ? params.detail_q.trim() : "";
-  const detailDateFrom = isDateString(params.detail_from) ? String(params.detail_from) : "";
-  const detailDateTo = isDateString(params.detail_to) ? String(params.detail_to) : "";
-  const detailYear = parseFilterYear(
-    typeof params.detail_year === "string" ? params.detail_year : undefined,
-  );
-  const hasDetailSearchCriteria = Boolean(detailSearchQuery || detailDateFrom || detailDateTo || detailYear);
-  const success = typeof params.success === "string" ? params.success : "";
-  const requestedModal: ModalType | null =
-    modalParam === "project-new" ||
-    modalParam === "expense-new" ||
-    modalParam === "excel-import" ||
-    modalParam === "detail-search"
-      ? modalParam
-      : null;
-  let activeModal = requestedModal;
-  let blockedModalMessage = "";
-  if (!canEdit && (requestedModal === "project-new" || requestedModal === "expense-new")) {
-    activeModal = null;
-    blockedModalMessage = "Role viewer hanya bisa melihat data. Tambah/edit dinonaktifkan.";
-  }
-  if (!canImport && requestedModal === "excel-import") {
-    activeModal = null;
-    blockedModalMessage = "Import Excel hanya tersedia untuk role developer.";
-  }
-  const detailSearchResults =
-    activeModal === "detail-search" && hasDetailSearchCriteria
-      ? await searchExpenseDetails(detailSearchQuery, 1200, {
-          from: detailDateFrom || undefined,
-          to: detailDateTo || undefined,
-          year: detailYear ?? undefined,
-        })
-      : [];
-  const hokProjectPresets =
-    activeModal === "expense-new" ? await getKmpCianjurHokProjectPresets() : [];
   const closeModalHref = createProjectsHref({
     projectId: currentProjectQueryId,
     searchText,
@@ -353,7 +367,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
     searchText,
     view: activeView,
   });
-  const expenseModalReturnHref = createProjectsHref({
+  const expenseModalErrorReturnHref = createProjectsHref({
     projectId: currentProjectQueryId,
     modal: "expense-new",
     searchText,
@@ -1260,7 +1274,8 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
               <p className="mt-4 text-sm text-slate-500">Belum ada project. Buat project dulu.</p>
             ) : (
               <form id="expense-modal-form" action={createExpenseAction} className="mt-4 space-y-3">
-                <input type="hidden" name="return_to" value={expenseModalReturnHref} />
+                <input type="hidden" name="return_to" value={closeModalHref} />
+                <input type="hidden" name="error_return_to" value={expenseModalErrorReturnHref} />
                 <ExpenseInputModeFields
                   projects={projects}
                   initialProjectId={currentProjectQueryId}

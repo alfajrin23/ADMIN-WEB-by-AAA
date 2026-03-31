@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState } from "react";
+import { type RefObject, useEffect, useId, useMemo, useState } from "react";
 
 export const PROJECT_AUTOCOMPLETE_SELECT_EVENT = "project-autocomplete:select";
 
@@ -15,6 +15,7 @@ type ProjectAutocompleteProps = {
   projects: ProjectOption[];
   initialProjectId?: string;
   autoFocus?: boolean;
+  inputRef?: RefObject<HTMLInputElement | null>;
 };
 
 type PreparedProjectOption = {
@@ -104,7 +105,12 @@ function focusFormFieldByName(form: HTMLFormElement | null, fieldName: string) {
   return false;
 }
 
-export function ProjectAutocomplete({ projects, initialProjectId, autoFocus = false }: ProjectAutocompleteProps) {
+export function ProjectAutocomplete({
+  projects,
+  initialProjectId,
+  autoFocus = false,
+  inputRef,
+}: ProjectAutocompleteProps) {
   const listId = useId();
 
   const duplicateNames = useMemo(() => {
@@ -267,6 +273,7 @@ export function ProjectAutocomplete({ projects, initialProjectId, autoFocus = fa
   return (
     <div className="space-y-1">
       <input
+        ref={inputRef}
         type="text"
         list={listId}
         value={query}

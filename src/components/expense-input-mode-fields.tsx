@@ -60,6 +60,7 @@ type ExpenseInputModeFieldsProps = {
 
 const STANDARD_MODE = "standard";
 const HOK_MODE = "hok_kmp_cianjur";
+const EXPENSE_PROJECT_REFOCUS_KEY = "expense-modal-refocus-project";
 
 function normalizeText(value: string | null | undefined) {
   return (value ?? "").trim().toLowerCase();
@@ -152,6 +153,7 @@ export function ExpenseInputModeFields({
   formId = "expense-modal-form",
 }: ExpenseInputModeFieldsProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const projectInputRef = useRef<HTMLInputElement>(null);
   const [submissionToken] = useState(createExpenseSubmissionToken);
   const [mode, setMode] = useState<typeof STANDARD_MODE | typeof HOK_MODE>(STANDARD_MODE);
   const [hokQuery, setHokQuery] = useState("");
@@ -199,12 +201,14 @@ export function ExpenseInputModeFields({
     const handleSubmit = (event: Event) => {
       if (mode !== HOK_MODE) {
         setHokError("");
+        window.sessionStorage.setItem(EXPENSE_PROJECT_REFOCUS_KEY, "1");
         return;
       }
 
       const validationMessage = validateHokRows();
       if (!validationMessage) {
         setHokError("");
+        window.sessionStorage.setItem(EXPENSE_PROJECT_REFOCUS_KEY, "1");
         return;
       }
 
@@ -215,6 +219,26 @@ export function ExpenseInputModeFields({
     form.addEventListener("submit", handleSubmit);
     return () => form.removeEventListener("submit", handleSubmit);
   }, [mode, validateHokRows]);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const successMessage = url.searchParams.get("success")?.trim() ?? "";
+    if (!successMessage) {
+      return;
+    }
+    if (window.sessionStorage.getItem(EXPENSE_PROJECT_REFOCUS_KEY) !== "1") {
+      return;
+    }
+
+    window.sessionStorage.removeItem(EXPENSE_PROJECT_REFOCUS_KEY);
+
+    const frameId = window.requestAnimationFrame(() => {
+      projectInputRef.current?.focus();
+      projectInputRef.current?.select();
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  });
 
   const normalizedHokQuery = normalizeText(hokQuery);
   const visibleHokRows = useMemo(() => {
@@ -332,6 +356,7 @@ export function ExpenseInputModeFields({
               projects={projects}
               initialProjectId={initialProjectId}
               autoFocus
+              inputRef={projectInputRef}
             />
             <details className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
               <summary className="cursor-pointer text-xs font-semibold text-slate-700">

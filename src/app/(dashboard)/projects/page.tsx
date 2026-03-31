@@ -1274,7 +1274,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
               <p className="mt-4 text-sm text-slate-500">Belum ada project. Buat project dulu.</p>
             ) : (
               <form id="expense-modal-form" action={createExpenseAction} className="mt-4 space-y-3">
-                <input type="hidden" name="return_to" value={closeModalHref} />
+                <input type="hidden" name="return_to" value={expenseModalErrorReturnHref} />
                 <input type="hidden" name="error_return_to" value={expenseModalErrorReturnHref} />
                 <ExpenseInputModeFields
                   projects={projects}

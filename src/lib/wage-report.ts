@@ -124,10 +124,6 @@ function parseReimburseRows(searchParams: URLSearchParams, to: string): WageReim
   return rows;
 }
 
-function normalizeText(value: string | null | undefined) {
-  return (value ?? "").trim().toLowerCase();
-}
-
 function uniqueStrings(values: string[]) {
   return Array.from(new Set(values.filter((item) => item.length > 0)));
 }
@@ -145,19 +141,25 @@ function buildDefaultTitle(params: {
     const projectLabel = params.rowProjectNames.join(", ") || "LINTAS PROJECT";
     return `RINCIAN UPAH TIM ${teamLabel} (${projectLabel.toUpperCase()})`;
   }
+
+  const specialistLabel =
+    params.specialistTeamNames.length > 0
+      ? ` TIM ${params.specialistTeamNames.join(", ").toUpperCase()}`
+      : "";
+
   if (params.exportMode === "project") {
     if (params.rowProjectNames.length === 1) {
-      return `RINCIAN UPAH PROJECT ${params.rowProjectNames[0].toUpperCase()}`;
+      return `RINCIAN UPAH PROJECT ${params.rowProjectNames[0].toUpperCase()}${specialistLabel}`;
     }
     if (params.rowProjectNames.length > 1) {
-      return `RINCIAN UPAH PROJECT ${params.rowProjectNames.join(", ").toUpperCase()}`;
+      return `RINCIAN UPAH PROJECT ${params.rowProjectNames.join(", ").toUpperCase()}${specialistLabel}`;
     }
-    return "RINCIAN UPAH PROJECT";
+    return `RINCIAN UPAH PROJECT${specialistLabel}`;
   }
   if (params.rowProjectNames.length === 1) {
-    return `RINCIAN UPAH PROJECT ${params.rowProjectNames[0].toUpperCase()}`;
+    return `RINCIAN UPAH PROJECT ${params.rowProjectNames[0].toUpperCase()}${specialistLabel}`;
   }
-  return "RINCIAN UPAH PEKERJA TERPILIH";
+  return `RINCIAN UPAH PEKERJA TERPILIH${specialistLabel}`;
 }
 
 function filterRowsByMode(params: {
@@ -170,57 +172,28 @@ function filterRowsByMode(params: {
     return {
       ok: false,
       status: 400,
-      message:
-        "Belum ada data checklist terpilih. Checklist project atau tim spesialis terlebih dahulu.",
+      message: "Belum ada data absensi yang dichecklist untuk export.",
     };
   }
 
+  const selectedProjectIds = uniqueStrings(selectedRows.map((row) => row.projectId.trim()));
   const selectedRegularRows = selectedRows.filter((row) => row.teamType !== "spesialis");
-  if (selectedRegularRows.length > 0) {
-    const selectedProjectIds = uniqueStrings(selectedRegularRows.map((row) => row.projectId.trim()));
-    if (selectedProjectIds.length === 0) {
-      return {
-        ok: false,
-        status: 400,
-        message: "Checklist project belum valid. Pilih data project yang tersedia.",
-      };
-    }
-    return {
-      ok: true,
-      exportMode: "project",
-      rows: params.rows.filter(
-        (row) => row.teamType !== "spesialis" && selectedProjectIds.includes(row.projectId.trim()),
-      ),
-      specialistTeamNames: [],
-    };
-  }
-
+  const selectedSpecialistRows = selectedRows.filter((row) => row.teamType === "spesialis");
   const selectedSpecialistTeams = uniqueStrings(
-    selectedRows
-      .filter((row) => row.teamType === "spesialis")
-      .map((row) => row.specialistTeamName?.trim() || "Tim Spesialis"),
+    selectedSpecialistRows.map((row) => row.specialistTeamName?.trim() || "Tim Spesialis"),
   );
-  if (selectedSpecialistTeams.length === 0) {
-    return {
-      ok: false,
-      status: 400,
-      message: "Checklist tim spesialis belum dipilih.",
-    };
+
+  let exportMode: WageExportMode = "selected";
+  if (selectedRegularRows.length === 0 && selectedSpecialistRows.length > 0 && selectedSpecialistTeams.length === 1) {
+    exportMode = "specialist";
+  } else if (selectedSpecialistRows.length === 0 && selectedProjectIds.length === 1) {
+    exportMode = "project";
   }
 
-  const selectedSpecialistTeamsNormalized = selectedSpecialistTeams.map((team) =>
-    normalizeText(team),
-  );
   return {
     ok: true,
-    exportMode: "specialist",
-    rows: params.rows.filter(
-      (row) =>
-        row.teamType === "spesialis" &&
-        selectedSpecialistTeamsNormalized.includes(
-          normalizeText(row.specialistTeamName?.trim() || "Tim Spesialis"),
-        ),
-    ),
+    exportMode,
+    rows: selectedRows,
     specialistTeamNames: selectedSpecialistTeams,
   };
 }
@@ -300,6 +273,7 @@ export async function buildWageReportData(searchParams: URLSearchParams): Promis
   const to = isDateString(searchParams.get("to")) ? String(searchParams.get("to")) : today;
   const selectedIds = parseSelectedIds(searchParams);
   const reportTitleCustom = searchParams.get("report_title_custom")?.trim() || "";
+  const specialistTeamNameGlobal = searchParams.get("specialist_team_name_global")?.trim() || "";
 
   const recap = await getWageRecap({
     from,
@@ -335,7 +309,9 @@ export async function buildWageReportData(searchParams: URLSearchParams): Promis
       ? reportTitleCustom
       : buildDefaultTitle({
           exportMode: filtered.exportMode,
-          specialistTeamNames: filtered.specialistTeamNames,
+          specialistTeamNames: specialistTeamNameGlobal
+            ? [specialistTeamNameGlobal]
+            : filtered.specialistTeamNames,
           rowProjectNames,
         });
 

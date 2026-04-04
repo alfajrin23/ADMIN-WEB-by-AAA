@@ -15,7 +15,12 @@ import {
 import { readExcelDatabase } from "@/lib/excel-db";
 import { getFirestoreServerClient } from "@/lib/firebase";
 import { activeDataSource } from "@/lib/storage";
-import { getSupabaseServerClient } from "@/lib/supabase";
+import {
+  getSupabaseAttendanceSelect,
+  getSupabasePayrollResetSelect,
+  getSupabaseServerClient,
+  withSupabaseSpecialistTeamNameFallback,
+} from "@/lib/supabase";
 import type {
   AttendanceRecord,
   CategoryTotal,
@@ -219,6 +224,29 @@ function resolveClientScopeName(value: string | null | undefined) {
   return trimmed || "Tanpa Klien";
 }
 
+function resolveLegacySpecialistTeamName(params: {
+  teamType: string;
+  specialistTeamName: string | null;
+  projectName?: string;
+}) {
+  if (params.teamType !== "spesialis" || params.specialistTeamName) {
+    return params.specialistTeamName;
+  }
+
+  const projectLabel = params.projectName?.trim() ?? "";
+  if (!projectLabel) {
+    return null;
+  }
+
+  const match = /^TIM\s+SPESIALIS\s+(.+)$/i.exec(projectLabel);
+  if (!match) {
+    return null;
+  }
+
+  const derivedTeamName = match[1]?.trim() ?? "";
+  return derivedTeamName || null;
+}
+
 function resolveClientScopeKey(value: string | null | undefined) {
   return resolveClientScopeName(value).toLowerCase();
 }
@@ -345,9 +373,25 @@ async function getAllSupabaseRows(
   configure?: (query: SupabasePagedRowsQuery) => SupabasePagedRowsQuery,
   pageSize = 1000,
 ): Promise<Record<string, unknown>[]> {
+  const result = await getAllSupabaseRowsResult(table, select, configure, pageSize);
+  return result.data ?? [];
+}
+
+async function getAllSupabaseRowsResult(
+  table: string,
+  select: string,
+  configure?: (query: SupabasePagedRowsQuery) => SupabasePagedRowsQuery,
+  pageSize = 1000,
+): Promise<{
+  data: Record<string, unknown>[] | null;
+  error: unknown;
+}> {
   const supabase = getSupabaseServerClient();
   if (!supabase) {
-    return [];
+    return {
+      data: [],
+      error: null,
+    };
   }
 
   const rows: Record<string, unknown>[] = [];
@@ -361,7 +405,10 @@ async function getAllSupabaseRows(
 
     const { data, error } = await query.range(from, from + pageSize - 1);
     if (error || !data) {
-      return [];
+      return {
+        data: null,
+        error,
+      };
     }
 
     rows.push(...data);
@@ -372,7 +419,10 @@ async function getAllSupabaseRows(
     from += pageSize;
   }
 
-  return rows;
+  return {
+    data: rows,
+    error: null,
+  };
 }
 
 const SUPABASE_CACHE_REVALIDATE_SECONDS = 60;
@@ -381,10 +431,6 @@ const SUPABASE_PROJECT_SELECT =
 const SUPABASE_EXPENSE_METADATA_SELECT = "project_id, requester_name, description, category";
 const SUPABASE_EXPENSE_FULL_SELECT =
   "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at";
-const SUPABASE_ATTENDANCE_FULL_SELECT =
-  "id, project_id, worker_name, team_type, specialist_team_name, status, work_days, daily_wage, overtime_hours, overtime_wage, kasbon_amount, reimburse_type, reimburse_amount, attendance_date, notes, created_at";
-const SUPABASE_PAYROLL_RESET_SELECT =
-  "project_id, team_type, specialist_team_name, worker_name, paid_until_date";
 
 type CachedSupabaseExpenseMetadata = {
   categoryRows: Record<string, unknown>[];
@@ -503,8 +549,16 @@ const getCachedSupabaseAllExpenseRows = unstable_cache(
 );
 
 const getCachedSupabaseAllAttendanceRows = unstable_cache(
-  async (): Promise<Record<string, unknown>[]> =>
-    getAllSupabaseRows("attendance_records", SUPABASE_ATTENDANCE_FULL_SELECT),
+  async (): Promise<Record<string, unknown>[]> => {
+    const result = await withSupabaseSpecialistTeamNameFallback<Record<string, unknown>[]>(
+      ({ omitSpecialistTeamName }) =>
+        getAllSupabaseRowsResult(
+          "attendance_records",
+          getSupabaseAttendanceSelect({ omitSpecialistTeamName }),
+        ),
+    );
+    return result.data ?? [];
+  },
   ["supabase-all-attendance"],
   {
     revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
@@ -513,8 +567,16 @@ const getCachedSupabaseAllAttendanceRows = unstable_cache(
 );
 
 const getCachedSupabasePayrollResetRows = unstable_cache(
-  async (): Promise<Record<string, unknown>[]> =>
-    getAllSupabaseRows("payroll_resets", SUPABASE_PAYROLL_RESET_SELECT),
+  async (): Promise<Record<string, unknown>[]> => {
+    const result = await withSupabaseSpecialistTeamNameFallback<Record<string, unknown>[]>(
+      ({ omitSpecialistTeamName }) =>
+        getAllSupabaseRowsResult(
+          "payroll_resets",
+          getSupabasePayrollResetSelect({ omitSpecialistTeamName }),
+        ),
+    );
+    return result.data ?? [];
+  },
   ["supabase-payroll-resets"],
   {
     revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
@@ -1082,6 +1144,17 @@ function getLatestPaidUntil(
   return latestPaidUntil;
 }
 
+function isPayrollResetExpired(paidUntilDate: string, resetIntervalDays = 3): boolean {
+  const paidDate = new Date(paidUntilDate);
+  if (Number.isNaN(paidDate.getTime())) {
+    return true;
+  }
+  const now = new Date();
+  const diffMs = now.getTime() - paidDate.getTime();
+  const diffDays = diffMs / (1000 * 60 * 60 * 24);
+  return diffDays > resetIntervalDays;
+}
+
 function applyPayrollResets(
   rows: AttendanceRecord[],
   resets: Array<{
@@ -1093,8 +1166,12 @@ function applyPayrollResets(
   }>,
   includePaid = false,
 ) {
+  const activeResets = resets.filter(
+    (reset) => !isPayrollResetExpired(reset.paidUntilDate),
+  );
+
   const mappedRows = rows.map((row) => {
-    const latestPaidUntil = getLatestPaidUntil(row, resets);
+    const latestPaidUntil = getLatestPaidUntil(row, activeResets);
     const payrollPaid = Boolean(latestPaidUntil && toDateOnly(row.attendanceDate) <= latestPaidUntil);
     return {
       ...row,
@@ -1174,9 +1251,9 @@ function mapAttendance(row: Record<string, unknown>, projectName?: string): Atte
       : null;
   const status: AttendanceRecord["status"] =
     row.status === "hadir" ||
-    row.status === "izin" ||
-    row.status === "sakit" ||
-    row.status === "alpa"
+      row.status === "izin" ||
+      row.status === "sakit" ||
+      row.status === "alpa"
       ? row.status
       : "hadir";
   const totalWage = status === "hadir" ? dailyWage * workDays : 0;
@@ -1190,8 +1267,12 @@ function mapAttendance(row: Record<string, unknown>, projectName?: string): Atte
     teamType: WORKER_TEAMS.some((item) => item.value === row.team_type)
       ? (row.team_type as AttendanceRecord["teamType"])
       : "tukang",
-    specialistTeamName:
-      typeof row.specialist_team_name === "string" ? row.specialist_team_name : null,
+    specialistTeamName: resolveLegacySpecialistTeamName({
+      teamType: String(row.team_type ?? ""),
+      specialistTeamName:
+        typeof row.specialist_team_name === "string" ? row.specialist_team_name : null,
+      projectName,
+    }),
     status,
     workDays,
     dailyWage,
@@ -1500,18 +1581,18 @@ function buildSupabaseExpenseDerivedData(
   const registeredOptions =
     Array.isArray(metadata.categoryRows)
       ? metadata.categoryRows
-          .map((row) => {
-            const value = toCategorySlug(String(row.slug ?? ""));
-            if (!value) {
-              return null;
-            }
-            const labelRaw = typeof row.label === "string" ? row.label.trim() : "";
-            return {
-              value,
-              label: labelRaw || getCostCategoryLabel(value),
-            };
-          })
-          .filter((row): row is ExpenseCategoryOption => Boolean(row))
+        .map((row) => {
+          const value = toCategorySlug(String(row.slug ?? ""));
+          if (!value) {
+            return null;
+          }
+          const labelRaw = typeof row.label === "string" ? row.label.trim() : "";
+          return {
+            value,
+            label: labelRaw || getCostCategoryLabel(value),
+          };
+        })
+        .filter((row): row is ExpenseCategoryOption => Boolean(row))
       : [];
 
   const expenseValues: string[] = [];
@@ -1720,18 +1801,29 @@ export async function getAttendanceById(attendanceId: string): Promise<Attendanc
       return null;
     }
 
-    const { data, error } = await supabase
-      .from("attendance_records")
-      .select(
-        "id, project_id, worker_name, team_type, specialist_team_name, status, work_days, daily_wage, overtime_hours, overtime_wage, kasbon_amount, reimburse_type, reimburse_amount, attendance_date, notes, created_at, projects(name)",
-      )
-      .eq("id", attendanceId)
-      .maybeSingle();
-    if (error || !data) {
+    const attendanceResult = await withSupabaseSpecialistTeamNameFallback<
+      Record<string, unknown> & { projects?: unknown }
+    >(
+      ({ omitSpecialistTeamName }) =>
+        supabase
+          .from("attendance_records")
+          .select(
+            getSupabaseAttendanceSelect({
+              includeProjectName: true,
+              omitSpecialistTeamName,
+            }),
+          )
+          .eq("id", attendanceId)
+          .maybeSingle(),
+    );
+    if (attendanceResult.error || !attendanceResult.data) {
       return null;
     }
 
-    return mapAttendance(data, resolveJoinName(data.projects));
+    return mapAttendance(
+      attendanceResult.data,
+      resolveJoinName(attendanceResult.data.projects),
+    );
   }
 
   if (activeDataSource === "firebase") {

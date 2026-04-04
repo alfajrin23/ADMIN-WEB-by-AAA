@@ -2178,6 +2178,7 @@ export function deleteManyExcelExpenses(expenseIds: string[]) {
 }
 
 export function insertExcelAttendance(payload: {
+  id?: string;
   project_id: string;
   worker_name: string;
   team_type: WorkerTeam;
@@ -2195,7 +2196,7 @@ export function insertExcelAttendance(payload: {
 }) {
   const db = readExcelDatabase();
   const row: AttendanceRow = {
-    id: randomUUID(),
+    id: payload.id ?? randomUUID(),
     project_id: payload.project_id,
     worker_name: payload.worker_name,
     team_type: payload.team_type,
@@ -2220,6 +2221,7 @@ export function insertExcelAttendance(payload: {
 
 export function insertManyExcelAttendance(
   payloads: Array<{
+    id?: string;
     project_id: string;
     worker_name: string;
     team_type: WorkerTeam;
@@ -2243,7 +2245,7 @@ export function insertManyExcelAttendance(
   const db = readExcelDatabase();
   const now = new Date().toISOString();
   const rows: AttendanceRow[] = payloads.map((payload) => ({
-    id: randomUUID(),
+    id: payload.id ?? randomUUID(),
     project_id: payload.project_id,
     worker_name: payload.worker_name,
     team_type: payload.team_type,
@@ -2264,6 +2266,72 @@ export function insertManyExcelAttendance(
   db.attendance_records.push(...rows);
   writeDatabase(db);
   return rows;
+}
+
+export function upsertManyExcelAttendance(
+  payloads: Array<{
+    id: string;
+    project_id: string;
+    worker_name: string;
+    team_type: WorkerTeam;
+    specialist_team_name: string | null;
+    status: AttendanceStatus;
+    work_days: number;
+    daily_wage: number;
+    overtime_hours: number;
+    overtime_wage: number;
+    kasbon_amount: number;
+    reimburse_type: ReimburseType | null;
+    reimburse_amount: number;
+    attendance_date: string;
+    notes: string | null;
+    created_at?: string;
+  }>,
+) {
+  if (payloads.length === 0) {
+    return [];
+  }
+
+  const db = readExcelDatabase();
+  const rowsById = new Map(db.attendance_records.map((row) => [row.id, row] as const));
+  const now = new Date().toISOString();
+  const nextRows = db.attendance_records.slice();
+  const updatedRows: AttendanceRow[] = [];
+
+  for (const payload of payloads) {
+    const existing = rowsById.get(payload.id);
+    const row: AttendanceRow = {
+      id: payload.id,
+      project_id: payload.project_id,
+      worker_name: payload.worker_name,
+      team_type: payload.team_type,
+      specialist_team_name: payload.specialist_team_name,
+      status: payload.status,
+      work_days: toPositiveInteger(payload.work_days, 1),
+      daily_wage: payload.daily_wage,
+      overtime_hours: Math.max(0, payload.overtime_hours),
+      overtime_wage: Math.max(0, payload.overtime_wage),
+      kasbon_amount: payload.kasbon_amount,
+      reimburse_type: payload.reimburse_type,
+      reimburse_amount: payload.reimburse_amount,
+      attendance_date: payload.attendance_date,
+      notes: payload.notes,
+      created_at: existing?.created_at ?? payload.created_at ?? now,
+    };
+
+    const existingIndex = nextRows.findIndex((item) => item.id === payload.id);
+    if (existingIndex >= 0) {
+      nextRows[existingIndex] = row;
+    } else {
+      nextRows.push(row);
+    }
+    rowsById.set(payload.id, row);
+    updatedRows.push(row);
+  }
+
+  db.attendance_records = nextRows;
+  writeDatabase(db);
+  return updatedRows;
 }
 
 export function updateExcelAttendance(payload: {
@@ -2326,6 +2394,7 @@ export function deleteExcelAttendance(attendanceId: string) {
 }
 
 export function insertExcelPayrollReset(payload: {
+  id?: string;
   project_id: string;
   team_type: WorkerTeam;
   specialist_team_name: string | null;
@@ -2334,7 +2403,7 @@ export function insertExcelPayrollReset(payload: {
 }) {
   const db = readExcelDatabase();
   const row: PayrollResetRow = {
-    id: randomUUID(),
+    id: payload.id ?? randomUUID(),
     project_id: payload.project_id,
     team_type: payload.team_type,
     specialist_team_name: payload.specialist_team_name,
@@ -2346,6 +2415,54 @@ export function insertExcelPayrollReset(payload: {
   db.payroll_resets.push(row);
   writeDatabase(db);
   return row;
+}
+
+export function upsertManyExcelPayrollResets(
+  payloads: Array<{
+    id: string;
+    project_id: string;
+    team_type: WorkerTeam;
+    specialist_team_name: string | null;
+    worker_name: string | null;
+    paid_until_date: string;
+    created_at?: string;
+  }>,
+) {
+  if (payloads.length === 0) {
+    return [];
+  }
+
+  const db = readExcelDatabase();
+  const rowsById = new Map(db.payroll_resets.map((row) => [row.id, row] as const));
+  const now = new Date().toISOString();
+  const nextRows = db.payroll_resets.slice();
+  const updatedRows: PayrollResetRow[] = [];
+
+  for (const payload of payloads) {
+    const existing = rowsById.get(payload.id);
+    const row: PayrollResetRow = {
+      id: payload.id,
+      project_id: payload.project_id,
+      team_type: payload.team_type,
+      specialist_team_name: payload.specialist_team_name,
+      worker_name: payload.worker_name,
+      paid_until_date: payload.paid_until_date,
+      created_at: existing?.created_at ?? payload.created_at ?? now,
+    };
+
+    const existingIndex = nextRows.findIndex((item) => item.id === payload.id);
+    if (existingIndex >= 0) {
+      nextRows[existingIndex] = row;
+    } else {
+      nextRows.push(row);
+    }
+    rowsById.set(payload.id, row);
+    updatedRows.push(row);
+  }
+
+  db.payroll_resets = nextRows;
+  writeDatabase(db);
+  return updatedRows;
 }
 
 function resolveImportTemplatePath(templatePath?: string) {

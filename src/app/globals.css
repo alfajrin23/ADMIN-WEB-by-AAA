@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import "../../node_modules/tailwindcss/index.css";
 
 :root {
   --bg-base: #f3f6fb;
@@ -1980,6 +1980,187 @@ button:disabled {
   }
 }
 
+/* ──────────────── Attendance Search Input ──────────────── */
+
+.attendance-search-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: 28rem;
+}
+
+.attendance-search-inner {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 1rem;
+  border: 1.5px solid rgba(203, 213, 225, 0.65);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.92) 0%, rgba(248, 250, 252, 0.88) 100%);
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 2px 8px rgba(15, 23, 42, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  transition:
+    border-color 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 280ms ease,
+    transform 200ms ease;
+}
+
+.attendance-search-wrapper[data-focused="true"] .attendance-search-inner {
+  border-color: var(--primary-400);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98) 0%, rgba(239, 246, 255, 0.95) 100%);
+  box-shadow:
+    0 0 0 4px rgba(37, 99, 235, 0.1),
+    0 8px 24px rgba(37, 99, 235, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  transform: translateY(-1px);
+}
+
+.attendance-search-wrapper[data-has-value="true"]:not([data-focused="true"]) .attendance-search-inner {
+  border-color: rgba(96, 165, 250, 0.5);
+  background:
+    linear-gradient(135deg, rgba(239, 246, 255, 0.95) 0%, rgba(219, 234, 254, 0.45) 100%);
+  box-shadow:
+    0 2px 12px rgba(37, 99, 235, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.attendance-search-icon {
+  position: absolute;
+  left: 0.9rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  color: var(--text-faint);
+  transition:
+    color 280ms ease,
+    transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.attendance-search-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.attendance-search-icon[data-focused="true"] {
+  color: var(--primary-500);
+  transform: translateY(-50%) scale(1.12);
+}
+
+.attendance-search-input {
+  width: 100%;
+  padding: 0.72rem 2.8rem 0.72rem 2.7rem;
+  border: none;
+  border-radius: 1rem;
+  background: transparent;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--text-main);
+  letter-spacing: 0.005em;
+  transition: none;
+}
+
+.attendance-search-input:focus {
+  outline: none;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+}
+
+.attendance-search-input::placeholder {
+  color: var(--text-faint);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+
+.attendance-search-clear {
+  position: absolute;
+  right: 0.55rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.65rem;
+  height: 1.65rem;
+  border-radius: 0.6rem;
+  border: 1px solid rgba(203, 213, 225, 0.5);
+  background: linear-gradient(135deg, rgba(248, 250, 252, 0.95) 0%, rgba(241, 245, 249, 0.9) 100%);
+  color: var(--text-faint);
+  cursor: pointer;
+  z-index: 2;
+  padding: 0;
+  transition:
+    background 180ms ease,
+    color 180ms ease,
+    border-color 180ms ease,
+    transform 200ms ease;
+}
+
+.attendance-search-clear svg {
+  width: 0.65rem;
+  height: 0.65rem;
+}
+
+.attendance-search-clear:hover {
+  background: linear-gradient(135deg, #ffe4e6 0%, #fecdd3 100%);
+  border-color: rgba(253, 164, 175, 0.6);
+  color: var(--danger-500);
+  transform: translateY(-50%) scale(1.08);
+  box-shadow: 0 2px 8px rgba(225, 29, 72, 0.12);
+}
+
+.attendance-search-clear:active {
+  transform: translateY(-50%) scale(0.95);
+  box-shadow: none;
+}
+
+.attendance-search-shortcut {
+  position: absolute;
+  right: 0.7rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  pointer-events: none;
+  opacity: 0.45;
+  transition: opacity 280ms ease;
+  z-index: 1;
+}
+
+.attendance-search-wrapper[data-focused="true"] .attendance-search-shortcut {
+  opacity: 0;
+}
+
+.attendance-search-shortcut kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.3rem;
+  height: 1.3rem;
+  padding: 0 0.3rem;
+  border-radius: 0.35rem;
+  border: 1px solid rgba(203, 213, 225, 0.6);
+  background: rgba(248, 250, 252, 0.95);
+  color: var(--text-faint);
+  font-family: var(--font-sans), sans-serif;
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.06),
+    inset 0 -1px 0 rgba(15, 23, 42, 0.04);
+}
+
 @media (prefers-reduced-motion: reduce) {
   button,
   [data-ui-button="true"],
@@ -2005,6 +2186,13 @@ button:disabled {
   }
 
   .client-carousel-card {
+    transition: none;
+  }
+
+  .attendance-search-inner,
+  .attendance-search-icon,
+  .attendance-search-clear,
+  .attendance-search-shortcut {
     transition: none;
   }
 }

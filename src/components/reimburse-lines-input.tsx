@@ -6,17 +6,32 @@ import { RupiahInput } from "@/components/rupiah-input";
 type ReimburseLinesInputProps = {
   amountName?: string;
   noteName?: string;
+  initialRows?: Array<{
+    amount?: number;
+    note?: string;
+  }>;
 };
 
 type ReimburseRow = {
   id: number;
+  amount?: number;
+  note?: string;
 };
 
 export function ReimburseLinesInput({
   amountName = "reimburse_amount",
   noteName = "reimburse_note",
+  initialRows,
 }: ReimburseLinesInputProps) {
-  const [rows, setRows] = useState<ReimburseRow[]>([{ id: 1 }]);
+  const [rows, setRows] = useState<ReimburseRow[]>(
+    (initialRows && initialRows.length > 0
+      ? initialRows.map((row, index) => ({
+          id: index + 1,
+          amount: row.amount,
+          note: row.note,
+        }))
+      : [{ id: 1 }]) as ReimburseRow[],
+  );
 
   const addRow = () => {
     setRows((prev) => [...prev, { id: prev[prev.length - 1].id + 1 }]);
@@ -35,11 +50,16 @@ export function ReimburseLinesInput({
     <div className="space-y-2">
       {rows.map((row, index) => (
         <div key={row.id} className="grid gap-2 sm:grid-cols-[1fr_1.2fr_auto]">
-          <RupiahInput name={amountName} placeholder="Nominal reimburse" />
+          <RupiahInput
+            name={amountName}
+            placeholder="Nominal reimburse"
+            defaultValue={row.amount}
+          />
           <input
             name={noteName}
             placeholder={`Keterangan reimburse #${index + 1}`}
             autoComplete="off"
+            defaultValue={row.note ?? ""}
           />
           <button
             type="button"

@@ -37,10 +37,13 @@ import {
   importTemplateExcelDatabaseFromBuffer,
   parseTemplateExcelData,
   parseTemplateExcelDataFromBuffer,
+  readExcelDatabase,
   insertExcelAttendance,
   insertExcelExpense,
   insertExcelPayrollReset,
   insertExcelProject,
+  upsertManyExcelAttendance,
+  upsertManyExcelPayrollResets,
   updateExcelAttendance,
   updateExcelExpense,
   updateManyExcelExpenseYears,
@@ -50,7 +53,12 @@ import {
 } from "@/lib/excel-db";
 import { getFirestoreServerClient } from "@/lib/firebase";
 import { activeDataSource } from "@/lib/storage";
-import { getSupabaseServerClient } from "@/lib/supabase";
+import {
+  getSupabaseAttendanceSelect,
+  getSupabaseServerClient,
+  omitSpecialistTeamNameField,
+  withSupabaseSpecialistTeamNameFallback,
+} from "@/lib/supabase";
 
 function getString(formData: FormData, key: string) {
   const value = formData.get(key);
@@ -73,6 +81,20 @@ function getNumber(formData: FormData, key: string) {
   const normalized = rawValue.replace(/\./g, "").replace(",", ".");
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getStringValues(formData: FormData, key: string) {
+  return formData
+    .getAll(key)
+    .map((item) => (typeof item === "string" ? item.trim() : ""));
+}
+
+function getNumberValues(formData: FormData, key: string) {
+  return getStringValues(formData, key).map((rawValue) => {
+    const normalized = rawValue.replace(/\./g, "").replace(",", ".");
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  });
 }
 
 function getPositiveInteger(formData: FormData, key: string, fallback = 1) {
@@ -121,6 +143,17 @@ function withReturnMessage(returnTo: string, key: string, message: string) {
   params.set(key, message);
   const query = params.toString();
   return query ? `${rawPath}?${query}` : rawPath;
+}
+
+function withReturnParams(
+  returnTo: string,
+  mutator: (params: URLSearchParams) => void,
+) {
+  const url = new URL(returnTo, "http://localhost");
+  const params = new URLSearchParams(url.search);
+  mutator(params);
+  const query = params.toString();
+  return query ? `${url.pathname}?${query}` : url.pathname;
 }
 
 function isChecked(formData: FormData, key: string) {
@@ -188,6 +221,226 @@ function createDeterministicUuid(seed: string) {
   const version = `5${hash.slice(13, 16)}`;
   const variant = `${(8 + (parseInt(hash.slice(16, 17), 16) % 4)).toString(16)}${hash.slice(17, 20)}`;
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${version}-${variant}-${hash.slice(20, 32)}`;
+}
+
+function parseAttendanceStatusValue(value: string): AttendanceStatus {
+  return ATTENDANCE_STATUSES.some((item) => item.value === value)
+    ? (value as AttendanceStatus)
+    : "hadir";
+}
+
+function parseWorkerTeamValue(value: string): WorkerTeam {
+  return WORKER_TEAMS.some((item) => item.value === value) ? (value as WorkerTeam) : "tukang";
+}
+
+function normalizeAttendanceIdentityText(value: string | null | undefined) {
+  return (value ?? "").trim().toLowerCase();
+}
+
+function createAttendanceMutationId(input: {
+  projectId: string;
+  workerName: string;
+  teamType: WorkerTeam;
+  specialistTeamName: string | null;
+  attendanceDate: string;
+}) {
+  return createDeterministicUuid(
+    [
+      "attendance",
+      input.projectId.trim(),
+      input.attendanceDate.trim(),
+      normalizeAttendanceIdentityText(input.workerName),
+      input.teamType,
+      normalizeAttendanceIdentityText(input.specialistTeamName),
+    ].join("|"),
+  );
+}
+
+function createPayrollResetMutationId(input: {
+  projectId: string;
+  workerName: string | null;
+  teamType: WorkerTeam;
+  specialistTeamName: string | null;
+  paidUntilDate: string;
+}) {
+  return createDeterministicUuid(
+    [
+      "payroll-reset",
+      input.projectId.trim(),
+      input.paidUntilDate.trim(),
+      input.teamType,
+      normalizeAttendanceIdentityText(input.workerName),
+      normalizeAttendanceIdentityText(input.specialistTeamName),
+    ].join("|"),
+  );
+}
+
+function resolveAutoOvertimeWage(dailyWage: number) {
+  if (!Number.isFinite(dailyWage) || dailyWage <= 0) {
+    return 0;
+  }
+  return Math.max(dailyWage / 8, 0);
+}
+
+type AttendanceDuplicateCheckInput = {
+  id?: string;
+  projectId: string;
+  workerName: string;
+  teamType: WorkerTeam;
+  specialistTeamName: string | null;
+  attendanceDate: string;
+};
+
+type AttendanceDuplicateCheckRow = {
+  id: string;
+  projectId: string;
+  workerName: string;
+  teamType: WorkerTeam;
+  specialistTeamName: string | null;
+  attendanceDate: string;
+};
+
+function hasSameAttendanceIdentity(
+  row: AttendanceDuplicateCheckRow,
+  input: AttendanceDuplicateCheckInput,
+) {
+  return (
+    row.projectId === input.projectId &&
+    row.attendanceDate === input.attendanceDate &&
+    row.teamType === input.teamType &&
+    normalizeAttendanceIdentityText(row.workerName) ===
+      normalizeAttendanceIdentityText(input.workerName) &&
+    normalizeAttendanceIdentityText(row.specialistTeamName) ===
+      normalizeAttendanceIdentityText(input.specialistTeamName)
+  );
+}
+
+async function findDuplicateAttendanceRecord(
+  inputs: AttendanceDuplicateCheckInput[],
+): Promise<AttendanceDuplicateCheckRow | null> {
+  if (inputs.length === 0) {
+    return null;
+  }
+
+  if (activeDataSource === "excel") {
+    const rows = readExcelDatabase().attendance_records.map((row) => ({
+      id: row.id,
+      projectId: row.project_id,
+      workerName: row.worker_name,
+      teamType: row.team_type,
+      specialistTeamName: row.specialist_team_name,
+      attendanceDate: row.attendance_date,
+    }));
+
+    for (const input of inputs) {
+      const found = rows.find((row) => row.id !== input.id && hasSameAttendanceIdentity(row, input));
+      if (found) {
+        return found;
+      }
+    }
+    return null;
+  }
+
+  if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return null;
+    }
+
+    const pairKeys = Array.from(
+      new Set(inputs.map((item) => `${item.projectId}|${item.attendanceDate}`)),
+    );
+
+    const rows = (
+      await Promise.all(
+        pairKeys.map(async (pairKey) => {
+          const [projectId, attendanceDate] = pairKey.split("|");
+          const result = await withSupabaseSpecialistTeamNameFallback<Record<string, unknown>[]>(
+            ({ omitSpecialistTeamName }) =>
+              supabase
+                .from("attendance_records")
+                .select(
+                  getSupabaseAttendanceSelect({
+                    identityOnly: true,
+                    omitSpecialistTeamName,
+                  }),
+                )
+                .eq("project_id", projectId)
+                .eq("attendance_date", attendanceDate),
+          );
+
+          if (result.error || !Array.isArray(result.data)) {
+            return [];
+          }
+
+          return result.data.map((row) => ({
+            id: String(row.id ?? ""),
+            projectId: String(row.project_id ?? ""),
+            workerName: String(row.worker_name ?? ""),
+            teamType: parseWorkerTeamValue(String(row.team_type ?? "")),
+            specialistTeamName:
+              !result.omitSpecialistTeamName && typeof row.specialist_team_name === "string"
+                ? row.specialist_team_name
+                : null,
+            attendanceDate: String(row.attendance_date ?? ""),
+          }));
+        }),
+      )
+    ).flat();
+
+    for (const input of inputs) {
+      const found = rows.find((row) => row.id !== input.id && hasSameAttendanceIdentity(row, input));
+      if (found) {
+        return found;
+      }
+    }
+    return null;
+  }
+
+  if (activeDataSource === "firebase") {
+    const firestore = getFirestoreServerClient();
+    if (!firestore) {
+      return null;
+    }
+
+    const pairKeys = Array.from(
+      new Set(inputs.map((item) => `${item.projectId}|${item.attendanceDate}`)),
+    );
+    const rows = (
+      await Promise.all(
+        pairKeys.map(async (pairKey) => {
+          const [projectId, attendanceDate] = pairKey.split("|");
+          const snapshot = await firestore
+            .collection("attendance_records")
+            .where("project_id", "==", projectId)
+            .where("attendance_date", "==", attendanceDate)
+            .get();
+
+          return snapshot.docs.map((doc) => {
+            const data = doc.data();
+            return {
+              id: String(data.id ?? doc.id),
+              projectId: String(data.project_id ?? ""),
+              workerName: String(data.worker_name ?? ""),
+              teamType: parseWorkerTeamValue(String(data.team_type ?? "")),
+              specialistTeamName:
+                typeof data.specialist_team_name === "string" ? data.specialist_team_name : null,
+              attendanceDate: String(data.attendance_date ?? ""),
+            };
+          });
+        }),
+      )
+    ).flat();
+
+    for (const input of inputs) {
+      const found = rows.find((row) => row.id !== input.id && hasSameAttendanceIdentity(row, input));
+      if (found) {
+        return found;
+      }
+    }
+  }
+
+  return null;
 }
 
 function getExpenseSubmissionToken(formData: FormData) {
@@ -1866,22 +2119,20 @@ export async function createAttendanceAction(formData: FormData) {
   const actor = await requireAttendanceActionUser();
   const projectId = getString(formData, "project_id");
   const workerName = getString(formData, "worker_name");
+  const returnTo = getReturnTo(formData) ?? "/attendance";
   if (!projectId || !workerName) {
+    redirect(withReturnMessage(returnTo, "error", "Project dan nama pekerja wajib diisi."));
     return;
   }
-  const returnTo = getReturnTo(formData);
 
   const status = getString(formData, "status");
-  const parsedStatus: AttendanceStatus = ATTENDANCE_STATUSES.some((item) => item.value === status)
-    ? (status as AttendanceStatus)
-    : "hadir";
+  const parsedStatus = parseAttendanceStatusValue(status);
 
   const teamType = getParsedWorkerTeam(formData);
   const specialistTeamNameRaw = getString(formData, "specialist_team_name");
   const specialistTeamName = teamType === "spesialis" ? specialistTeamNameRaw || null : null;
   const dailyWage = getNumber(formData, "daily_wage");
   const overtimeHours = Math.max(getNumber(formData, "overtime_hours"), 0);
-  const overtimeWage = Math.max(getNumber(formData, "overtime_wage"), 0);
   const kasbonAmount = getNumber(formData, "kasbon_amount");
   const reimburseType = getParsedReimburseType(formData);
   const reimburseAmount = getNumber(formData, "reimburse_amount");
@@ -1892,12 +2143,19 @@ export async function createAttendanceAction(formData: FormData) {
   const normalizedOvertimeHours =
     parsedStatus === "hadir" && Number.isFinite(overtimeHours) ? overtimeHours : 0;
   const normalizedOvertimeWage =
-    parsedStatus === "hadir" && Number.isFinite(overtimeWage) ? overtimeWage : 0;
+    parsedStatus === "hadir" ? resolveAutoOvertimeWage(normalizedDailyWage) : 0;
   const workDays = Math.min(getPositiveInteger(formData, "work_days", 1), 31);
   const attendanceDate =
     getString(formData, "attendance_date") || new Date().toISOString().slice(0, 10);
 
   const payload = {
+    id: createAttendanceMutationId({
+      projectId,
+      workerName,
+      teamType,
+      specialistTeamName,
+      attendanceDate,
+    }),
     project_id: projectId,
     worker_name: workerName,
     team_type: teamType,
@@ -1914,6 +2172,26 @@ export async function createAttendanceAction(formData: FormData) {
     notes: getString(formData, "notes") || null,
   };
 
+  const duplicate = await findDuplicateAttendanceRecord([
+    {
+      id: payload.id,
+      projectId: payload.project_id,
+      workerName: payload.worker_name,
+      teamType: payload.team_type,
+      specialistTeamName: payload.specialist_team_name,
+      attendanceDate: payload.attendance_date,
+    },
+  ]);
+  if (duplicate) {
+    redirect(
+      withReturnMessage(
+        returnTo,
+        "error",
+        "Data absensi pekerja pada project dan tanggal tersebut sudah ada.",
+      ),
+    );
+  }
+
   if (activeDataSource === "excel") {
     insertExcelAttendance(payload);
   } else if (activeDataSource === "supabase") {
@@ -1921,7 +2199,8 @@ export async function createAttendanceAction(formData: FormData) {
     if (!supabase) {
       return;
     }
-    await supabase.from("attendance_records").insert({
+    const attendancePayload = {
+      id: payload.id,
       project_id: payload.project_id,
       worker_name: payload.worker_name,
       team_type: payload.team_type,
@@ -1936,19 +2215,28 @@ export async function createAttendanceAction(formData: FormData) {
       reimburse_amount: payload.reimburse_amount,
       attendance_date: payload.attendance_date,
       notes: payload.notes,
-    });
+    };
+    const result = await withSupabaseSpecialistTeamNameFallback(({ omitSpecialistTeamName }) =>
+      supabase.from("attendance_records").upsert(
+        omitSpecialistTeamNameField(attendancePayload, omitSpecialistTeamName),
+        {
+          onConflict: "id",
+        },
+      ),
+    );
+    if (result.error) {
+      redirect(withReturnMessage(returnTo, "error", "Gagal menyimpan data absensi."));
+    }
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
     if (!firestore) {
       return;
     }
-    const id = randomUUID();
     await runFirebaseWriteSafely(async () => {
-      await firestore.collection("attendance_records").doc(id).set({
-        id,
+      await firestore.collection("attendance_records").doc(payload.id).set({
         ...payload,
         created_at: createTimestamp(),
-      });
+      }, { merge: true });
     });
   } else {
     return;
@@ -1979,9 +2267,7 @@ export async function createAttendanceAction(formData: FormData) {
       ),
     },
   });
-  if (returnTo) {
-    redirect(returnTo);
-  }
+  redirect(withReturnMessage(returnTo, "success", "Data absensi berhasil disimpan."));
 }
 
 export async function updateAttendanceAction(formData: FormData) {
@@ -1989,21 +2275,20 @@ export async function updateAttendanceAction(formData: FormData) {
   const attendanceId = getString(formData, "attendance_id");
   const projectId = getString(formData, "project_id");
   const workerName = getString(formData, "worker_name");
+  const returnTo = getReturnTo(formData) ?? "/attendance";
   if (!attendanceId || !projectId || !workerName) {
+    redirect(withReturnMessage(returnTo, "error", "Data absensi yang akan diperbarui tidak valid."));
     return;
   }
 
   const status = getString(formData, "status");
-  const parsedStatus: AttendanceStatus = ATTENDANCE_STATUSES.some((item) => item.value === status)
-    ? (status as AttendanceStatus)
-    : "hadir";
+  const parsedStatus = parseAttendanceStatusValue(status);
 
   const teamType = getParsedWorkerTeam(formData);
   const specialistTeamNameRaw = getString(formData, "specialist_team_name");
   const specialistTeamName = teamType === "spesialis" ? specialistTeamNameRaw || null : null;
   const dailyWage = getNumber(formData, "daily_wage");
   const overtimeHours = Math.max(getNumber(formData, "overtime_hours"), 0);
-  const overtimeWage = Math.max(getNumber(formData, "overtime_wage"), 0);
   const kasbonAmount = getNumber(formData, "kasbon_amount");
   const reimburseType = getParsedReimburseType(formData);
   const reimburseAmount = getNumber(formData, "reimburse_amount");
@@ -2014,7 +2299,7 @@ export async function updateAttendanceAction(formData: FormData) {
   const normalizedOvertimeHours =
     parsedStatus === "hadir" && Number.isFinite(overtimeHours) ? overtimeHours : 0;
   const normalizedOvertimeWage =
-    parsedStatus === "hadir" && Number.isFinite(overtimeWage) ? overtimeWage : 0;
+    parsedStatus === "hadir" ? resolveAutoOvertimeWage(normalizedDailyWage) : 0;
 
   const payload = {
     id: attendanceId,
@@ -2034,7 +2319,25 @@ export async function updateAttendanceAction(formData: FormData) {
       getString(formData, "attendance_date") || new Date().toISOString().slice(0, 10),
     notes: getString(formData, "notes") || null,
   };
-  const returnTo = getReturnTo(formData);
+  const duplicate = await findDuplicateAttendanceRecord([
+    {
+      id: payload.id,
+      projectId: payload.project_id,
+      workerName: payload.worker_name,
+      teamType: payload.team_type,
+      specialistTeamName: payload.specialist_team_name,
+      attendanceDate: payload.attendance_date,
+    },
+  ]);
+  if (duplicate) {
+    redirect(
+      withReturnMessage(
+        returnTo,
+        "error",
+        "Data absensi pekerja pada project dan tanggal tersebut sudah ada.",
+      ),
+    );
+  }
 
   if (activeDataSource === "excel") {
     updateExcelAttendance(payload);
@@ -2043,25 +2346,28 @@ export async function updateAttendanceAction(formData: FormData) {
     if (!supabase) {
       return;
     }
-    await supabase
-      .from("attendance_records")
-      .update({
-        project_id: payload.project_id,
-        worker_name: payload.worker_name,
-        team_type: payload.team_type,
-        specialist_team_name: payload.specialist_team_name,
-        status: payload.status,
-        work_days: payload.work_days,
-        daily_wage: payload.daily_wage,
-        overtime_hours: payload.overtime_hours,
-        overtime_wage: payload.overtime_wage,
-        kasbon_amount: payload.kasbon_amount,
-        reimburse_type: payload.reimburse_type,
-        reimburse_amount: payload.reimburse_amount,
-        attendance_date: payload.attendance_date,
-        notes: payload.notes,
-      })
-      .eq("id", payload.id);
+    const attendancePayload = {
+      project_id: payload.project_id,
+      worker_name: payload.worker_name,
+      team_type: payload.team_type,
+      specialist_team_name: payload.specialist_team_name,
+      status: payload.status,
+      work_days: payload.work_days,
+      daily_wage: payload.daily_wage,
+      overtime_hours: payload.overtime_hours,
+      overtime_wage: payload.overtime_wage,
+      kasbon_amount: payload.kasbon_amount,
+      reimburse_type: payload.reimburse_type,
+      reimburse_amount: payload.reimburse_amount,
+      attendance_date: payload.attendance_date,
+      notes: payload.notes,
+    };
+    await withSupabaseSpecialistTeamNameFallback(({ omitSpecialistTeamName }) =>
+      supabase
+        .from("attendance_records")
+        .update(omitSpecialistTeamNameField(attendancePayload, omitSpecialistTeamName))
+        .eq("id", payload.id),
+    );
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
     if (!firestore) {
@@ -2114,9 +2420,315 @@ export async function updateAttendanceAction(formData: FormData) {
       kasbon_amount: payload.kasbon_amount,
     },
   });
-  if (returnTo) {
-    redirect(returnTo);
+  redirect(withReturnMessage(returnTo, "success", "Perubahan absensi berhasil disimpan."));
+}
+
+type AttendanceRecapRowInput = {
+  id: string;
+  project_id: string;
+  worker_name: string;
+  team_type: WorkerTeam;
+  specialist_team_name: string | null;
+  status: AttendanceStatus;
+  work_days: number;
+  daily_wage: number;
+  overtime_hours: number;
+  overtime_wage: number;
+  kasbon_amount: number;
+  reimburse_type: ReimburseType | null;
+  reimburse_amount: number;
+  attendance_date: string;
+  notes: string | null;
+};
+
+function buildAttendanceRecapRowsFromFormData(formData: FormData): AttendanceRecapRowInput[] {
+  const attendanceIds = getStringValues(formData, "attendance_id");
+  const currentProjectIds = getStringValues(formData, "project_id_current");
+  const workerNames = getStringValues(formData, "worker_name");
+  const teamTypes = getStringValues(formData, "team_type");
+  const specialistTeamNames = getStringValues(formData, "specialist_team_name");
+  const statuses = getStringValues(formData, "status");
+  const workDaysValues = getNumberValues(formData, "work_days");
+  const dailyWages = getNumberValues(formData, "daily_wage");
+  const overtimeHoursValues = getNumberValues(formData, "overtime_hours");
+  const kasbonAmounts = getNumberValues(formData, "kasbon_amount");
+  const reimburseTypes = getStringValues(formData, "attendance_reimburse_type");
+  const reimburseAmounts = getNumberValues(formData, "attendance_reimburse_amount");
+  const attendanceDates = getStringValues(formData, "attendance_date");
+  const notes = getStringValues(formData, "notes");
+  const globalProjectId = getString(formData, "project_id_global");
+  const globalSpecialistTeamName = getString(formData, "specialist_team_name_global");
+
+  return attendanceIds
+    .map((attendanceId, index) => {
+      const projectId = globalProjectId || currentProjectIds[index] || "";
+      const workerName = workerNames[index] ?? "";
+      const teamType = parseWorkerTeamValue(teamTypes[index] ?? "");
+      const specialistTeamNameRaw = specialistTeamNames[index] ?? "";
+      const specialistTeamName =
+        teamType === "spesialis"
+          ? globalSpecialistTeamName || specialistTeamNameRaw || null
+          : null;
+      const status = parseAttendanceStatusValue(statuses[index] ?? "hadir");
+      const workDays = Math.min(Math.max(Math.floor(workDaysValues[index] ?? 1), 1), 31);
+      const dailyWage = Math.max(dailyWages[index] ?? 0, 0);
+      const overtimeHours =
+        status === "hadir" ? Math.max(overtimeHoursValues[index] ?? 0, 0) : 0;
+      const overtimeWage = status === "hadir" ? resolveAutoOvertimeWage(dailyWage) : 0;
+      const kasbonAmount = Math.max(kasbonAmounts[index] ?? 0, 0);
+      const reimburseTypeRaw = reimburseTypes[index] ?? "";
+      const reimburseType =
+        reimburseTypeRaw === "material" || reimburseTypeRaw === "kekurangan_dana"
+          ? (reimburseTypeRaw as ReimburseType)
+          : null;
+      const reimburseAmount =
+        reimburseType && Number.isFinite(reimburseAmounts[index]) && reimburseAmounts[index] > 0
+          ? reimburseAmounts[index]
+          : 0;
+      const attendanceDate =
+        attendanceDates[index] ?? new Date().toISOString().slice(0, 10);
+      const note = notes[index] ?? "";
+
+      if (!attendanceId || !projectId || !workerName) {
+        return null;
+      }
+
+      return {
+        id: attendanceId,
+        project_id: projectId,
+        worker_name: workerName,
+        team_type: teamType,
+        specialist_team_name: specialistTeamName,
+        status,
+        work_days: workDays,
+        daily_wage: dailyWage,
+        overtime_hours: overtimeHours,
+        overtime_wage: overtimeWage,
+        kasbon_amount: kasbonAmount,
+        reimburse_type: reimburseType,
+        reimburse_amount: reimburseAmount,
+        attendance_date: attendanceDate,
+        notes: note || null,
+      };
+    })
+    .filter((row): row is AttendanceRecapRowInput => Boolean(row));
+}
+
+export async function prepareAttendanceExportAction(formData: FormData) {
+  const actor = await requireAttendanceActionUser();
+  const returnTo = getReturnTo(formData) ?? "/attendance";
+  const rows = buildAttendanceRecapRowsFromFormData(formData);
+  const exportKind = getString(formData, "export_kind");
+  const globalSpecialistTeamName = getString(formData, "specialist_team_name_global");
+  const previewKind = exportKind === "excel" ? "excel" : "pdf";
+  const reimburseAmounts = getNumberValues(formData, "reimburse_amount");
+  const reimburseNotes = getStringValues(formData, "reimburse_note");
+
+  if (rows.length === 0) {
+    redirect(withReturnMessage(returnTo, "error", "Pilih data absensi yang ingin direkap."));
   }
+
+  const duplicate = await findDuplicateAttendanceRecord(
+    rows.map((row) => ({
+      id: row.id,
+      projectId: row.project_id,
+      workerName: row.worker_name,
+      teamType: row.team_type,
+      specialistTeamName: row.specialist_team_name,
+      attendanceDate: row.attendance_date,
+    })),
+  );
+  if (duplicate) {
+    redirect(
+      withReturnMessage(
+        returnTo,
+        "error",
+        "Terdapat data duplikat saat finalisasi rekap. Cek project atau tanggal pekerja yang dipilih.",
+      ),
+    );
+  }
+
+  const payrollResets = rows.map((row) => ({
+    id: createPayrollResetMutationId({
+      projectId: row.project_id,
+      workerName: row.worker_name,
+      teamType: row.team_type,
+      specialistTeamName: row.specialist_team_name,
+      paidUntilDate: row.attendance_date,
+    }),
+    project_id: row.project_id,
+    team_type: row.team_type,
+    specialist_team_name: row.specialist_team_name,
+    worker_name: row.worker_name,
+    paid_until_date: row.attendance_date,
+  }));
+
+  if (activeDataSource === "excel") {
+    upsertManyExcelAttendance(rows);
+    upsertManyExcelPayrollResets(payrollResets);
+  } else if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return;
+    }
+
+    const [attendanceResult, payrollResult] = await Promise.all([
+      withSupabaseSpecialistTeamNameFallback(({ omitSpecialistTeamName }) =>
+        supabase.from("attendance_records").upsert(
+          rows.map((row) =>
+            omitSpecialistTeamNameField(
+              {
+                id: row.id,
+                project_id: row.project_id,
+                worker_name: row.worker_name,
+                team_type: row.team_type,
+                specialist_team_name: row.specialist_team_name,
+                status: row.status,
+                work_days: row.work_days,
+                daily_wage: row.daily_wage,
+                overtime_hours: row.overtime_hours,
+                overtime_wage: row.overtime_wage,
+                kasbon_amount: row.kasbon_amount,
+                reimburse_type: row.reimburse_type,
+                reimburse_amount: row.reimburse_amount,
+                attendance_date: row.attendance_date,
+                notes: row.notes,
+              },
+              omitSpecialistTeamName,
+            ),
+          ),
+          {
+            onConflict: "id",
+          },
+        ),
+      ),
+      withSupabaseSpecialistTeamNameFallback(({ omitSpecialistTeamName }) =>
+        supabase.from("payroll_resets").upsert(
+          payrollResets.map((row) =>
+            omitSpecialistTeamNameField(
+              {
+                id: row.id,
+                project_id: row.project_id,
+                team_type: row.team_type,
+                specialist_team_name: row.specialist_team_name,
+                worker_name: row.worker_name,
+                paid_until_date: row.paid_until_date,
+              },
+              omitSpecialistTeamName,
+            ),
+          ),
+          {
+            onConflict: "id",
+          },
+        ),
+      ),
+    ]);
+
+    if (attendanceResult.error || payrollResult.error) {
+      redirect(withReturnMessage(returnTo, "error", "Gagal menyimpan finalisasi rekap."));
+    }
+  } else if (activeDataSource === "firebase") {
+    const firestore = getFirestoreServerClient();
+    if (!firestore) {
+      return;
+    }
+
+    await runFirebaseWriteSafely(async () => {
+      const batch = firestore.batch();
+      for (const row of rows) {
+        batch.set(
+          firestore.collection("attendance_records").doc(row.id),
+          {
+            id: row.id,
+            project_id: row.project_id,
+            worker_name: row.worker_name,
+            team_type: row.team_type,
+            specialist_team_name: row.specialist_team_name,
+            status: row.status,
+            work_days: row.work_days,
+            daily_wage: row.daily_wage,
+            overtime_hours: row.overtime_hours,
+            overtime_wage: row.overtime_wage,
+            kasbon_amount: row.kasbon_amount,
+            reimburse_type: row.reimburse_type,
+            reimburse_amount: row.reimburse_amount,
+            attendance_date: row.attendance_date,
+            notes: row.notes,
+            created_at: createTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+
+      for (const row of payrollResets) {
+        batch.set(
+          firestore.collection("payroll_resets").doc(row.id),
+          {
+            ...row,
+            created_at: createTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+
+      await batch.commit();
+    });
+  } else {
+    return;
+  }
+
+  revalidatePath("/");
+  revalidatePath("/attendance");
+  revalidateAttendanceCache();
+  revalidatePath("/logs");
+  queueActivityLog({
+    actor,
+    actionType: "confirm",
+    module: "attendance",
+    description: `Menyiapkan export rekap absensi ${rows.length} pekerja.`,
+    payload: {
+      attendance_ids: rows.map((row) => row.id),
+      worker_names: rows.map((row) => row.worker_name),
+      project_ids: rows.map((row) => row.project_id),
+      export_kind: previewKind,
+    },
+  });
+
+  const globalProjectId = rows[0]?.project_id ?? "";
+  const nextUrl = withReturnParams(returnTo, (params) => {
+    params.set("modal", "rekap-export");
+    params.set("preview_kind", previewKind);
+    if (globalProjectId) {
+      params.set("project", globalProjectId);
+    }
+    params.delete("success");
+    params.delete("error");
+    params.delete("reimburse_amount");
+    params.delete("reimburse_note");
+    if (globalSpecialistTeamName) {
+      params.set("specialist_team_name_global", globalSpecialistTeamName);
+    } else {
+      params.delete("specialist_team_name_global");
+    }
+
+    const maxRows = Math.max(reimburseAmounts.length, reimburseNotes.length);
+    for (let index = 0; index < maxRows; index += 1) {
+      const amount = reimburseAmounts[index] ?? 0;
+      const note = reimburseNotes[index] ?? "";
+      if (amount > 0) {
+        params.append("reimburse_amount", String(amount));
+      } else if (note.trim()) {
+        params.append("reimburse_amount", "0");
+      }
+      if (note.trim()) {
+        params.append("reimburse_note", note.trim());
+      } else if (amount > 0) {
+        params.append("reimburse_note", "");
+      }
+    }
+  });
+
+  redirect(nextUrl);
 }
 
 export async function deleteAttendanceAction(formData: FormData) {
@@ -2177,6 +2789,13 @@ export async function confirmPayrollPaidAction(formData: FormData) {
   const specialistTeamName = teamType === "spesialis" ? specialistTeamNameRaw || null : null;
   const workerName = getString(formData, "worker_name") || null;
   const payload = {
+    id: createPayrollResetMutationId({
+      projectId,
+      workerName,
+      teamType,
+      specialistTeamName,
+      paidUntilDate,
+    }),
     project_id: projectId,
     team_type: teamType,
     specialist_team_name: specialistTeamName,
@@ -2192,8 +2811,25 @@ export async function confirmPayrollPaidAction(formData: FormData) {
     if (!supabase) {
       return;
     }
-    const { error } = await supabase.from("payroll_resets").insert(payload);
-    if (error) {
+    const result = await withSupabaseSpecialistTeamNameFallback(({ omitSpecialistTeamName }) =>
+      supabase.from("payroll_resets").upsert(
+        omitSpecialistTeamNameField(
+          {
+            id: payload.id,
+            project_id: payload.project_id,
+            team_type: payload.team_type,
+            specialist_team_name: payload.specialist_team_name,
+            worker_name: payload.worker_name,
+            paid_until_date: payload.paid_until_date,
+          },
+          omitSpecialistTeamName,
+        ),
+        {
+          onConflict: "id",
+        },
+      ),
+    );
+    if (result.error) {
       // fallback when table is not available yet
     }
   } else if (activeDataSource === "firebase") {
@@ -2201,13 +2837,11 @@ export async function confirmPayrollPaidAction(formData: FormData) {
     if (!firestore) {
       return;
     }
-    const id = randomUUID();
     await runFirebaseWriteSafely(async () => {
-      await firestore.collection("payroll_resets").doc(id).set({
-        id,
+      await firestore.collection("payroll_resets").doc(payload.id).set({
         ...payload,
         created_at: createTimestamp(),
-      });
+      }, { merge: true });
     });
   } else {
     return;

@@ -1,0 +1,386 @@
+[
+  {
+    "id": "c6729af4-f701-47dd-92b6-14361ffb3509",
+    "name": "BABAKAN KARET"
+  },
+  {
+    "id": "1568cdf1-5a73-4a46-94a2-07a873f96776",
+    "name": "BABAKAN CARINGIN"
+  },
+  {
+    "id": "1e940d66-fd95-4956-8739-5830ea82be36",
+    "name": "BOJONG"
+  },
+  {
+    "id": "ee99f9d5-37c7-4c57-98d9-dd23ffbecef8",
+    "name": "BOJONG PETIR"
+  },
+  {
+    "id": "9c299c45-7468-41f1-8f20-846e60d662e0",
+    "name": "CILONGSONG"
+  },
+  {
+    "id": "8a5a3323-a73a-402a-8b71-2efa6e688dbb",
+    "name": "CIGUHA"
+  },
+  {
+    "id": "85f3277f-b694-409e-ae58-39c0d484bf5c",
+    "name": "CIBODAS"
+  },
+  {
+    "id": "4fb8443b-36ec-478b-a5ea-6992f62bd2fa",
+    "name": "CIBANTENG"
+  },
+  {
+    "id": "ab1357dc-8400-4b53-a832-5d165cb336cd",
+    "name": "CIMACAN"
+  },
+  {
+    "id": "d6c1a611-0f07-4693-8f26-c608f600a269",
+    "name": "CIPANAS"
+  },
+  {
+    "id": "5d851270-cbd1-4ab9-9b72-f911a29b6ff2",
+    "name": "CIBULAKAN"
+  },
+  {
+    "id": "2a53f36a-ef44-486c-8308-9796219b8b12",
+    "name": "CIKANCANA"
+  },
+  {
+    "id": "6265d360-b2e9-428c-b9e9-38baeaaa4df3",
+    "name": "SUKAMANAH CUGENANG"
+  },
+  {
+    "id": "e56acf4c-f82b-4b82-bed4-456eedcebae2",
+    "name": "SUKAMANAH MANDE"
+  },
+  {
+    "id": "dad6903e-42c9-45d9-8e33-b665322c410b",
+    "name": "SUKASARI KADUPANDAK"
+  },
+  {
+    "id": "b7d7c134-5c96-4fa3-8a35-4ab283cd7d28",
+    "name": "SUKASARI KARANG TENGAH"
+  },
+  {
+    "id": "38fcd2bc-a215-4d48-9c1f-1a4c244ff685",
+    "name": "SUKARESMI"
+  },
+  {
+    "id": "b02d5ff5-3b5b-4752-a139-d9c08ffa31e0",
+    "name": "SUKAJAYA"
+  },
+  {
+    "id": "78e4a88a-ba7f-4041-bd4c-a12424e49f56",
+    "name": "SUKAMULYA NARINGGUL"
+  },
+  {
+    "id": "13349b21-502b-4e18-9bf5-758a4f073b7f",
+    "name": "SUKAMULYA CIKADU"
+  },
+  {
+    "id": "e1e58a22-74c9-4dd9-9b7e-9ab6627e2ae7",
+    "name": "SUKATANI"
+  },
+  {
+    "id": "c6618453-4166-4241-b840-ae28d011ffcf",
+    "name": "SUKARAHARJA"
+  },
+  {
+    "id": "bcc7c06d-d62a-43dc-948e-5d8eef46e7ff",
+    "name": "SUKALUYU"
+  },
+  {
+    "id": "0ff398fb-6bd9-4d37-bb4c-1d2118c25e89",
+    "name": "SIRNASARI"
+  },
+  {
+    "id": "f2fc9d65-a876-46c3-b21d-f9ad50bfbe05",
+    "name": "SARAMPAD"
+  },
+  {
+    "id": "0f821ec0-1f2c-4c18-bf5f-b8f0d75da7b1",
+    "name": "SABANDAR"
+  },
+  {
+    "id": "9fab949b-f158-461a-8358-9fbbf06b14d7",
+    "name": "SINDANGSARI SUKANAGARA"
+  },
+  {
+    "id": "cd3a5e41-cf7d-4be9-a310-5a299a8dd03c",
+    "name": "SINDANGSARI CILAKU"
+  },
+  {
+    "id": "1d1e3fde-5765-4874-b192-7e92e7c773c0",
+    "name": "SINDANGKERTA"
+  },
+  {
+    "id": "5f14692f-a42d-493e-b144-7b6e55b2d45f",
+    "name": "SINDANGRESMI"
+  },
+  {
+    "id": "a856760c-d08f-4d8b-ac76-3b18d4f3b110",
+    "name": "PADASUKA"
+  },
+  {
+    "id": "63a4f4c8-2f0b-42d4-8b0d-4ac560710114",
+    "name": "PADALUYU TANGGEUNG"
+  },
+  {
+    "id": "b521480c-bf0c-41ac-9421-984df6ccb063",
+    "name": "PADALUYU CUGENANG"
+  },
+  {
+    "id": "f2787eee-3842-4c8c-8bdb-ecf92d686a41",
+    "name": "PADAMULYA"
+  },
+  {
+    "id": "65859d73-c635-424b-aa91-28816e3b61a0",
+    "name": "MARGALUYU"
+  },
+  {
+    "id": "f6c8fdc0-5913-4fa0-a29a-071b0e108c7c",
+    "name": "MEKARJAYA"
+  },
+  {
+    "id": "06686df8-ad44-44bc-ba1a-ba272687de1a",
+    "name": "MEKARSARI"
+  },
+  {
+    "id": "6ce2e0dc-fbdd-4801-9609-bd13dd757ace",
+    "name": "MEKARGALIH-CIRANJANG"
+  },
+  {
+    "id": "8ab68986-77e0-4f53-978a-1b59ea5e9a01",
+    "name": "MEKARGALIH-CIKALONG KULON"
+  },
+  {
+    "id": "9a293493-b1bc-4038-8ed4-3d8952160c66",
+    "name": "MULYASARI-MANDE"
+  },
+  {
+    "id": "f4ec990e-d9f6-4ea9-a270-74beb9196c29",
+    "name": "MULYASARI-CILAKU"
+  },
+  {
+    "id": "83304765-d46e-4ac5-8b69-948d700b9994",
+    "name": "MALEBER"
+  },
+  {
+    "id": "ad5894fb-d208-45cc-8d19-bdc8d07ce177",
+    "name": "MUNJUL"
+  },
+  {
+    "id": "4dc903fd-7061-4325-9b88-6683c9097116",
+    "name": "MANDALAWANGI"
+  },
+  {
+    "id": "f6569b71-30dc-4d5a-9c64-307df44e6d34",
+    "name": "MAJALAYA"
+  },
+  {
+    "id": "62649c55-b7f0-43a1-8cea-2878a528795f",
+    "name": "NANGGALAMEKAR"
+  },
+  {
+    "id": "0504e5d3-56b7-4844-b55b-edad1f9b667e",
+    "name": "JAMALI"
+  },
+  {
+    "id": "04318691-e44d-4051-98f6-4ed2b83454cb",
+    "name": "JATISARI"
+  },
+  {
+    "id": "17cd9f6f-9edd-419e-9faa-1e32436eb47e",
+    "name": "JAYAGIRI"
+  },
+  {
+    "id": "60b121d6-37b3-42a0-815a-78fea925f788",
+    "name": "GIRIJAYA"
+  },
+  {
+    "id": "57b51188-f43e-4be8-b423-e8e6011e73bb",
+    "name": "KALIBARU"
+  },
+  {
+    "id": "8affb3cf-89d2-4604-baf0-5268043bff15",
+    "name": "KARANG WANGI"
+  },
+  {
+    "id": "f470d80a-0040-40ef-80c8-d619e4d6ab83",
+    "name": "KUBANG"
+  },
+  {
+    "id": "6f0a3fe7-3544-46f0-96cb-5b05fcf858a3",
+    "name": "KERTARAHARJA"
+  },
+  {
+    "id": "7b6beddf-b7c8-42cc-a055-64b6c7439856",
+    "name": "KERTAMUKTI"
+  },
+  {
+    "id": "bc407888-1abe-48ad-912c-22712f981cf7",
+    "name": "RANCAGOONG"
+  },
+  {
+    "id": "518f35e4-b21e-4eba-bffa-05448f207be8",
+    "name": "RAHONG"
+  },
+  {
+    "id": "68ceaeea-8cab-4b75-82df-7c370b114592",
+    "name": "HEGARMANAH"
+  },
+  {
+    "id": "4558ff8b-d943-4f74-8494-90d236c8c36e",
+    "name": "PASIRDALEM"
+  },
+  {
+    "id": "23509685-6658-45bd-9416-f902aa43ebe2",
+    "name": "PASIR BARU"
+  },
+  {
+    "id": "057e4a34-896c-43c5-8699-3311972af861",
+    "name": "PAGELARAN"
+  },
+  {
+    "id": "7379b316-3843-4cd9-abf0-51f2482f87f7",
+    "name": "PANGADEGAN"
+  },
+  {
+    "id": "fbe6f9e0-afaf-432d-a3bd-3db21ae5eab0",
+    "name": "WALAHIR"
+  },
+  {
+    "id": "4fc39a6f-cc43-43a2-b5bb-ba7aeb098713",
+    "name": "WARGASARI"
+  },
+  {
+    "id": "c841a46d-c6fd-4861-8f70-b8304bf4b696",
+    "name": "SIRNAGALIH-CILAKU"
+  },
+  {
+    "id": "2d2872bb-651f-48da-b649-86f572a567cd",
+    "name": "SIRNAGALIH-SINDANGBARANG"
+  },
+  {
+    "id": "b0870a2f-0b39-4b29-9e74-cb9cb5919ba5",
+    "name": "PASAWAHAN"
+  },
+  {
+    "id": "b430f4ae-7006-4d5b-8570-a500e902ad23",
+    "name": "HAURWANGI"
+  },
+  {
+    "id": "9d4d20c0-34b7-434b-82ba-c9a91e04df28",
+    "name": "SUKAMAJU"
+  },
+  {
+    "id": "70df2fe9-1be1-4a02-8808-d19500c8842c",
+    "name": "SINDANGHAYU"
+  },
+  {
+    "id": "139e3621-7e95-47c7-b117-780a53644d79",
+    "name": "MUKA"
+  },
+  {
+    "id": "1669979c-531f-46bc-b188-4d9565935b61",
+    "name": "SANCTUARY BALI"
+  },
+  {
+    "id": "91ac6555-0d78-41ed-99de-654eb07fc8d0",
+    "name": "KOST SBY1"
+  },
+  {
+    "id": "1041bf88-0a3b-40ac-88f9-15ec76f09d9c",
+    "name": "MELATI MAS"
+  },
+  {
+    "id": "ce709fda-ebcd-48c2-a4e9-a63961a87b4c",
+    "name": "RS PURWOREJO"
+  },
+  {
+    "id": "5409ac97-5ba8-4f83-bbed-af2d6e272a4e",
+    "name": "OOMJU"
+  },
+  {
+    "id": "36163ae0-8fc7-41ad-af75-e841481d9e4f",
+    "name": "CEMPAKA ALARA"
+  },
+  {
+    "id": "86bf13ec-39ec-4929-b265-ccb8332008fb",
+    "name": "DAAN MOGOT"
+  },
+  {
+    "id": "43fd6be1-4dda-4323-aedb-f72c0663f9e8",
+    "name": "SSC"
+  },
+  {
+    "id": "ee20ea39-5442-40b0-b9d6-a09f787c17e8",
+    "name": "PUSAKAJAYA"
+  },
+  {
+    "id": "0370eed2-5e96-4081-93a4-e0268eaa7bb4",
+    "name": "SELATAN"
+  },
+  {
+    "id": "71e4a275-92b7-4b63-8795-1c1b2c0f6fc6",
+    "name": "GUDANG"
+  },
+  {
+    "id": "6546fb9e-0cbd-47ce-af69-6552d683a36c",
+    "name": "UMUM UPDATE"
+  },
+  {
+    "id": "ba9b741e-174e-4391-a9c2-20209db817b6",
+    "name": "PASIR JAMBU"
+  },
+  {
+    "id": "8e6186d5-6aea-4744-a3df-1af6100f1d02",
+    "name": "CIBULUH"
+  },
+  {
+    "id": "e9e7a4f0-5bb2-4880-a4a1-48c8324adb03",
+    "name": "SUKABAKTI"
+  },
+  {
+    "id": "08c513ea-a9e8-4ac6-a510-065f697b9eac",
+    "name": "BUMBANGSARI"
+  },
+  {
+    "id": "404945b6-00e6-468b-a3eb-56eefbd2d745",
+    "name": "CISUJEN"
+  },
+  {
+    "id": "263fd5da-7dde-403d-a939-3eaadb4f47cb",
+    "name": "UTARA"
+  },
+  {
+    "id": "a98fbb69-e2ca-45d8-bd6d-1f52cafd0666",
+    "name": "PAMOYANAN"
+  },
+  {
+    "id": "b31b51bd-63d4-450f-bb98-fee1e01db1c1",
+    "name": "BATU LAWANG"
+  },
+  {
+    "id": "150ff430-f81e-4195-95a5-c4f75a25ac7b",
+    "name": "PUNCAK WANGI"
+  },
+  {
+    "id": "f33efcd1-dde8-43a6-96fd-81652e513bb2",
+    "name": "NEGLASARI"
+  },
+  {
+    "id": "44518e0b-43fd-47de-944f-132d1772cc9f",
+    "name": "GUNUNG HERANG"
+  },
+  {
+    "id": "6d7ba178-a05d-4ba4-9a2b-63677ccc3b86",
+    "name": "CIPUTRI"
+  },
+  {
+    "id": "d6ef23a5-15d8-410d-b3bd-04d93e6edd17",
+    "name": "BOJONG HERANG"
+  }
+]

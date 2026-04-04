@@ -1,25 +1,27 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { deleteAttendanceAction, updateAttendanceAction } from "@/app/actions";
+import { AttendanceSubmitButton } from "@/components/attendance-submit-button";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
-import { SaveIcon, TrashIcon } from "@/components/icons";
+import { TrashIcon } from "@/components/icons";
 import { RupiahInput } from "@/components/rupiah-input";
 import { requireAttendanceEditorUser } from "@/lib/auth";
 import { WORKER_TEAMS } from "@/lib/constants";
-import { getAttendanceById, getProjects } from "@/lib/data";
+import { getAttendanceById } from "@/lib/data";
 
 type EditAttendancePageProps = {
-  searchParams: Promise<{ id?: string }>;
+  searchParams: Promise<{ id?: string; return_to?: string }>;
 };
 
 export default async function EditAttendancePage({ searchParams }: EditAttendancePageProps) {
   await requireAttendanceEditorUser();
   const params = await searchParams;
   const attendanceId = typeof params.id === "string" ? params.id : "";
-  const [attendance, projects] = await Promise.all([
-    getAttendanceById(attendanceId),
-    getProjects(),
-  ]);
+  const returnTo =
+    typeof params.return_to === "string" && params.return_to.startsWith("/")
+      ? params.return_to
+      : "/attendance";
+  const attendance = await getAttendanceById(attendanceId);
   if (!attendance) {
     notFound();
   }
@@ -29,26 +31,26 @@ export default async function EditAttendancePage({ searchParams }: EditAttendanc
       <section className="panel p-5">
         <div className="flex items-center justify-between">
           <h1 className="text-lg font-semibold text-slate-900">Edit Absensi</h1>
-          <Link href="/attendance" className="text-sm font-medium text-blue-700 hover:text-blue-900">
+          <Link href={returnTo} className="text-sm font-medium text-blue-700 hover:text-blue-900">
             Kembali ke Absen
           </Link>
         </div>
 
         <form action={updateAttendanceAction} className="mt-4 space-y-3">
           <input type="hidden" name="attendance_id" value={attendance.id} />
-          <input type="hidden" name="return_to" value="/attendance" />
+          <input type="hidden" name="return_to" value={returnTo} />
           <input type="hidden" name="attendance_date" value={attendance.attendanceDate} />
+          <input type="hidden" name="project_id" value={attendance.projectId} />
+          <input type="hidden" name="status" value={attendance.status} />
+          <input type="hidden" name="work_days" value={String(attendance.workDays)} />
+          <input type="hidden" name="overtime_hours" value={String(attendance.overtimeHours)} />
+          <input type="hidden" name="kasbon_amount" value={String(attendance.kasbonAmount)} />
+          <input type="hidden" name="notes" value={attendance.notes ?? ""} />
 
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">Project</label>
-            <select name="project_id" defaultValue={attendance.projectId} required>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            Project tetap mengikuti data absensi saat ini. Upah lembur per jam dihitung otomatis
+            dari upah harian dibagi 8.
+          </p>
 
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-500">Nama pekerja</label>
@@ -78,61 +80,21 @@ export default async function EditAttendancePage({ searchParams }: EditAttendanc
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500">Hari kerja</label>
-              <input
-                type="number"
-                min={1}
-                max={31}
-                name="work_days"
-                defaultValue={attendance.workDays}
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500">Lembur (jam)</label>
-              <input
-                type="number"
-                min={0}
-                step="0.5"
-                name="overtime_hours"
-                defaultValue={attendance.overtimeHours}
-              />
-            </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">Upah harian</label>
+            <RupiahInput name="daily_wage" defaultValue={attendance.dailyWage} />
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500">Upah harian</label>
-              <RupiahInput name="daily_wage" defaultValue={attendance.dailyWage} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500">
-                Upah lembur / jam
-              </label>
-              <RupiahInput name="overtime_wage" defaultValue={attendance.overtimeWage} />
-            </div>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">Kasbon</label>
-            <RupiahInput name="kasbon_amount" defaultValue={attendance.kasbonAmount} />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">Keterangan</label>
-            <textarea name="notes" rows={3} defaultValue={attendance.notes ?? ""} />
-          </div>
-
-          <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600">
-            <span className="btn-icon icon-float-soft bg-white/20 text-white">
-              <SaveIcon />
-            </span>
-            Simpan Perubahan
-          </button>
+          <AttendanceSubmitButton
+            idleLabel="Simpan Perubahan"
+            pendingLabel="Menyimpan Perubahan..."
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-300"
+          />
         </form>
 
         <form action={deleteAttendanceAction} className="mt-3">
           <input type="hidden" name="attendance_id" value={attendance.id} />
-          <input type="hidden" name="return_to" value="/attendance" />
+          <input type="hidden" name="return_to" value={returnTo} />
           <ConfirmActionButton
             className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-medium text-rose-700 hover:bg-rose-100"
             modalDescription="Yakin ingin menghapus data absensi ini?"

@@ -18,15 +18,6 @@ function makeMerge(startRow: number, startCol: number, endRow: number, endCol: n
   };
 }
 
-function getGeneratedDateLabel() {
-  return new Intl.DateTimeFormat("id-ID", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    timeZone: "Asia/Jakarta",
-  }).format(new Date());
-}
-
 function getGeneratedFileDate() {
   return new Intl.DateTimeFormat("en-CA", {
     year: "numeric",
@@ -36,18 +27,18 @@ function getGeneratedFileDate() {
   }).format(new Date());
 }
 
+function isHiddenExportNote(note: string) {
+  const normalized = note.trim().toLowerCase();
+  return normalized.startsWith("import pekerja dari ");
+}
+
 function buildDescriptionText(params: {
   exportMode: "selected" | "project" | "specialist";
   notes: string[];
   projectNames: string[];
 }) {
-  const notesText = params.notes.join(", ");
-  if (params.exportMode !== "specialist") {
-    return notesText || "-";
-  }
-  const projectLabel =
-    params.projectNames.length > 0 ? `Project: ${params.projectNames.join(", ")}` : "Project: -";
-  return notesText ? `${projectLabel} | ${notesText}` : projectLabel;
+  const visibleNotes = params.notes.map((note) => note.trim()).filter((note) => note && !isHiddenExportNote(note));
+  return visibleNotes.join(", ");
 }
 
 export async function GET(request: Request) {
@@ -75,7 +66,6 @@ export async function GET(request: Request) {
     subtotal,
     totalKeseluruhan,
   } = result.data;
-  const generatedDateLabel = getGeneratedDateLabel();
   const generatedFileDate = getGeneratedFileDate();
 
   const rows: Array<Array<string | number>> = [];
@@ -83,8 +73,6 @@ export async function GET(request: Request) {
 
   rows.push([reportTitle.toUpperCase()]);
   merges.push(makeMerge(0, 0, 0, 10));
-  rows.push([`TANGGAL CETAK ${generatedDateLabel}`]);
-  merges.push(makeMerge(1, 0, 1, 10));
   rows.push([]);
 
   rows.push([

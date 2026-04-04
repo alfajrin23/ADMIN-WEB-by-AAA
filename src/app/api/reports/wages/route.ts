@@ -18,15 +18,6 @@ function formatHours(value: number) {
   return Number.isInteger(value) ? String(value) : value.toLocaleString("id-ID");
 }
 
-function getGeneratedDateLabel() {
-  return new Intl.DateTimeFormat("id-ID", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    timeZone: "Asia/Jakarta",
-  }).format(new Date());
-}
-
 function getGeneratedFileDate() {
   return new Intl.DateTimeFormat("en-CA", {
     year: "numeric",
@@ -36,18 +27,18 @@ function getGeneratedFileDate() {
   }).format(new Date());
 }
 
+function isHiddenExportNote(note: string) {
+  const normalized = note.trim().toLowerCase();
+  return normalized.startsWith("import pekerja dari ");
+}
+
 function buildDescriptionText(params: {
   exportMode: "selected" | "project" | "specialist";
   notes: string[];
   projectNames: string[];
 }) {
-  const notesText = params.notes.join(", ");
-  if (params.exportMode !== "specialist") {
-    return notesText || "-";
-  }
-  const projectLabel =
-    params.projectNames.length > 0 ? `Project: ${params.projectNames.join(", ")}` : "Project: -";
-  return notesText ? `${projectLabel} | ${notesText}` : projectLabel;
+  const visibleNotes = params.notes.map((note) => note.trim()).filter((note) => note && !isHiddenExportNote(note));
+  return visibleNotes.join(", ");
 }
 
 function drawCell(params: {
@@ -119,7 +110,6 @@ export async function GET(request: Request) {
     subtotal,
     totalKeseluruhan,
   } = result.data;
-  const generatedDateLabel = getGeneratedDateLabel();
   const generatedFileDate = getGeneratedFileDate();
 
   const pdf = await PDFDocument.create();
@@ -143,14 +133,6 @@ export async function GET(request: Request) {
       color: rgb(0.1, 0.12, 0.16),
     });
     y -= 24;
-    page.drawText(`TANGGAL CETAK ${generatedDateLabel}`, {
-      x: margin,
-      y,
-      size: 9,
-      font,
-      color: rgb(0.3, 0.32, 0.35),
-    });
-    y -= 16;
 
     const headers = [
       "NO",

@@ -6,13 +6,17 @@ import { getAttendanceById } from "@/lib/data";
 import { formatCurrency, formatDate } from "@/lib/format";
 
 type ViewAttendancePageProps = {
-  searchParams: Promise<{ id?: string }>;
+  searchParams: Promise<{ id?: string; return_to?: string }>;
 };
 
 export default async function ViewAttendancePage({ searchParams }: ViewAttendancePageProps) {
   await requireAttendanceViewerUser();
   const params = await searchParams;
   const attendanceId = typeof params.id === "string" ? params.id : "";
+  const returnTo =
+    typeof params.return_to === "string" && params.return_to.startsWith("/")
+      ? params.return_to
+      : "/attendance";
   const attendance = await getAttendanceById(attendanceId);
 
   if (!attendance) {
@@ -25,11 +29,11 @@ export default async function ViewAttendancePage({ searchParams }: ViewAttendanc
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h1 className="text-lg font-semibold text-slate-900">Detail Absensi</h1>
           <div className="flex items-center gap-3 text-sm font-medium">
-            <Link href="/attendance" className="text-blue-700 hover:text-blue-900">
+            <Link href={returnTo} className="text-blue-700 hover:text-blue-900">
               Kembali
             </Link>
             <Link
-              href={`/attendance/edit?id=${attendance.id}`}
+              href={`/attendance/edit?id=${attendance.id}&return_to=${encodeURIComponent(returnTo)}`}
               className="text-emerald-700 hover:text-emerald-900"
             >
               Edit Data

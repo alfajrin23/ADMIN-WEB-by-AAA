@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CloseIcon, DownloadIcon, ExcelIcon, PdfIcon } from "@/components/icons";
 
 type ExportKind = "pdf" | "excel";
@@ -9,6 +9,8 @@ type AttendanceReportExportButtonsProps = {
   formId: string;
   pdfPath?: string;
   excelPath?: string;
+  autoOpenKind?: ExportKind | null;
+  hideTriggerButtons?: boolean;
 };
 
 function withQuery(path: string, query: string) {
@@ -45,11 +47,14 @@ export function AttendanceReportExportButtons({
   formId,
   pdfPath = "/api/reports/wages",
   excelPath = "/api/reports/wages/excel",
+  autoOpenKind = null,
+  hideTriggerButtons = false,
 }: AttendanceReportExportButtonsProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [previewHref, setPreviewHref] = useState("");
   const [downloadHref, setDownloadHref] = useState("");
   const [kind, setKind] = useState<ExportKind>("pdf");
+  const hasHandledAutoOpenRef = useRef(false);
   const label = useMemo(() => (kind === "pdf" ? "Export PDF" : "Export Excel"), [kind]);
 
   useEffect(() => {
@@ -77,7 +82,7 @@ export function AttendanceReportExportButtons({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [downloadHref, isOpen]);
 
-  const openPreview = (nextKind: ExportKind) => {
+  const openPreview = useCallback((nextKind: ExportKind) => {
     const query = getFormQuery(formId);
     if (query === null) {
       window.alert("Form export tidak ditemukan.");
@@ -88,32 +93,53 @@ export function AttendanceReportExportButtons({
     setPreviewHref(withPreviewQuery(withQuery(pdfPath, query)));
     setDownloadHref(withQuery(nextKind === "pdf" ? pdfPath : excelPath, query));
     setIsOpen(true);
-  };
+  }, [excelPath, formId, pdfPath]);
+
+  useEffect(() => {
+    if (!autoOpenKind || hasHandledAutoOpenRef.current) {
+      return;
+    }
+
+    hasHandledAutoOpenRef.current = true;
+    const timeoutId = window.setTimeout(() => {
+      openPreview(autoOpenKind);
+    }, 0);
+
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("preview_kind")) {
+      url.searchParams.delete("preview_kind");
+      const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+      window.history.replaceState({}, "", nextUrl);
+    }
+    return () => window.clearTimeout(timeoutId);
+  }, [autoOpenKind, openPreview]);
 
   return (
     <>
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => openPreview("pdf")}
-          className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-600"
-        >
-          <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
-            <PdfIcon />
-          </span>
-          Export PDF
-        </button>
-        <button
-          type="button"
-          onClick={() => openPreview("excel")}
-          className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600"
-        >
-          <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
-            <ExcelIcon />
-          </span>
-          Export Excel
-        </button>
-      </div>
+      {!hideTriggerButtons ? (
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => openPreview("pdf")}
+            className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-600"
+          >
+            <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
+              <PdfIcon />
+            </span>
+            Export PDF
+          </button>
+          <button
+            type="button"
+            onClick={() => openPreview("excel")}
+            className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600"
+          >
+            <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
+              <ExcelIcon />
+            </span>
+            Export Excel
+          </button>
+        </div>
+      ) : null}
 
       {isOpen ? (
         <div className="modal-overlay fixed inset-0 z-[70] flex items-center justify-center p-4">

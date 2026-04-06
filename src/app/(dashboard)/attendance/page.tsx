@@ -2,27 +2,24 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   createAttendanceAction,
-  deleteAttendanceAction,
   prepareAttendanceExportAction,
 } from "@/app/actions";
+import { AttendanceExportWorkerEditor } from "@/components/attendance-export-worker-editor";
 import { AttendanceGroupedListShell } from "@/components/attendance-grouped-list-shell";
-import { AttendanceProjectSelectionToggle } from "@/components/attendance-project-selection-toggle";
 import { AttendanceSearchInput } from "@/components/attendance-search-input";
 import { AttendanceSubmitButton } from "@/components/attendance-submit-button";
-import { ConfirmActionButton } from "@/components/confirm-action-button";
+import { AttendanceWorkerNameInput } from "@/components/attendance-worker-name-input";
 import {
   CloseIcon,
   DownloadIcon,
-  EditIcon,
   ExcelIcon,
-  EyeIcon,
   PdfIcon,
   PlusIcon,
-  TrashIcon,
 } from "@/components/icons";
 import { ReimburseLinesInput } from "@/components/reimburse-lines-input";
 import { RupiahInput } from "@/components/rupiah-input";
 import { SuccessToast } from "@/components/success-toast";
+import { getAttendanceWorkerPresets } from "@/lib/attendance-worker-presets";
 import { SPECIALIST_TEAM_PRESETS, WORKER_TEAM_LABEL, WORKER_TEAMS } from "@/lib/constants";
 import {
   canAccessAttendance,
@@ -34,7 +31,7 @@ import { getProjects, getWageRecap } from "@/lib/data";
 import { formatCurrency } from "@/lib/format";
 import { activeDataSource, getStorageLabel } from "@/lib/storage";
 
-type ModalType = "rekap-export" | "attendance-new";
+type ModalType = "rekap-export" | "attendance-new" | "preview-export";
 
 type AttendancePageProps = {
   searchParams: Promise<{
@@ -88,7 +85,6 @@ function compareText(a: string | null | undefined, b: string | null | undefined)
   if (left > right) {
     return 1;
   }
-
   const rawLeft = a ?? "";
   const rawRight = b ?? "";
   if (rawLeft < rawRight) {
@@ -107,20 +103,6 @@ function parseQueryValueList(value: string | string[] | undefined) {
   return (Array.isArray(value) ? value : [value]).map((item) => item.trim());
 }
 
-function formatHours(value: number) {
-  if (!Number.isFinite(value) || value <= 0) {
-    return "0";
-  }
-  if (Number.isInteger(value)) {
-    return String(value);
-  }
-
-  return value
-    .toFixed(2)
-    .replace(/\.?0+$/, "")
-    .replace(".", ",");
-}
-
 function normalizeSpecialistTeamName(value: string | null | undefined) {
   return value?.trim().toLowerCase() ?? "";
 }
@@ -137,14 +119,12 @@ function createAttendanceReportQuery(params: {
     from: params.from,
     to: params.to,
   });
-
   for (const selectedId of params.selectedIds) {
     query.append("selected", selectedId);
   }
   if (params.specialistTeamNameGlobal?.trim()) {
     query.set("specialist_team_name_global", params.specialistTeamNameGlobal.trim());
   }
-
   const rowCount = Math.max(params.reimburseAmounts.length, params.reimburseNotes.length);
   for (let index = 0; index < rowCount; index += 1) {
     const amount = params.reimburseAmounts[index] ?? 0;
@@ -158,7 +138,6 @@ function createAttendanceReportQuery(params: {
       query.append("reimburse_note", note.trim());
     }
   }
-
   return query.toString();
 }
 
@@ -201,14 +180,6 @@ function createAttendanceHref(params: {
   return `/attendance?${query.toString()}`;
 }
 
-function createAttendanceItemHref(pathname: "/attendance/view" | "/attendance/edit", id: string, returnTo: string) {
-  const query = new URLSearchParams({ id });
-  if (returnTo.startsWith("/")) {
-    query.set("return_to", returnTo);
-  }
-  return `${pathname}?${query.toString()}`;
-}
-
 function getTeamGroupMeta(row: WageRecapRow) {
   if (row.teamType === "spesialis") {
     const teamLabel = row.specialistTeamName?.trim() || "Tim Spesialis";
@@ -218,7 +189,6 @@ function getTeamGroupMeta(row: WageRecapRow) {
       accent: "cyan",
     };
   }
-
   return {
     key: row.teamType,
     label: WORKER_TEAM_LABEL[row.teamType],
@@ -227,10 +197,7 @@ function getTeamGroupMeta(row: WageRecapRow) {
 }
 
 function matchesSpecialistTeamFilter(row: WageRecapRow, specialistTeamFilter: string) {
-  if (!specialistTeamFilter) {
-    return true;
-  }
-  if (row.teamType !== "spesialis") {
+  if (!specialistTeamFilter || row.teamType !== "spesialis") {
     return true;
   }
   if (specialistTeamFilter === EMPTY_SPECIALIST_TEAM_FILTER) {
@@ -253,7 +220,6 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
   const to = isDateString(params.to) ? String(params.to) : today;
   const projectFilter = typeof params.project === "string" ? params.project : "";
   const selectedIds = parseSelectedIds(params.selected);
-  const selectedSet = new Set(selectedIds);
   const searchText = typeof params.q === "string" ? params.q : "";
   const normalizedSearchText = normalizeSearchText(searchText);
   const specialistTeamFilterRaw =
@@ -266,6 +232,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
   const error = typeof params.error === "string" ? params.error : "";
   const previewKind =
     params.preview_kind === "excel" || params.preview_kind === "pdf" ? params.preview_kind : null;
+  const effectivePreviewKind = previewKind ?? "pdf";
   const reimburseAmounts = parseQueryValueList(params.reimburse_amount).map((item) => {
     const parsed = Number(item.replace(/\./g, "").replace(",", "."));
     return Number.isFinite(parsed) ? parsed : 0;
@@ -278,8 +245,12 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
 
   const modalParam = typeof params.modal === "string" ? params.modal : "";
   let activeModal: ModalType | null =
-    modalParam === "rekap-export" || modalParam === "attendance-new" ? modalParam : null;
-  if (activeModal === "rekap-export" && !canExport) {
+    modalParam === "rekap-export" ||
+    modalParam === "attendance-new" ||
+    modalParam === "preview-export"
+      ? modalParam
+      : null;
+  if ((activeModal === "rekap-export" || activeModal === "preview-export") && !canExport) {
     activeModal = null;
   }
   if (activeModal === "attendance-new" && !canEdit) {
@@ -305,6 +276,8 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
         })
       : Promise.resolve(null),
   ]);
+
+  const workerPresets = getAttendanceWorkerPresets();
 
   const specialistTeamOptions = Array.from(
     new Map(
@@ -380,7 +353,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
   });
 
   const selectedRows = (selectedRecap?.rows ?? [])
-    .filter((row) => selectedSet.has(row.id))
+    .filter((row) => selectedIds.includes(row.id))
     .slice()
     .sort((a, b) => {
       if (a.workerName !== b.workerName) {
@@ -393,6 +366,9 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
     });
 
   const hasProjects = projects.length > 0;
+  const draftCount = wageRecap.rows.filter((row) => row.projectId.trim().length === 0).length;
+  const specialistCount = wageRecap.rows.filter((row) => row.teamType === "spesialis").length;
+  const storedDailyWageTotal = wageRecap.rows.reduce((sum, row) => sum + row.dailyWage, 0);
   const selectedPreview = selectedRows.slice(0, 5);
   const selectedProjectIds = Array.from(
     new Set(selectedRows.map((row) => row.projectId).filter((item) => item.trim().length > 0)),
@@ -405,8 +381,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
         .filter((item) => item.length > 0),
     ),
   ).sort((a, b) => compareText(a, b));
-  const exportProjectId =
-    selectedProjectIds.length === 1 ? selectedProjectIds[0] : "";
+  const exportProjectId = selectedProjectIds.length === 1 ? selectedProjectIds[0] : "";
   const exportSpecialistTeamName =
     specialistTeamNameGlobal ||
     (selectedSpecialistTeamNames.length === 1 ? selectedSpecialistTeamNames[0] : "");
@@ -417,6 +392,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
           note: reimburseNotes[index] ?? "",
         }))
       : [{ amount: 0, note: "" }];
+
   const reportQuery = createAttendanceReportQuery({
     from,
     to,
@@ -428,8 +404,11 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
   const pdfPreviewHref = reportQuery ? `/api/reports/wages?${reportQuery}&preview=1` : "";
   const pdfDownloadHref = reportQuery ? `/api/reports/wages?${reportQuery}` : "";
   const excelDownloadHref = reportQuery ? `/api/reports/wages/excel?${reportQuery}` : "";
-  const activeDownloadHref = previewKind === "excel" ? excelDownloadHref : pdfDownloadHref;
-  const activeDownloadLabel = previewKind === "excel" ? "Download Excel" : "Download PDF";
+  const activeDownloadHref =
+    effectivePreviewKind === "excel" ? excelDownloadHref : pdfDownloadHref;
+  const activeDownloadLabel =
+    effectivePreviewKind === "excel" ? "Download Excel" : "Download PDF";
+
   const clearSpecialistFilterHref = createAttendanceHref({
     from,
     to,
@@ -500,8 +479,8 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
             <div>
               <h2 className="section-title">Daftar Data Absensi</h2>
               <p className="section-description">
-                Input awal hanya menyimpan data pekerja dan upah harian. Project, hari kerja,
-                lembur, kasbon, dan tim kerja final ditentukan saat rekap / export.
+                Input awal hanya menyimpan nama pekerja, tim, dan upah harian. Project, hari kerja,
+                lembur, kasbon, dan tim kerja final diisi saat rekap / export.
               </p>
             </div>
             <div className="space-y-3">
@@ -539,6 +518,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
               ) : null}
             </div>
           </div>
+
           <div className="flex flex-wrap items-center gap-2">
             {canEdit ? (
               <Link
@@ -580,27 +560,27 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
 
         <div className="summary-strip summary-strip--compact mt-4">
           <article className="soft-card-muted summary-card">
-            <span className="summary-label">Total Upah</span>
+            <span className="summary-label">Total Data</span>
             <span className="summary-note mt-1 block text-sm font-semibold text-slate-900">
-              {formatCurrency(wageRecap.totalDailyWage)}
+              {wageRecap.rows.length} data
             </span>
           </article>
           <article className="soft-card-muted summary-card">
-            <span className="summary-label">Lembur</span>
+            <span className="summary-label">Belum Direkap</span>
             <span className="summary-note mt-1 block text-sm font-semibold text-slate-900">
-              {formatCurrency(wageRecap.totalOvertimePay)}
+              {draftCount} data
             </span>
           </article>
           <article className="soft-card-muted summary-card">
-            <span className="summary-label">Kasbon</span>
+            <span className="summary-label">Tim Spesialis</span>
             <span className="summary-note mt-1 block text-sm font-semibold text-slate-900">
-              {formatCurrency(wageRecap.totalKasbon)}
+              {specialistCount} data
             </span>
           </article>
           <article className="soft-card-muted summary-card">
-            <span className="summary-label">Harus Dibayar</span>
+            <span className="summary-label">Upah Tersimpan</span>
             <span className="summary-note mt-1 block text-sm font-semibold text-slate-900">
-              {formatCurrency(wageRecap.totalNetPay)}
+              {formatCurrency(storedDailyWageTotal)}
             </span>
           </article>
         </div>
@@ -613,162 +593,6 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
             returnToAttendance={returnToAttendance}
             emptyAttendanceMessage={emptyAttendanceMessage}
           />
-          {false ? (
-            <>
-              {groupedAttendance.map((group) => (
-            <article key={group.key} className="soft-card p-3.5 md:p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3
-                    className={`text-sm font-semibold ${
-                      group.accent === "cyan"
-                        ? "text-cyan-900"
-                        : group.accent === "amber"
-                          ? "text-amber-900"
-                          : "text-slate-900"
-                    }`}
-                  >
-                    {group.label}
-                  </h3>
-                  <p className="text-xs text-slate-500">{group.rows.length} data</p>
-                </div>
-                <AttendanceProjectSelectionToggle
-                  formId="attendance-recap-selection-form"
-                  scopeKey={`team:${group.key}`}
-                />
-              </div>
-
-              <div className="mt-3 table-card">
-                <div className="data-table-shell">
-                  <table className="data-table data-table--sticky data-table--compact min-w-[980px] table-fixed text-[11px] leading-5 sm:text-xs">
-                    <thead>
-                      <tr className="text-left text-slate-500">
-                        <th className="w-10 text-center">Pilih</th>
-                        <th>Pekerja</th>
-                        <th>Project</th>
-                        <th>Kehadiran</th>
-                        <th>Pembayaran</th>
-                        <th>Info</th>
-                        <th className="w-48 text-right">Aksi</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {group.rows.map((item) => (
-                        <tr key={item.id} className="align-top">
-                          <td className="w-10 text-center">
-                            <input
-                              type="checkbox"
-                              name="selected"
-                              value={item.id}
-                              form="attendance-recap-selection-form"
-                              data-attendance-selection="true"
-                              data-attendance-scope={`team:${group.key}`}
-                              defaultChecked={selectedSet.has(item.id)}
-                              aria-label={`Pilih ${item.workerName}`}
-                            />
-                          </td>
-                          <td>
-                            <p className="font-semibold text-slate-900">{item.workerName}</p>
-                            <p className="text-slate-600">
-                              {item.teamType === "spesialis"
-                                ? `Spesialis - ${item.specialistTeamName ?? "Lainnya"}`
-                                : WORKER_TEAM_LABEL[item.teamType]}
-                            </p>
-                          </td>
-                          <td className="text-slate-700">
-                            {item.payrollPaid ? (
-                              <>
-                                <p>{item.projectName ?? "Tanpa Project"}</p>
-                                <p className="text-slate-500">Tanggal: {item.attendanceDate}</p>
-                              </>
-                            ) : (
-                              <>
-                                <p className="italic text-slate-400">— Belum terisi</p>
-                                <p className="text-slate-500">Tanggal: {item.attendanceDate}</p>
-                              </>
-                            )}
-                          </td>
-                          <td className="text-slate-700">
-                            <p className="capitalize">Status: {item.status}</p>
-                            <p>Hari kerja: {item.workDays}</p>
-                            <p>Lembur: {formatHours(item.overtimeHours)} jam</p>
-                          </td>
-                          <td className="text-slate-700">
-                            <p>Harian: {formatCurrency(item.dailyWage)}</p>
-                            <p>Kasbon: {formatCurrency(item.kasbonAmount)}</p>
-                            <p className="font-semibold text-emerald-700">
-                              Net: {formatCurrency(item.netPay)}
-                            </p>
-                          </td>
-                          <td className="text-slate-700">
-                            {item.payrollPaid ? (
-                              <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
-                                Sudah direkap
-                              </span>
-                            ) : (
-                              <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">
-                                Belum direkap
-                              </span>
-                            )}
-                            {item.notes ? (
-                              <p className="mt-2 line-clamp-2 text-[11px] text-slate-500">{item.notes}</p>
-                            ) : null}
-                          </td>
-                          <td className="w-48">
-                            <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
-                              <Link
-                                href={createAttendanceItemHref("/attendance/view", item.id, returnToAttendance)}
-                                className="button-secondary button-xs sm:min-w-[96px] sm:justify-start"
-                              >
-                                <span className="btn-icon bg-blue-100 text-blue-700">
-                                  <EyeIcon />
-                                </span>
-                                Lihat
-                              </Link>
-                              {canEdit ? (
-                                <>
-                                  <Link
-                                    href={createAttendanceItemHref("/attendance/edit", item.id, returnToAttendance)}
-                                    className="button-soft button-xs sm:min-w-[96px] sm:justify-start"
-                                  >
-                                    <span className="btn-icon bg-emerald-100 text-emerald-700">
-                                      <EditIcon />
-                                    </span>
-                                    Edit
-                                  </Link>
-                                  <form action={deleteAttendanceAction}>
-                                    <input type="hidden" name="attendance_id" value={item.id} />
-                                    <input type="hidden" name="return_to" value={returnToAttendance} />
-                                    <ConfirmActionButton
-                                      className="button-danger button-xs sm:min-w-[96px] sm:justify-start"
-                                      modalDescription="Yakin ingin menghapus data absensi ini?"
-                                    >
-                                      <span className="btn-icon bg-rose-100 text-rose-700">
-                                        <TrashIcon />
-                                      </span>
-                                      Hapus
-                                    </ConfirmActionButton>
-                                  </form>
-                                </>
-                              ) : null}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </article>
-          ))}
-
-              {groupedAttendance.length === 0 ? (
-                <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-center text-xs text-slate-500">
-                  {emptyAttendanceMessage}
-                </p>
-              ) : null}
-            </>
-          ) : null}
         </div>
       </section>
 
@@ -784,20 +608,37 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
           <section className="modal-card panel relative z-10 max-h-[calc(100vh-2rem)] w-full max-w-5xl overflow-y-auto p-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-base font-semibold text-slate-900">
-                {activeModal === "attendance-new" ? "Input Absensi" : "Rekap & Export"}
+                {activeModal === "attendance-new"
+                  ? "Input Absensi"
+                  : activeModal === "preview-export"
+                    ? "Preview Rekap / Export"
+                    : "Rekap & Export"}
               </h2>
-              <Link
-                href={closeModalHref}
-                prefetch
-                scroll={false}
-                data-ui-button="true"
-                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100"
-              >
-                <span className="btn-icon bg-slate-100 text-slate-600">
-                  <CloseIcon />
-                </span>
-                Tutup
-              </Link>
+              <div className="flex flex-wrap gap-2">
+                {activeModal === "preview-export" ? (
+                  <Link
+                    href={openRecapModalHref}
+                    prefetch
+                    scroll={false}
+                    data-ui-button="true"
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                  >
+                    Kembali ke Rekap
+                  </Link>
+                ) : null}
+                <Link
+                  href={closeModalHref}
+                  prefetch
+                  scroll={false}
+                  data-ui-button="true"
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                >
+                  <span className="btn-icon bg-slate-100 text-slate-600">
+                    <CloseIcon />
+                  </span>
+                  Tutup
+                </Link>
+              </div>
             </div>
 
             {activeModal === "attendance-new" ? (
@@ -809,6 +650,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                 <input type="hidden" name="overtime_hours" value="0" />
                 <input type="hidden" name="kasbon_amount" value="0" />
                 <input type="hidden" name="notes" value="" />
+
                 {!hasProjects ? (
                   <p className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-700">
                     Data pekerja tetap bisa diinput sekarang, tetapi project harus tersedia
@@ -816,19 +658,22 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                   </p>
                 ) : (
                   <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                    Tahap ini hanya menyimpan data pekerja mentah. Project, hari kerja, lembur,
-                    kasbon, dan tim kerja final diisi saat rekap / export.
+                    Tahap ini hanya menyimpan data mentah pekerja. Project, hari kerja, lembur,
+                    kasbon, dan tim kerja final baru diisi saat rekap / export.
                   </p>
                 )}
+
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-500">Nama pekerja</label>
-                  <input
+                  <AttendanceWorkerNameInput
                     name="worker_name"
                     required
-                    placeholder="Contoh: Andi"
                     autoFocus
+                    placeholder="Contoh: Andi"
+                    workerOptions={workerPresets}
                   />
                 </div>
+
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
                     <label className="mb-1 block text-xs font-medium text-slate-500">Tim</label>
@@ -850,15 +695,17 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                       placeholder="Contoh: Jakarta / Cianjur - Baja"
                     />
                     <p className="mt-1 text-[11px] text-slate-500">
-                      Gunakan untuk membedakan spesialis Jakarta atau Cianjur serta sub-tim seperti
-                      baja, listrik, dan sipil.
+                      Gunakan untuk membedakan spesialis Jakarta atau Cianjur. Tim final tetap bisa
+                      diubah lagi saat rekap.
                     </p>
                   </div>
                 </div>
+
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-500">Upah harian</label>
                   <RupiahInput name="daily_wage" />
                 </div>
+
                 <datalist id="attendance-specialist-team-presets">
                   {SPECIALIST_TEAM_PRESETS.map((item) => (
                     <option key={`create-specialist-${item.value}`} value={item.value}>
@@ -866,282 +713,184 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                     </option>
                   ))}
                 </datalist>
+
                 <AttendanceSubmitButton
                   idleLabel="Simpan Absensi"
                   pendingLabel="Menyimpan Absensi..."
                   className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-300"
                 />
               </form>
-            ) : selectedRows.length === 0 ? (
-              <p className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
-                Checklist data absensi dulu sebelum membuka finalisasi rekap.
-              </p>
-            ) : (
-              <form id="attendance-export-form" action={prepareAttendanceExportAction} className="mt-4 space-y-4">
-                <input type="hidden" name="return_to" value={openRecapModalHref} />
-                <input type="hidden" name="from" value={from} />
-                <input type="hidden" name="to" value={to} />
-                <input type="hidden" name="project" value={projectFilter} />
-                <input type="hidden" name="q" value={searchText} />
-                {selectedIds.map((selectedId) => (
-                  <input key={selectedId} type="hidden" name="selected" value={selectedId} />
-                ))}
+            ) : activeModal === "rekap-export" ? (
+              selectedRows.length === 0 ? (
+                <p className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
+                  Checklist data absensi dulu sebelum membuka finalisasi rekap.
+                </p>
+              ) : (
+                <form id="attendance-export-form" action={prepareAttendanceExportAction} className="mt-4 space-y-4">
+                  <input type="hidden" name="return_to" value={openRecapModalHref} />
+                  <input type="hidden" name="from" value={from} />
+                  <input type="hidden" name="to" value={to} />
+                  <input type="hidden" name="project" value={projectFilter} />
+                  <input type="hidden" name="q" value={searchText} />
+                  {selectedIds.map((selectedId) => (
+                    <input key={selectedId} type="hidden" name="selected" value={selectedId} />
+                  ))}
 
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <p className="text-xs font-semibold text-slate-700">
-                    Pekerja terpilih: {selectedRows.length} data
-                  </p>
-                  <p className="mt-1 text-xs text-slate-600">
-                    Isi project global jika semua sama, atau override per pekerja di bawah.
-                    Pengaturan ini sengaja dibuat per pekerja supaya satu nama bisa dibagi ke
-                    project berbeda atau dipindah dari baja ke sipil saat finalisasi.
-                  </p>
-                  <p className="mt-2 text-xs text-slate-600">
-                    Contoh pilihan:{" "}
-                    {selectedPreview.map((row) => row.workerName).join(", ")}
-                    {selectedRows.length > selectedPreview.length
-                      ? ` +${selectedRows.length - selectedPreview.length} lainnya`
-                      : ""}
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                    Project global (opsional)
-                  </label>
-                  <select name="project_id_global" defaultValue={exportProjectId}>
-                    <option value="">Isi jika semua pekerja masuk ke project yang sama</option>
-                    {projects.map((project) => (
-                      <option key={`global-${project.id}`} value={project.id}>
-                        {project.name}
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs font-semibold text-slate-700">
+                      Pekerja terpilih: {selectedRows.length} data
+                    </p>
+                    <p className="mt-1 text-xs text-slate-600">
+                      Setiap pekerja bisa dibagi ke beberapa project atau beberapa tim kerja final
+                      pada tahap ini. Ini dipakai untuk kasus 3 hari di Ciguha dan 3 hari di
+                      Cisujen, atau spesialis baja yang sementara dipindah ke sipil.
+                    </p>
+                    <p className="mt-2 text-xs text-slate-600">
+                      Contoh pilihan: {selectedPreview.map((row) => row.workerName).join(", ")}
+                      {selectedRows.length > selectedPreview.length
+                        ? ` +${selectedRows.length - selectedPreview.length} lainnya`
+                        : ""}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                      Project global (opsional)
+                    </label>
+                    <select name="project_id_global" defaultValue={exportProjectId}>
+                      <option value="">Isi jika semua pembagian pekerja masuk project yang sama</option>
+                      {projects.map((project) => (
+                        <option key={`global-${project.id}`} value={project.id}>
+                          {project.name}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Setiap pembagian pekerja di bawah tetap bisa memakai project yang berbeda.
+                    </p>
+                    <div className="mt-3">
+                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                        Tim spesialis global (opsional)
+                      </label>
+                      <input
+                        name="specialist_team_name_global"
+                        list="attendance-rekap-specialist-team-presets"
+                        defaultValue={exportSpecialistTeamName}
+                        placeholder="Isi jika semua pekerja spesialis masuk tim kerja yang sama"
+                      />
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Hanya diterapkan ke pekerja tim <strong>spesialis</strong>, dan masih bisa
+                        dioverride di setiap pembagian.
+                      </p>
+                    </div>
+                  </div>
+
+                  <datalist id="attendance-rekap-specialist-team-presets">
+                    {SPECIALIST_TEAM_PRESETS.map((item) => (
+                      <option key={`export-specialist-${item.value}`} value={item.value}>
+                        {item.label}
                       </option>
                     ))}
-                  </select>
-                  <p className="mt-1 text-[11px] text-slate-500">
-                    Setiap kartu pekerja di bawah tetap bisa memakai project yang berbeda.
-                  </p>
-                  <div className="mt-3">
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                      Tim spesialis global (opsional)
-                    </label>
-                    <input
-                      name="specialist_team_name_global"
-                      list="attendance-specialist-team-presets"
-                      defaultValue={exportSpecialistTeamName}
-                      placeholder="Isi jika semua pekerja spesialis masuk tim kerja yang sama"
-                    />
-                    <p className="mt-1 text-[11px] text-slate-500">
-                      Hanya diterapkan ke pekerja tim <strong>spesialis</strong>, dan masih bisa
-                      dioverride per pekerja.
+                  </datalist>
+
+                  <AttendanceExportWorkerEditor
+                    rows={selectedRows}
+                    projects={projects.map((project) => ({ id: project.id, name: project.name }))}
+                    specialistTeamPresets={SPECIALIST_TEAM_PRESETS.map((item) => ({
+                      value: item.value,
+                      label: item.label,
+                    }))}
+                  />
+
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="mb-2 text-xs font-semibold text-slate-600">
+                      Reimburse (bisa tambah atau hapus baris)
                     </p>
+                    <ReimburseLinesInput initialRows={initialReimburseRows} />
                   </div>
-                </div>
-                <datalist id="attendance-specialist-team-presets">
-                  {SPECIALIST_TEAM_PRESETS.map((item) => (
-                    <option key={`export-specialist-${item.value}`} value={item.value}>
-                      {item.label}
-                    </option>
-                  ))}
-                </datalist>
-                <div className="space-y-3">
-                  {selectedRows.map((row) => (
-                    <article key={row.id} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-                      <input type="hidden" name="attendance_id" value={row.id} />
-                      <input type="hidden" name="project_id_current" value={row.projectId} />
-                      <input type="hidden" name="worker_name" value={row.workerName} />
-                      <input type="hidden" name="team_type" value={row.teamType} />
-                      <input
-                        type="hidden"
-                        name="specialist_team_name_current"
-                        value={row.specialistTeamName ?? ""}
-                      />
-                      <input type="hidden" name="status" value="hadir" />
-                      <input type="hidden" name="daily_wage" value={String(row.dailyWage)} />
-                      <input
-                        type="hidden"
-                        name="attendance_reimburse_type"
-                        value={row.reimburseType ?? ""}
-                      />
-                      <input
-                        type="hidden"
-                        name="attendance_reimburse_amount"
-                        value={String(row.reimburseAmount)}
-                      />
-                      <input type="hidden" name="attendance_date" value={row.attendanceDate} />
-                      <input type="hidden" name="notes" value={row.notes ?? ""} />
 
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900">{row.workerName}</p>
-                          <p className="text-xs text-slate-500">
-                            {row.teamType === "spesialis"
-                              ? `Spesialis - ${row.specialistTeamName ?? "Lainnya"}`
-                              : WORKER_TEAM_LABEL[row.teamType]}
-                          </p>
-                        </div>
-                        {row.projectId ? (
-                          <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
-                            Sudah direkap
-                          </span>
-                        ) : null}
-                      </div>
+                  {!hasProjects ? (
+                    <p className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
+                      Tambahkan data project dulu di menu Proyek & Biaya sebelum export PDF atau
+                      Excel.
+                    </p>
+                  ) : null}
 
-                      <div className="mt-3 grid gap-3 lg:grid-cols-[0.9fr_0.9fr_1fr]">
-                        <div className="lg:col-span-3 grid gap-3 lg:grid-cols-[1.2fr_1fr]">
-                          <div>
-                            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                              Project Final
-                            </label>
-                            <select name="project_id_export" defaultValue={row.projectId}>
-                              <option value="">Ikuti project global / pilih manual</option>
-                              {projects.map((project) => (
-                                <option key={`${row.id}-${project.id}`} value={project.id}>
-                                  {project.name}
-                                </option>
-                              ))}
-                            </select>
-                            <p className="mt-1 text-[11px] text-slate-500">
-                              {row.projectId
-                                ? `Project terakhir: ${row.projectName ?? "Project"}`
-                                : "Belum ada project final pada data ini."}
-                            </p>
-                          </div>
-                          {row.teamType === "spesialis" ? (
-                            <div>
-                              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                                Tim Kerja Final
-                              </label>
-                              <input
-                                name="specialist_team_name_export"
-                                list="attendance-specialist-team-presets"
-                                defaultValue={row.specialistTeamName ?? ""}
-                                placeholder="Contoh: Cianjur - Sipil"
-                              />
-                              <p className="mt-1 text-[11px] text-slate-500">
-                                Isi sesuai tim kerja aktual untuk rekap ini.
-                              </p>
-                            </div>
-                          ) : (
-                            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
-                              Tim reguler mengikuti data pekerja dan tidak perlu tim spesialis
-                              tambahan.
-                            </div>
-                          )}
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                            Hari Kerja
-                          </label>
-                          <input
-                            type="number"
-                            name="work_days"
-                            min={1}
-                            max={31}
-                            defaultValue={row.workDays}
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                            Kasbon
-                          </label>
-                          <RupiahInput name="kasbon_amount" defaultValue={row.kasbonAmount} />
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                            Lembur (Jam)
-                          </label>
-                          <input
-                            type="number"
-                            name="overtime_hours"
-                            min={0}
-                            step="0.5"
-                            defaultValue={row.overtimeHours}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="mt-3 flex flex-wrap gap-3 text-[11px] text-slate-500">
-                        <span>Tanggal: {row.attendanceDate}</span>
-                        <span>Upah harian: {formatCurrency(row.dailyWage)}</span>
-                        <span>Upah lembur/jam otomatis: {formatCurrency(row.dailyWage / 8)}</span>
-                        {row.projectId ? <span>Project tersimpan: {row.projectName ?? "Project"}</span> : null}
-                      </div>
-                    </article>
-                  ))}
-                </div>
-
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <p className="mb-2 text-xs font-semibold text-slate-600">
-                    Reimburse (bisa tambah atau hapus baris)
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="submit"
+                      name="export_kind"
+                      value="pdf"
+                      disabled={!hasProjects}
+                      className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
+                        <PdfIcon />
+                      </span>
+                      Export PDF
+                    </button>
+                    <button
+                      type="submit"
+                      name="export_kind"
+                      value="excel"
+                      disabled={!hasProjects}
+                      className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
+                        <ExcelIcon />
+                      </span>
+                      Export Excel
+                    </button>
+                  </div>
+                </form>
+              )
+            ) : selectedRows.length === 0 ? (
+              <p className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
+                Preview belum tersedia karena belum ada data rekap yang dipilih.
+              </p>
+            ) : (
+              <div className="mt-4 space-y-4">
+                <div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
+                  <p className="text-xs font-medium text-blue-800">
+                    Preview dokumen siap. Tanggal dokumen dibuat mengikuti hari ini, dan tombol
+                    download di bawah akan menyesuaikan pilihan {effectivePreviewKind.toUpperCase()}.
                   </p>
-                  <ReimburseLinesInput initialRows={initialReimburseRows} />
                 </div>
 
-                {!hasProjects ? (
-                  <p className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
-                    Tambahkan data project dulu di menu Proyek & Biaya sebelum export PDF atau
-                    Excel.
-                  </p>
-                ) : null}
+                <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                  <iframe
+                    title="Preview laporan upah"
+                    src={pdfPreviewHref}
+                    className="h-[70vh] w-full"
+                  />
+                </div>
 
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="submit"
-                    name="export_kind"
-                    value="pdf"
-                    disabled={!hasProjects}
-                    className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-slate-300"
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Link
+                    href={openRecapModalHref}
+                    prefetch
+                    scroll={false}
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                  >
+                    Periksa Lagi Rekap
+                  </Link>
+                  <a
+                    href={activeDownloadHref}
+                    target="_blank"
+                    rel="noreferrer"
+                    className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-white ${
+                      effectivePreviewKind === "excel"
+                        ? "bg-emerald-700 hover:bg-emerald-600"
+                        : "bg-indigo-700 hover:bg-indigo-600"
+                    }`}
                   >
                     <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
-                      <PdfIcon />
+                      <DownloadIcon />
                     </span>
-                    Export PDF
-                  </button>
-                  <button
-                    type="submit"
-                    name="export_kind"
-                    value="excel"
-                    disabled={!hasProjects}
-                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-300"
-                  >
-                    <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
-                      <ExcelIcon />
-                    </span>
-                    Export Excel
-                  </button>
+                    {activeDownloadLabel}
+                  </a>
                 </div>
-                {previewKind ? (
-                  <div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
-                    <p className="mb-3 text-xs font-medium text-blue-800">
-                      Preview dokumen siap. Gunakan tombol download untuk mengambil file{" "}
-                      {previewKind === "excel" ? "Excel" : "PDF"}.
-                    </p>
-                    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-                      <iframe
-                        title="Preview laporan upah"
-                        src={pdfPreviewHref}
-                        className="h-[65vh] w-full"
-                      />
-                    </div>
-                    <div className="mt-3 flex justify-end">
-                      <a
-                        href={activeDownloadHref}
-                        target="_blank"
-                        rel="noreferrer"
-                        className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-white ${
-                          previewKind === "excel"
-                            ? "bg-emerald-700 hover:bg-emerald-600"
-                            : "bg-indigo-700 hover:bg-indigo-600"
-                        }`}
-                      >
-                        <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
-                          <DownloadIcon />
-                        </span>
-                        {activeDownloadLabel}
-                      </a>
-                    </div>
-                  </div>
-                ) : null}
-              </form>
+              </div>
             )}
           </section>
         </div>

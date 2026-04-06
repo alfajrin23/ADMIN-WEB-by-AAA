@@ -50,6 +50,10 @@ function getProjectLabel(item: AttendanceRecord) {
   return item.projectName?.trim() || "Belum dipilih saat rekap";
 }
 
+function isRecapped(item: AttendanceRecord) {
+  return item.projectId.trim().length > 0;
+}
+
 export function AttendanceGroupedList({
   groups,
   selectedIds,
@@ -122,23 +126,23 @@ export function AttendanceGroupedList({
                       </td>
                       <td>
                         <p className="font-semibold text-slate-900">{item.workerName}</p>
-                        <p className="text-slate-500">Tanggal input: {item.attendanceDate}</p>
-                      </td>
-                      <td className="text-slate-700">
-                        <p>
+                        <p className="text-slate-500">
                           {item.teamType === "spesialis"
                             ? item.specialistTeamName?.trim() || "Tim spesialis belum diisi"
                             : WORKER_TEAM_LABEL[item.teamType]}
                         </p>
+                      </td>
+                      <td className="text-slate-700">
+                        <p>{isRecapped(item) ? getProjectLabel(item) : "Belum ada project final"}</p>
                         <p className="text-slate-500">
-                          {item.projectId
-                            ? `Project akhir: ${getProjectLabel(item)}`
-                            : "Project akhir dipilih saat rekap / export"}
+                          {isRecapped(item)
+                            ? "Project final tersimpan dari hasil rekap / export."
+                            : "Project final dipilih saat rekap / export."}
                         </p>
                       </td>
                       <td className="text-slate-700">
                         <p>Harian: {formatCurrency(item.dailyWage)}</p>
-                        {item.projectId ? (
+                        {isRecapped(item) ? (
                           <>
                             <p>Hari kerja: {item.workDays}</p>
                             <p>Lembur: {formatHours(item.overtimeHours)} jam</p>
@@ -148,7 +152,7 @@ export function AttendanceGroupedList({
                         )}
                       </td>
                       <td className="text-slate-700">
-                        {item.projectId ? (
+                        {isRecapped(item) ? (
                           <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
                             Sudah direkap
                           </span>
@@ -158,11 +162,11 @@ export function AttendanceGroupedList({
                           </span>
                         )}
                         <p className="mt-2 text-[11px] text-slate-500">
-                          {item.projectId
+                          {isRecapped(item)
                             ? `Kasbon: ${formatCurrency(item.kasbonAmount)}`
                             : "Belum ada project, hari kerja, atau komponen rekap final."}
                         </p>
-                        {item.projectId ? (
+                        {isRecapped(item) ? (
                           <p className="text-[11px] font-semibold text-emerald-700">
                             Total dibayar: {formatCurrency(item.netPay)}
                           </p>

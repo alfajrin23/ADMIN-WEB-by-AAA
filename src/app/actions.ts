@@ -2445,6 +2445,32 @@ type AttendanceRecapRowInput = {
   notes: string | null;
 };
 
+function resolveAttendanceExportRowId(input: {
+  rawId: string;
+  projectId: string;
+  workerName: string;
+  teamType: WorkerTeam;
+  specialistTeamName: string | null;
+  attendanceDate: string;
+}) {
+  const rawId = input.rawId.trim();
+  if (rawId.length > 0 && !rawId.startsWith("new:")) {
+    return rawId;
+  }
+
+  return createDeterministicUuid(
+    [
+      "attendance-export-segment",
+      rawId,
+      input.projectId.trim(),
+      normalizeAttendanceIdentityText(input.workerName),
+      input.teamType,
+      normalizeAttendanceIdentityText(input.specialistTeamName),
+      input.attendanceDate.trim(),
+    ].join("|"),
+  );
+}
+
 function buildAttendanceRecapRowsFromFormData(formData: FormData): AttendanceRecapRowInput[] {
   const attendanceIds = getStringValues(formData, "attendance_id");
   const currentProjectIds = getStringValues(formData, "project_id_current");
@@ -2502,7 +2528,14 @@ function buildAttendanceRecapRowsFromFormData(formData: FormData): AttendanceRec
       }
 
       return {
-        id: attendanceId,
+        id: resolveAttendanceExportRowId({
+          rawId: attendanceId,
+          projectId,
+          workerName,
+          teamType,
+          specialistTeamName,
+          attendanceDate,
+        }),
         project_id: projectId,
         worker_name: workerName,
         team_type: teamType,
@@ -2730,8 +2763,12 @@ export async function prepareAttendanceExportAction(formData: FormData) {
     new Set(rows.map((row) => row.project_id.trim()).filter((item) => item.length > 0)),
   );
   const nextUrl = withReturnParams(returnTo, (params) => {
-    params.set("modal", "rekap-export");
+    params.set("modal", "preview-export");
     params.set("preview_kind", previewKind);
+    params.delete("selected");
+    for (const row of rows) {
+      params.append("selected", row.id);
+    }
     if (recapProjectIds.length === 1) {
       params.set("project", recapProjectIds[0]);
     } else {

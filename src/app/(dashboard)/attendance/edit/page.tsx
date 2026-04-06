@@ -2,9 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { deleteAttendanceAction, updateAttendanceAction } from "@/app/actions";
 import { AttendanceSubmitButton } from "@/components/attendance-submit-button";
+import { AttendanceWorkerNameInput } from "@/components/attendance-worker-name-input";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { TrashIcon } from "@/components/icons";
 import { RupiahInput } from "@/components/rupiah-input";
+import { getAttendanceWorkerPresets } from "@/lib/attendance-worker-presets";
 import { requireAttendanceEditorUser } from "@/lib/auth";
 import { SPECIALIST_TEAM_PRESETS, WORKER_TEAMS } from "@/lib/constants";
 import { getAttendanceById } from "@/lib/data";
@@ -25,6 +27,7 @@ export default async function EditAttendancePage({ searchParams }: EditAttendanc
   if (!attendance) {
     notFound();
   }
+  const workerPresets = getAttendanceWorkerPresets();
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-4">
@@ -54,7 +57,12 @@ export default async function EditAttendancePage({ searchParams }: EditAttendanc
 
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-500">Nama pekerja</label>
-            <input name="worker_name" defaultValue={attendance.workerName} required />
+            <AttendanceWorkerNameInput
+              name="worker_name"
+              defaultValue={attendance.workerName}
+              required
+              workerOptions={workerPresets}
+            />
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">

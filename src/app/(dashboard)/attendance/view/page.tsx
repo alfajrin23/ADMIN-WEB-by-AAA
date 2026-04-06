@@ -23,6 +23,8 @@ export default async function ViewAttendancePage({ searchParams }: ViewAttendanc
     notFound();
   }
 
+  const isRecapped = attendance.projectId.trim().length > 0;
+
   return (
     <div className="mx-auto w-full max-w-3xl space-y-4">
       <section className="panel p-5">
@@ -75,7 +77,7 @@ export default async function ViewAttendancePage({ searchParams }: ViewAttendanc
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <dt className="text-xs text-slate-500">Hari Kerja</dt>
             <dd className="mt-1 text-sm font-semibold text-slate-900">
-              {attendance.workDays} hari
+              {isRecapped ? `${attendance.workDays} hari` : "Diisi saat rekap / export"}
             </dd>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -87,31 +89,31 @@ export default async function ViewAttendancePage({ searchParams }: ViewAttendanc
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <dt className="text-xs text-slate-500">Lembur (Jam)</dt>
             <dd className="mt-1 text-sm font-semibold text-slate-900">
-              {attendance.overtimeHours}
+              {isRecapped ? attendance.overtimeHours : "-"}
             </dd>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <dt className="text-xs text-slate-500">Upah Lembur/Jam</dt>
             <dd className="mt-1 text-sm font-semibold text-slate-900">
-              {formatCurrency(attendance.overtimeWage)}
+              {isRecapped ? formatCurrency(attendance.overtimeWage) : "-"}
             </dd>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <dt className="text-xs text-slate-500">Total Upah Lembur</dt>
             <dd className="mt-1 text-sm font-semibold text-slate-900">
-              {formatCurrency(attendance.overtimePay)}
+              {isRecapped ? formatCurrency(attendance.overtimePay) : "-"}
             </dd>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <dt className="text-xs text-slate-500">Kasbon</dt>
             <dd className="mt-1 text-sm font-semibold text-slate-900">
-              {formatCurrency(attendance.kasbonAmount)}
+              {isRecapped ? formatCurrency(attendance.kasbonAmount) : "-"}
             </dd>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <dt className="text-xs text-slate-500">Harus Dibayar</dt>
             <dd className="mt-1 text-sm font-semibold text-emerald-700">
-              {formatCurrency(attendance.netPay)}
+              {isRecapped ? formatCurrency(attendance.netPay) : "Dihitung saat rekap / export"}
             </dd>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 sm:col-span-2">

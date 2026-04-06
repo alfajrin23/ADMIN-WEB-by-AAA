@@ -2582,11 +2582,9 @@ function resolveAttendanceExportRowId(input: {
 function buildAttendanceRecapRowsFromFormData(formData: FormData): AttendanceRecapRowInput[] {
   const attendanceIds = getStringValues(formData, "attendance_id");
   const currentProjectIds = getStringValues(formData, "project_id_current");
-  const exportProjectIds = getStringValues(formData, "project_id_export");
   const workerNames = getStringValues(formData, "worker_name");
   const teamTypes = getStringValues(formData, "team_type");
   const currentSpecialistTeamNames = getStringValues(formData, "specialist_team_name_current");
-  const exportSpecialistTeamNames = getStringValues(formData, "specialist_team_name_export");
   const statuses = getStringValues(formData, "status");
   const workDaysValues = getNumberValues(formData, "work_days");
   const dailyWages = getNumberValues(formData, "daily_wage");
@@ -2597,19 +2595,16 @@ function buildAttendanceRecapRowsFromFormData(formData: FormData): AttendanceRec
   const attendanceDates = getStringValues(formData, "attendance_date");
   const notes = getStringValues(formData, "notes");
   const globalProjectId = getString(formData, "project_id_global");
-  const globalSpecialistTeamName = getString(formData, "specialist_team_name_global");
 
   return attendanceIds
     .map((attendanceId, index) => {
-      const projectId =
-        exportProjectIds[index] || globalProjectId || currentProjectIds[index] || "";
+      const projectId = globalProjectId || currentProjectIds[index] || "";
       const workerName = workerNames[index] ?? "";
       const teamType = parseWorkerTeamValue(teamTypes[index] ?? "");
-      const specialistTeamNameExport = exportSpecialistTeamNames[index] ?? "";
       const specialistTeamNameCurrent = currentSpecialistTeamNames[index] ?? "";
       const specialistTeamName =
         teamType === "spesialis"
-          ? specialistTeamNameExport || globalSpecialistTeamName || specialistTeamNameCurrent || null
+          ? specialistTeamNameCurrent || null
           : null;
       const status = parseAttendanceStatusValue(statuses[index] ?? "hadir");
       const workDays = Math.min(Math.max(Math.floor(workDaysValues[index] ?? 1), 1), 31);
@@ -2682,7 +2677,7 @@ export async function prepareAttendanceExportAction(formData: FormData) {
       withReturnMessage(
         returnTo,
         "error",
-        "Semua pekerja yang direkap wajib memiliki project final.",
+        "Project global wajib dipilih sebelum export.",
       ),
     );
   }

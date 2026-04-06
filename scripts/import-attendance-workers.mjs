@@ -310,8 +310,7 @@ async function cleanupLegacyPresetRows(supabase) {
 async function removeStaleExcelImportRows(supabase, expectedIds) {
   const existing = await supabase
     .from("attendance_records")
-    .select("id, notes")
-    .like("notes", `${ATTENDANCE_DRAFT_NOTE_PREFIX}%`);
+    .select("id, project_id, notes");
   if (existing.error) {
     throw new Error(`Gagal membaca draft import lama: ${existing.error.message}`);
   }
@@ -319,7 +318,11 @@ async function removeStaleExcelImportRows(supabase, expectedIds) {
   const staleIds = (existing.data ?? [])
     .filter((row) => {
       const notePayload = typeof row.notes === "string" ? parseDraftNote(row.notes) : null;
-      return notePayload?.source === "excel-import" && !expectedIds.has(String(row.id ?? ""));
+      return (
+        notePayload &&
+        ["excel-import", "debug", "debug-upsert"].includes(String(notePayload.source ?? "")) &&
+        !expectedIds.has(String(row.id ?? ""))
+      );
     })
     .map((row) => String(row.id ?? ""))
     .filter((id) => id.length > 0);
@@ -335,25 +338,21 @@ async function removeStaleExcelImportRows(supabase, expectedIds) {
 }
 
 async function upsertAttendanceRows(supabase, rows) {
-  for (const chunk of chunkArray(rows, 100)) {
-    const result = await withSpecialistTeamFallback(({ omitSpecialistTeamName }) =>
-      supabase.from("attendance_records").upsert(
-        chunk.map((row) => {
-          if (!omitSpecialistTeamName) {
-            return row;
-          }
-          const nextRow = { ...row };
-          delete nextRow.specialist_team_name;
-          return nextRow;
-        }),
-        { onConflict: "id" },
-      ),
-    );
-
+  let written = 0;
+  for (const row of rows) {
+    const result = await withSpecialistTeamFallback(({ omitSpecialistTeamName }) => {
+      const payload = { ...row };
+      if (omitSpecialistTeamName) {
+        delete payload.specialist_team_name;
+      }
+      return supabase.from("attendance_records").upsert(payload, { onConflict: "id" });
+    });
     if (result.error) {
-      throw new Error(`Gagal menyimpan draft absensi: ${result.error.message}`);
+      throw new Error(`Gagal menyimpan draft absensi "${row.worker_name}": ${result.error.message}`);
     }
+    written += 1;
   }
+  return written;
 }
 
 async function main() {
@@ -403,7 +402,7 @@ async function main() {
 
   const expectedIds = new Set(attendanceRows.map((row) => row.id));
   const deletedStaleRows = await removeStaleExcelImportRows(supabase, expectedIds);
-  await upsertAttendanceRows(supabase, attendanceRows);
+  const writtenRows = await upsertAttendanceRows(supabase, attendanceRows);
 
   const countByGroup = {};
   for (const row of attendanceRows) {
@@ -416,6 +415,7 @@ async function main() {
         importedRows: attendanceRows.length,
         cleanedPresetRows,
         deletedStaleRows,
+        writtenRows,
         draftProjectId,
         attendanceDate: attendanceRows[0]?.attendance_date ?? getCurrentJakartaDate(),
         byGroup: countByGroup,

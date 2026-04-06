@@ -369,7 +369,6 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
   const draftCount = wageRecap.rows.filter((row) => row.projectId.trim().length === 0).length;
   const specialistCount = wageRecap.rows.filter((row) => row.teamType === "spesialis").length;
   const storedDailyWageTotal = wageRecap.rows.reduce((sum, row) => sum + row.dailyWage, 0);
-  const selectedPreview = selectedRows.slice(0, 5);
   const selectedProjectIds = Array.from(
     new Set(selectedRows.map((row) => row.projectId).filter((item) => item.trim().length > 0)),
   );
@@ -737,29 +736,12 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                     <input key={selectedId} type="hidden" name="selected" value={selectedId} />
                   ))}
 
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-xs font-semibold text-slate-700">
-                      Pekerja terpilih: {selectedRows.length} data
-                    </p>
-                    <p className="mt-1 text-xs text-slate-600">
-                      Setiap pekerja bisa dibagi ke beberapa project atau beberapa tim kerja final
-                      pada tahap ini. Ini dipakai untuk kasus 3 hari di Ciguha dan 3 hari di
-                      Cisujen, atau spesialis baja yang sementara dipindah ke sipil.
-                    </p>
-                    <p className="mt-2 text-xs text-slate-600">
-                      Contoh pilihan: {selectedPreview.map((row) => row.workerName).join(", ")}
-                      {selectedRows.length > selectedPreview.length
-                        ? ` +${selectedRows.length - selectedPreview.length} lainnya`
-                        : ""}
-                    </p>
-                  </div>
-
                   <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
                     <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                      Project global (opsional)
+                      Project Global
                     </label>
                     <select name="project_id_global" defaultValue={exportProjectId}>
-                      <option value="">Isi jika semua pembagian pekerja masuk project yang sama</option>
+                      <option value="">Pilih project untuk semua pekerja</option>
                       {projects.map((project) => (
                         <option key={`global-${project.id}`} value={project.id}>
                           {project.name}
@@ -767,7 +749,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                       ))}
                     </select>
                     <p className="mt-1 text-[11px] text-slate-500">
-                      Setiap pembagian pekerja di bawah tetap bisa memakai project yang berbeda.
+                      Project ini dipakai untuk semua pekerja yang dichecklist pada export ini.
                     </p>
                     <div className="mt-3">
                       <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
@@ -777,11 +759,11 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                         name="specialist_team_name_global"
                         list="attendance-rekap-specialist-team-presets"
                         defaultValue={exportSpecialistTeamName}
-                        placeholder="Isi jika semua pekerja spesialis masuk tim kerja yang sama"
+                        placeholder="Dipakai untuk judul dokumen export"
                       />
                       <p className="mt-1 text-[11px] text-slate-500">
-                        Hanya diterapkan ke pekerja tim <strong>spesialis</strong>, dan masih bisa
-                        dioverride di setiap pembagian.
+                        Nilai ini dipakai untuk judul dokumen export, bukan untuk input per
+                        pekerja.
                       </p>
                     </div>
                   </div>
@@ -796,11 +778,6 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
 
                   <AttendanceExportWorkerEditor
                     rows={selectedRows}
-                    projects={projects.map((project) => ({ id: project.id, name: project.name }))}
-                    specialistTeamPresets={SPECIALIST_TEAM_PRESETS.map((item) => ({
-                      value: item.value,
-                      label: item.label,
-                    }))}
                   />
 
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">

@@ -23,7 +23,7 @@ import {
 import { ReimburseLinesInput } from "@/components/reimburse-lines-input";
 import { RupiahInput } from "@/components/rupiah-input";
 import { SuccessToast } from "@/components/success-toast";
-import { WORKER_TEAM_LABEL, WORKER_TEAMS } from "@/lib/constants";
+import { SPECIALIST_TEAM_PRESETS, WORKER_TEAM_LABEL, WORKER_TEAMS } from "@/lib/constants";
 import {
   canAccessAttendance,
   canExportReports,
@@ -393,10 +393,10 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
     });
 
   const hasProjects = projects.length > 0;
-  const hasProjectFilter = projects.some((project) => project.id === projectFilter);
-  const createDefaultProjectId = hasProjectFilter ? projectFilter : projects[0]?.id;
   const selectedPreview = selectedRows.slice(0, 5);
-  const selectedProjectIds = Array.from(new Set(selectedRows.map((row) => row.projectId)));
+  const selectedProjectIds = Array.from(
+    new Set(selectedRows.map((row) => row.projectId).filter((item) => item.trim().length > 0)),
+  );
   const selectedSpecialistTeamNames = Array.from(
     new Set(
       selectedRows
@@ -500,8 +500,8 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
             <div>
               <h2 className="section-title">Daftar Data Absensi</h2>
               <p className="section-description">
-                Data pekerja dikelompokkan per tim. Checklist pekerja yang ingin direkap, isi
-                kebutuhan export di modal, lalu preview dan download laporan.
+                Input awal hanya menyimpan data pekerja dan upah harian. Project, hari kerja,
+                lembur, kasbon, dan tim kerja final ditentukan saat rekap / export.
               </p>
             </div>
             <div className="space-y-3">
@@ -803,18 +803,21 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
             {activeModal === "attendance-new" ? (
               <form action={createAttendanceAction} className="mt-4 space-y-3">
                 <input type="hidden" name="return_to" value={closeModalHref} />
-                <input type="hidden" name="project_id" value={createDefaultProjectId ?? ""} />
+                <input type="hidden" name="project_id" value="" />
+                <input type="hidden" name="status" value="hadir" />
                 <input type="hidden" name="work_days" value="1" />
                 <input type="hidden" name="overtime_hours" value="0" />
                 <input type="hidden" name="kasbon_amount" value="0" />
                 <input type="hidden" name="notes" value="" />
                 {!hasProjects ? (
-                  <p className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-                    Buat project dahulu di menu Proyek & Biaya sebelum input absensi.
+                  <p className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                    Data pekerja tetap bisa diinput sekarang, tetapi project harus tersedia
+                    terlebih dahulu sebelum finalisasi export.
                   </p>
                 ) : (
                   <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                    Project awal mengikuti project aktif dan bisa diubah massal saat export.
+                    Tahap ini hanya menyimpan data pekerja mentah. Project, hari kerja, lembur,
+                    kasbon, dan tim kerja final diisi saat rekap / export.
                   </p>
                 )}
                 <div>
@@ -824,7 +827,6 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                     required
                     placeholder="Contoh: Andi"
                     autoFocus
-                    disabled={!hasProjects}
                   />
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -840,23 +842,33 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-medium text-slate-500">
-                      Tim spesialis (opsional)
+                      Kelompok spesialis / asal (opsional)
                     </label>
                     <input
                       name="specialist_team_name"
-                      placeholder="Contoh: Baja / Listrik / Sipil"
-                      disabled={!hasProjects}
+                      list="attendance-specialist-team-presets"
+                      placeholder="Contoh: Jakarta / Cianjur - Baja"
                     />
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Gunakan untuk membedakan spesialis Jakarta atau Cianjur serta sub-tim seperti
+                      baja, listrik, dan sipil.
+                    </p>
                   </div>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-500">Upah harian</label>
                   <RupiahInput name="daily_wage" />
                 </div>
+                <datalist id="attendance-specialist-team-presets">
+                  {SPECIALIST_TEAM_PRESETS.map((item) => (
+                    <option key={`create-specialist-${item.value}`} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </datalist>
                 <AttendanceSubmitButton
                   idleLabel="Simpan Absensi"
                   pendingLabel="Menyimpan Absensi..."
-                  disabled={!hasProjects}
                   className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-300"
                 />
               </form>
@@ -880,9 +892,9 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                     Pekerja terpilih: {selectedRows.length} data
                   </p>
                   <p className="mt-1 text-xs text-slate-600">
-                    Bila perlu, isi project global, lalu atur hari kerja, lembur, dan kasbon per
-                    pekerja. Saat Anda pilih export PDF atau Excel, data langsung diperbarui dan
-                    preview otomatis terbuka.
+                    Isi project global jika semua sama, atau override per pekerja di bawah.
+                    Pengaturan ini sengaja dibuat per pekerja supaya satu nama bisa dibagi ke
+                    project berbeda atau dipindah dari baja ke sipil saat finalisasi.
                   </p>
                   <p className="mt-2 text-xs text-slate-600">
                     Contoh pilihan:{" "}
@@ -897,7 +909,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                     Project global (opsional)
                   </label>
                   <select name="project_id_global" defaultValue={exportProjectId}>
-                    <option value="">Gunakan project data absensi masing-masing</option>
+                    <option value="">Isi jika semua pekerja masuk ke project yang sama</option>
                     {projects.map((project) => (
                       <option key={`global-${project.id}`} value={project.id}>
                         {project.name}
@@ -905,22 +917,31 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                     ))}
                   </select>
                   <p className="mt-1 text-[11px] text-slate-500">
-                    Biarkan kosong jika project pada data absensi yang dichecklist sudah benar.
+                    Setiap kartu pekerja di bawah tetap bisa memakai project yang berbeda.
                   </p>
                   <div className="mt-3">
                     <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                      Tim Spesialis
+                      Tim spesialis global (opsional)
                     </label>
                     <input
                       name="specialist_team_name_global"
+                      list="attendance-specialist-team-presets"
                       defaultValue={exportSpecialistTeamName}
-                      placeholder="Opsional, isi untuk semua pekerja spesialis"
+                      placeholder="Isi jika semua pekerja spesialis masuk tim kerja yang sama"
                     />
                     <p className="mt-1 text-[11px] text-slate-500">
-                      Field ini hanya diterapkan ke pekerja dengan tim <strong>spesialis</strong>.
+                      Hanya diterapkan ke pekerja tim <strong>spesialis</strong>, dan masih bisa
+                      dioverride per pekerja.
                     </p>
                   </div>
                 </div>
+                <datalist id="attendance-specialist-team-presets">
+                  {SPECIALIST_TEAM_PRESETS.map((item) => (
+                    <option key={`export-specialist-${item.value}`} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </datalist>
                 <div className="space-y-3">
                   {selectedRows.map((row) => (
                     <article key={row.id} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
@@ -928,8 +949,12 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                       <input type="hidden" name="project_id_current" value={row.projectId} />
                       <input type="hidden" name="worker_name" value={row.workerName} />
                       <input type="hidden" name="team_type" value={row.teamType} />
-                      <input type="hidden" name="specialist_team_name" value={row.specialistTeamName ?? ""} />
-                      <input type="hidden" name="status" value={row.status} />
+                      <input
+                        type="hidden"
+                        name="specialist_team_name_current"
+                        value={row.specialistTeamName ?? ""}
+                      />
+                      <input type="hidden" name="status" value="hadir" />
                       <input type="hidden" name="daily_wage" value={String(row.dailyWage)} />
                       <input
                         type="hidden"
@@ -953,7 +978,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                               : WORKER_TEAM_LABEL[row.teamType]}
                           </p>
                         </div>
-                        {row.payrollPaid ? (
+                        {row.projectId ? (
                           <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
                             Sudah direkap
                           </span>
@@ -961,6 +986,47 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                       </div>
 
                       <div className="mt-3 grid gap-3 lg:grid-cols-[0.9fr_0.9fr_1fr]">
+                        <div className="lg:col-span-3 grid gap-3 lg:grid-cols-[1.2fr_1fr]">
+                          <div>
+                            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                              Project Final
+                            </label>
+                            <select name="project_id_export" defaultValue={row.projectId}>
+                              <option value="">Ikuti project global / pilih manual</option>
+                              {projects.map((project) => (
+                                <option key={`${row.id}-${project.id}`} value={project.id}>
+                                  {project.name}
+                                </option>
+                              ))}
+                            </select>
+                            <p className="mt-1 text-[11px] text-slate-500">
+                              {row.projectId
+                                ? `Project terakhir: ${row.projectName ?? "Project"}`
+                                : "Belum ada project final pada data ini."}
+                            </p>
+                          </div>
+                          {row.teamType === "spesialis" ? (
+                            <div>
+                              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                                Tim Kerja Final
+                              </label>
+                              <input
+                                name="specialist_team_name_export"
+                                list="attendance-specialist-team-presets"
+                                defaultValue={row.specialistTeamName ?? ""}
+                                placeholder="Contoh: Cianjur - Sipil"
+                              />
+                              <p className="mt-1 text-[11px] text-slate-500">
+                                Isi sesuai tim kerja aktual untuk rekap ini.
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
+                              Tim reguler mengikuti data pekerja dan tidak perlu tim spesialis
+                              tambahan.
+                            </div>
+                          )}
+                        </div>
                         <div>
                           <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
                             Hari Kerja
@@ -997,6 +1063,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                         <span>Tanggal: {row.attendanceDate}</span>
                         <span>Upah harian: {formatCurrency(row.dailyWage)}</span>
                         <span>Upah lembur/jam otomatis: {formatCurrency(row.dailyWage / 8)}</span>
+                        {row.projectId ? <span>Project tersimpan: {row.projectName ?? "Project"}</span> : null}
                       </div>
                     </article>
                   ))}
@@ -1009,12 +1076,20 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                   <ReimburseLinesInput initialRows={initialReimburseRows} />
                 </div>
 
+                {!hasProjects ? (
+                  <p className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
+                    Tambahkan data project dulu di menu Proyek & Biaya sebelum export PDF atau
+                    Excel.
+                  </p>
+                ) : null}
+
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="submit"
                     name="export_kind"
                     value="pdf"
-                    className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-600"
+                    disabled={!hasProjects}
+                    className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-slate-300"
                   >
                     <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
                       <PdfIcon />
@@ -1025,7 +1100,8 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                     type="submit"
                     name="export_kind"
                     value="excel"
-                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600"
+                    disabled={!hasProjects}
+                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-300"
                   >
                     <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
                       <ExcelIcon />

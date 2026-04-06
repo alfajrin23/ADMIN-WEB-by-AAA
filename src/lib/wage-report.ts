@@ -74,6 +74,15 @@ function getMonthStartDate() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
 }
 
+function getCurrentJakartaDate() {
+  return new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: "Asia/Jakarta",
+  }).format(new Date());
+}
+
 function parseRupiah(value: string | null) {
   if (!value) {
     return 0;
@@ -97,7 +106,7 @@ function parseSelectedIds(searchParams: URLSearchParams) {
   );
 }
 
-function parseReimburseRows(searchParams: URLSearchParams, to: string): WageReimburseReportRow[] {
+function parseReimburseRows(searchParams: URLSearchParams, reportDate: string): WageReimburseReportRow[] {
   const reimburseAmounts = searchParams.getAll("reimburse_amount");
   const reimburseNotes = searchParams.getAll("reimburse_note");
   const rowCount = Math.max(reimburseAmounts.length, reimburseNotes.length);
@@ -113,7 +122,7 @@ function parseReimburseRows(searchParams: URLSearchParams, to: string): WageReim
       continue;
     }
     rows.push({
-      date: to,
+      date: reportDate,
       description: description || `Reimburse ${index + 1}`,
       qty: 1,
       unitPrice: amount,
@@ -128,11 +137,25 @@ function uniqueStrings(values: string[]) {
   return Array.from(new Set(values.filter((item) => item.length > 0)));
 }
 
+function getSpecialistTitleLabel(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+  const parts = trimmed.split("-").map((item) => item.trim()).filter((item) => item.length > 0);
+  return (parts.at(-1) ?? trimmed).toUpperCase();
+}
+
 function buildDefaultTitle(params: {
   exportMode: WageExportMode;
   specialistTeamNames: string[];
   rowProjectNames: string[];
 }) {
+  const specialistWorkLabel =
+    params.specialistTeamNames.length > 0
+      ? getSpecialistTitleLabel(params.specialistTeamNames[0])
+      : "";
+
   if (params.exportMode === "specialist") {
     const teamLabel =
       params.specialistTeamNames.length > 0
@@ -144,7 +167,7 @@ function buildDefaultTitle(params: {
 
   const specialistLabel =
     params.specialistTeamNames.length > 0
-      ? ` TIM ${params.specialistTeamNames.join(", ").toUpperCase()}`
+      ? ` (PEKERJAAN ${specialistWorkLabel || params.specialistTeamNames.join(", ").toUpperCase()})`
       : "";
 
   if (params.exportMode === "project") {
@@ -198,7 +221,12 @@ function filterRowsByMode(params: {
   };
 }
 
-function buildWorkerRows(rows: WageAttendanceRow[]) {
+function buildWorkerRows(
+  rows: WageAttendanceRow[],
+  options?: {
+    includeProjectNameInWorkerName?: boolean;
+  },
+) {
   const grouped = new Map<
     string,
     {
@@ -215,7 +243,12 @@ function buildWorkerRows(rows: WageAttendanceRow[]) {
   >();
 
   for (const row of rows) {
-    const key = `${row.workerName.toLowerCase()}|${row.teamType}|${(row.specialistTeamName ?? "").toLowerCase()}`;
+    const key = [
+      row.workerName.toLowerCase(),
+      row.projectId.trim().toLowerCase(),
+      row.teamType,
+      (row.specialistTeamName ?? "").toLowerCase(),
+    ].join("|");
     if (!grouped.has(key)) {
       grouped.set(key, {
         workerName: row.workerName,
@@ -249,7 +282,10 @@ function buildWorkerRows(rows: WageAttendanceRow[]) {
 
   return Array.from(grouped.values())
     .map((item) => ({
-      workerName: item.workerName,
+      workerName:
+        options?.includeProjectNameInWorkerName && item.projectNames.size === 1
+          ? `${item.workerName} (${Array.from(item.projectNames)[0]})`
+          : item.workerName,
       daysWorked: item.daysWorked,
       overtimeHours: item.overtimeHours,
       overtimeRate:
@@ -266,7 +302,7 @@ function buildWorkerRows(rows: WageAttendanceRow[]) {
 }
 
 export async function buildWageReportData(searchParams: URLSearchParams): Promise<WageReportResult> {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getCurrentJakartaDate();
   const from = isDateString(searchParams.get("from"))
     ? String(searchParams.get("from"))
     : getMonthStartDate();
@@ -315,8 +351,10 @@ export async function buildWageReportData(searchParams: URLSearchParams): Promis
           rowProjectNames,
         });
 
-  const workers = buildWorkerRows(filtered.rows);
-  const reimburseRows = parseReimburseRows(searchParams, to);
+  const workers = buildWorkerRows(filtered.rows, {
+    includeProjectNameInWorkerName: rowProjectNames.length > 1,
+  });
+  const reimburseRows = parseReimburseRows(searchParams, today);
   const totalUpah = workers.reduce((sum, row) => sum + row.totalWage, 0);
   const totalLembur = workers.reduce((sum, row) => sum + row.totalOvertimePay, 0);
   const totalKasbon = workers.reduce((sum, row) => sum + row.totalKasbon, 0);

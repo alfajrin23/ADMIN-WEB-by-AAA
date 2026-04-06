@@ -356,8 +356,8 @@ async function findDuplicateAttendanceRecord(
         pairKeys.map(async (pairKey) => {
           const [projectId, attendanceDate] = pairKey.split("|");
           const result = await withSupabaseSpecialistTeamNameFallback<Record<string, unknown>[]>(
-            ({ omitSpecialistTeamName }) =>
-              supabase
+            ({ omitSpecialistTeamName }) => {
+              const query = supabase
                 .from("attendance_records")
                 .select(
                   getSupabaseAttendanceSelect({
@@ -365,8 +365,12 @@ async function findDuplicateAttendanceRecord(
                     omitSpecialistTeamName,
                   }),
                 )
-                .eq("project_id", projectId)
-                .eq("attendance_date", attendanceDate),
+                .eq("attendance_date", attendanceDate);
+
+              return projectId
+                ? query.eq("project_id", projectId)
+                : query.is("project_id", null);
+            },
           );
 
           if (result.error || !Array.isArray(result.data)) {
@@ -2120,8 +2124,8 @@ export async function createAttendanceAction(formData: FormData) {
   const projectId = getString(formData, "project_id");
   const workerName = getString(formData, "worker_name");
   const returnTo = getReturnTo(formData) ?? "/attendance";
-  if (!projectId || !workerName) {
-    redirect(withReturnMessage(returnTo, "error", "Project dan nama pekerja wajib diisi."));
+  if (!workerName) {
+    redirect(withReturnMessage(returnTo, "error", "Nama pekerja wajib diisi."));
     return;
   }
 
@@ -2187,7 +2191,7 @@ export async function createAttendanceAction(formData: FormData) {
       withReturnMessage(
         returnTo,
         "error",
-        "Data absensi pekerja pada project dan tanggal tersebut sudah ada.",
+        "Data absensi pekerja dengan kombinasi tanggal dan tim yang sama sudah ada.",
       ),
     );
   }
@@ -2201,7 +2205,7 @@ export async function createAttendanceAction(formData: FormData) {
     }
     const attendancePayload = {
       id: payload.id,
-      project_id: payload.project_id,
+      project_id: payload.project_id || null,
       worker_name: payload.worker_name,
       team_type: payload.team_type,
       specialist_team_name: payload.specialist_team_name,
@@ -2276,7 +2280,7 @@ export async function updateAttendanceAction(formData: FormData) {
   const projectId = getString(formData, "project_id");
   const workerName = getString(formData, "worker_name");
   const returnTo = getReturnTo(formData) ?? "/attendance";
-  if (!attendanceId || !projectId || !workerName) {
+  if (!attendanceId || !workerName) {
     redirect(withReturnMessage(returnTo, "error", "Data absensi yang akan diperbarui tidak valid."));
     return;
   }
@@ -2334,7 +2338,7 @@ export async function updateAttendanceAction(formData: FormData) {
       withReturnMessage(
         returnTo,
         "error",
-        "Data absensi pekerja pada project dan tanggal tersebut sudah ada.",
+        "Data absensi pekerja dengan kombinasi tanggal dan tim yang sama sudah ada.",
       ),
     );
   }
@@ -2347,7 +2351,7 @@ export async function updateAttendanceAction(formData: FormData) {
       return;
     }
     const attendancePayload = {
-      project_id: payload.project_id,
+      project_id: payload.project_id || null,
       worker_name: payload.worker_name,
       team_type: payload.team_type,
       specialist_team_name: payload.specialist_team_name,
@@ -2444,9 +2448,11 @@ type AttendanceRecapRowInput = {
 function buildAttendanceRecapRowsFromFormData(formData: FormData): AttendanceRecapRowInput[] {
   const attendanceIds = getStringValues(formData, "attendance_id");
   const currentProjectIds = getStringValues(formData, "project_id_current");
+  const exportProjectIds = getStringValues(formData, "project_id_export");
   const workerNames = getStringValues(formData, "worker_name");
   const teamTypes = getStringValues(formData, "team_type");
-  const specialistTeamNames = getStringValues(formData, "specialist_team_name");
+  const currentSpecialistTeamNames = getStringValues(formData, "specialist_team_name_current");
+  const exportSpecialistTeamNames = getStringValues(formData, "specialist_team_name_export");
   const statuses = getStringValues(formData, "status");
   const workDaysValues = getNumberValues(formData, "work_days");
   const dailyWages = getNumberValues(formData, "daily_wage");
@@ -2461,13 +2467,15 @@ function buildAttendanceRecapRowsFromFormData(formData: FormData): AttendanceRec
 
   return attendanceIds
     .map((attendanceId, index) => {
-      const projectId = globalProjectId || currentProjectIds[index] || "";
+      const projectId =
+        exportProjectIds[index] || globalProjectId || currentProjectIds[index] || "";
       const workerName = workerNames[index] ?? "";
       const teamType = parseWorkerTeamValue(teamTypes[index] ?? "");
-      const specialistTeamNameRaw = specialistTeamNames[index] ?? "";
+      const specialistTeamNameExport = exportSpecialistTeamNames[index] ?? "";
+      const specialistTeamNameCurrent = currentSpecialistTeamNames[index] ?? "";
       const specialistTeamName =
         teamType === "spesialis"
-          ? globalSpecialistTeamName || specialistTeamNameRaw || null
+          ? specialistTeamNameExport || globalSpecialistTeamName || specialistTeamNameCurrent || null
           : null;
       const status = parseAttendanceStatusValue(statuses[index] ?? "hadir");
       const workDays = Math.min(Math.max(Math.floor(workDaysValues[index] ?? 1), 1), 31);
@@ -2489,7 +2497,7 @@ function buildAttendanceRecapRowsFromFormData(formData: FormData): AttendanceRec
         attendanceDates[index] ?? new Date().toISOString().slice(0, 10);
       const note = notes[index] ?? "";
 
-      if (!attendanceId || !projectId || !workerName) {
+      if (!attendanceId || !workerName) {
         return null;
       }
 
@@ -2526,6 +2534,30 @@ export async function prepareAttendanceExportAction(formData: FormData) {
 
   if (rows.length === 0) {
     redirect(withReturnMessage(returnTo, "error", "Pilih data absensi yang ingin direkap."));
+  }
+
+  if (rows.some((row) => !row.project_id.trim())) {
+    redirect(
+      withReturnMessage(
+        returnTo,
+        "error",
+        "Semua pekerja yang direkap wajib memiliki project final.",
+      ),
+    );
+  }
+
+  if (
+    rows.some(
+      (row) => row.team_type === "spesialis" && !(row.specialist_team_name ?? "").trim(),
+    )
+  ) {
+    redirect(
+      withReturnMessage(
+        returnTo,
+        "error",
+        "Semua pekerja spesialis wajib memiliki tim kerja final saat export.",
+      ),
+    );
   }
 
   const duplicate = await findDuplicateAttendanceRecord(
@@ -2694,12 +2726,16 @@ export async function prepareAttendanceExportAction(formData: FormData) {
     },
   });
 
-  const globalProjectId = rows[0]?.project_id ?? "";
+  const recapProjectIds = Array.from(
+    new Set(rows.map((row) => row.project_id.trim()).filter((item) => item.length > 0)),
+  );
   const nextUrl = withReturnParams(returnTo, (params) => {
     params.set("modal", "rekap-export");
     params.set("preview_kind", previewKind);
-    if (globalProjectId) {
-      params.set("project", globalProjectId);
+    if (recapProjectIds.length === 1) {
+      params.set("project", recapProjectIds[0]);
+    } else {
+      params.delete("project");
     }
     params.delete("success");
     params.delete("error");

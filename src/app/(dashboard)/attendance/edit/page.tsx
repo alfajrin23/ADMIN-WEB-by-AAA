@@ -6,7 +6,7 @@ import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { TrashIcon } from "@/components/icons";
 import { RupiahInput } from "@/components/rupiah-input";
 import { requireAttendanceEditorUser } from "@/lib/auth";
-import { WORKER_TEAMS } from "@/lib/constants";
+import { SPECIALIST_TEAM_PRESETS, WORKER_TEAMS } from "@/lib/constants";
 import { getAttendanceById } from "@/lib/data";
 
 type EditAttendancePageProps = {
@@ -41,15 +41,15 @@ export default async function EditAttendancePage({ searchParams }: EditAttendanc
           <input type="hidden" name="return_to" value={returnTo} />
           <input type="hidden" name="attendance_date" value={attendance.attendanceDate} />
           <input type="hidden" name="project_id" value={attendance.projectId} />
-          <input type="hidden" name="status" value={attendance.status} />
+          <input type="hidden" name="status" value="hadir" />
           <input type="hidden" name="work_days" value={String(attendance.workDays)} />
           <input type="hidden" name="overtime_hours" value={String(attendance.overtimeHours)} />
           <input type="hidden" name="kasbon_amount" value={String(attendance.kasbonAmount)} />
           <input type="hidden" name="notes" value={attendance.notes ?? ""} />
 
           <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-            Project tetap mengikuti data absensi saat ini. Upah lembur per jam dihitung otomatis
-            dari upah harian dibagi 8.
+            Halaman ini hanya mengubah data pekerja mentah. Project, hari kerja, lembur, dan
+            kasbon final tetap ditentukan dari modal Rekap / Export.
           </p>
 
           <div>
@@ -70,12 +70,13 @@ export default async function EditAttendancePage({ searchParams }: EditAttendanc
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">
-                Nama tim spesialis
+                Kelompok spesialis / asal
               </label>
               <input
                 name="specialist_team_name"
+                list="attendance-specialist-team-presets"
                 defaultValue={attendance.specialistTeamName ?? ""}
-                placeholder="Isi jika tim spesialis"
+                placeholder="Contoh: Jakarta / Cianjur - Baja"
               />
             </div>
           </div>
@@ -84,6 +85,13 @@ export default async function EditAttendancePage({ searchParams }: EditAttendanc
             <label className="mb-1 block text-xs font-medium text-slate-500">Upah harian</label>
             <RupiahInput name="daily_wage" defaultValue={attendance.dailyWage} />
           </div>
+          <datalist id="attendance-specialist-team-presets">
+            {SPECIALIST_TEAM_PRESETS.map((item) => (
+              <option key={`edit-specialist-${item.value}`} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </datalist>
 
           <AttendanceSubmitButton
             idleLabel="Simpan Perubahan"

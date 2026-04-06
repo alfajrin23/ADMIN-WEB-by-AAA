@@ -3,6 +3,9 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { canExportReports, getCurrentUser } from "@/lib/auth";
 import { buildWageReportData } from "@/lib/wage-report";
 
+type PDFPageLike = Awaited<ReturnType<PDFDocument["addPage"]>>;
+type PDFFontLike = Awaited<ReturnType<PDFDocument["embedFont"]>>;
+
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("id-ID", {
     style: "currency",
@@ -27,18 +30,32 @@ function getGeneratedFileDate() {
   }).format(new Date());
 }
 
-function isHiddenExportNote(note: string) {
-  const normalized = note.trim().toLowerCase();
-  return normalized.startsWith("import pekerja dari ");
+function getReportDateLabel() {
+  return `TANGGAL ${new Intl.DateTimeFormat("id-ID", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+    timeZone: "Asia/Jakarta",
+  })
+    .format(new Date())
+    .toUpperCase()}`;
 }
 
-function buildDescriptionText(params: {
-  exportMode: "selected" | "project" | "specialist";
-  notes: string[];
-  projectNames: string[];
-}) {
-  const visibleNotes = params.notes.map((note) => note.trim()).filter((note) => note && !isHiddenExportNote(note));
-  return visibleNotes.join(", ");
+function fitTextToWidth(text: string, font: PDFFontLike, size: number, maxWidth: number) {
+  if (font.widthOfTextAtSize(text, size) <= maxWidth) {
+    return text;
+  }
+
+  let safeText = text;
+  while (safeText.length > 0) {
+    const truncated = `${safeText.slice(0, -1)}...`;
+    if (font.widthOfTextAtSize(truncated, size) <= maxWidth) {
+      return truncated;
+    }
+    safeText = safeText.slice(0, -1);
+  }
+
+  return "...";
 }
 
 function drawCell(params: {
@@ -64,7 +81,8 @@ function drawCell(params: {
     borderWidth: 0.8,
   });
 
-  const textWidth = params.font.widthOfTextAtSize(params.text, size);
+  const safeText = fitTextToWidth(params.text, params.font, size, params.w - 8);
+  const textWidth = params.font.widthOfTextAtSize(safeText, size);
   let textX = params.x + 4;
   if (params.align === "center") {
     textX = params.x + (params.w - textWidth) / 2;
@@ -72,7 +90,7 @@ function drawCell(params: {
     textX = params.x + params.w - textWidth - 4;
   }
 
-  params.page.drawText(params.text, {
+  params.page.drawText(safeText, {
     x: textX,
     y: params.y - params.h + (params.h - size) / 2,
     size,
@@ -80,9 +98,6 @@ function drawCell(params: {
     color: rgb(0.08, 0.11, 0.14),
   });
 }
-
-type PDFPageLike = Awaited<ReturnType<PDFDocument["addPage"]>>;
-type PDFFontLike = Awaited<ReturnType<PDFDocument["embedFont"]>>;
 
 export async function GET(request: Request) {
   const user = await getCurrentUser();
@@ -98,8 +113,6 @@ export async function GET(request: Request) {
   }
 
   const {
-    to,
-    exportMode,
     reportTitle,
     workers,
     reimburseRows,
@@ -111,28 +124,56 @@ export async function GET(request: Request) {
     totalKeseluruhan,
   } = result.data;
   const generatedFileDate = getGeneratedFileDate();
+  const reportDateLabel = getReportDateLabel();
 
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const pageSize: [number, number] = [1191, 842];
+  const pageSize: [number, number] = [980, 760];
   const margin = 24;
-  const tableRow = 22;
-  const tableCols = [30, 120, 62, 62, 84, 96, 84, 94, 100, 140, 110];
-  const reimburseCols = [30, 90, 380, 70, 150, 150];
+  const tableRow = 24;
+  const tableCols = [34, 185, 64, 68, 92, 100, 92, 102, 92, 103];
+  const reimburseCols = [34, 110, 300, 55, 140, 145];
+  const titleWidth = pageSize[0] - margin * 2;
+  const mainLabelWidth = tableCols.slice(0, 9).reduce((sum, width) => sum + width, 0);
+  const mainValueWidth = tableCols[9];
+  const reimburseLabelWidth = reimburseCols.slice(0, 5).reduce((sum, width) => sum + width, 0);
 
   let page = pdf.addPage(pageSize);
   let y = page.getHeight() - margin;
 
-  const drawMainHeader = () => {
-    page.drawText(reportTitle, {
+  const drawHeader = () => {
+    page.drawRectangle({
+      x: margin,
+      y: y - 56,
+      width: titleWidth,
+      height: 56,
+      borderColor: rgb(0.2, 0.2, 0.2),
+      borderWidth: 1,
+    });
+    const safeTitle = fitTextToWidth(reportTitle.toUpperCase(), bold, 14, titleWidth - 12);
+    const titleWidthText = bold.widthOfTextAtSize(safeTitle, 14);
+    page.drawText(safeTitle, {
+      x: margin + (titleWidth - titleWidthText) / 2,
+      y: y - 34,
+      size: 14,
+      font: bold,
+      color: rgb(0.08, 0.11, 0.14),
+    });
+    y -= 56;
+
+    drawCell({
+      page,
+      text: reportDateLabel,
       x: margin,
       y,
-      size: 16,
-      font: bold,
-      color: rgb(0.1, 0.12, 0.16),
+      w: titleWidth,
+      h: 22,
+      font,
+      size: 8,
+      align: "left",
     });
-    y -= 24;
+    y -= 22;
 
     const headers = [
       "NO",
@@ -144,7 +185,6 @@ export async function GET(request: Request) {
       "UPAH/HARI",
       "JUMLAH UPAH",
       "KASBON (Rp)",
-      "KETERANGAN",
       "TOTAL DIBAYAR (Rp)",
     ];
 
@@ -156,27 +196,46 @@ export async function GET(request: Request) {
         x,
         y,
         w: tableCols[index],
-        h: tableRow + 2,
+        h: tableRow + 4,
         font: bold,
         align: "center",
         fill: [0.86, 0.86, 0.86],
       });
       x += tableCols[index];
     });
-    y -= tableRow + 2;
+    y -= tableRow + 4;
   };
 
-  drawMainHeader();
+  drawHeader();
 
   const ensureMainSpace = () => {
-    if (y < margin + tableRow * 5) {
+    if (y < margin + tableRow * 6) {
       page = pdf.addPage(pageSize);
       y = page.getHeight() - margin;
-      drawMainHeader();
+      drawHeader();
     }
   };
 
-  workers.forEach((row, index) => {
+  const printableWorkers =
+    workers.length > 0
+      ? workers
+      : [
+          {
+            workerName: "-",
+            daysWorked: 0,
+            overtimeHours: 0,
+            overtimeRate: 0,
+            totalOvertimePay: 0,
+            dailyRate: 0,
+            totalWage: 0,
+            totalKasbon: 0,
+            totalPaid: 0,
+            projectNames: [],
+            notes: [],
+          },
+        ];
+
+  printableWorkers.forEach((row, index) => {
     ensureMainSpace();
     const values = [
       String(index + 1),
@@ -188,13 +247,11 @@ export async function GET(request: Request) {
       formatCurrency(row.dailyRate),
       formatCurrency(row.totalWage),
       formatCurrency(row.totalKasbon),
-      buildDescriptionText({ exportMode, notes: row.notes, projectNames: row.projectNames }),
       formatCurrency(row.totalPaid),
     ];
 
     let x = margin;
     values.forEach((value, cellIndex) => {
-      const align = cellIndex === 0 ? "center" : cellIndex >= 2 && cellIndex !== 9 ? "right" : "left";
       drawCell({
         page,
         text: value,
@@ -203,15 +260,12 @@ export async function GET(request: Request) {
         w: tableCols[cellIndex],
         h: tableRow,
         font,
-        align,
+        align: cellIndex === 0 ? "center" : cellIndex === 1 ? "left" : "right",
       });
       x += tableCols[cellIndex];
     });
     y -= tableRow;
   });
-
-  const labelWidth = tableCols.slice(0, 10).reduce((sum, width) => sum + width, 0);
-  const totalColumnWidth = tableCols[10];
 
   const drawSummaryRow = (label: string, value: number, fill?: [number, number, number]) => {
     ensureMainSpace();
@@ -220,7 +274,7 @@ export async function GET(request: Request) {
       text: label,
       x: margin,
       y,
-      w: labelWidth,
+      w: mainLabelWidth,
       h: tableRow,
       font: bold,
       align: "right",
@@ -229,9 +283,9 @@ export async function GET(request: Request) {
     drawCell({
       page,
       text: formatCurrency(value),
-      x: margin + labelWidth,
+      x: margin + mainLabelWidth,
       y,
-      w: totalColumnWidth,
+      w: mainValueWidth,
       h: tableRow,
       font: bold,
       align: "right",
@@ -243,12 +297,12 @@ export async function GET(request: Request) {
   drawSummaryRow("JUMLAH UPAH", totalUpah);
   drawSummaryRow("JUMLAH LEMBUR", totalLembur);
   drawSummaryRow("REIMBURSE MATERIAL", totalReimburse);
-  drawSummaryRow("SUBTOTAL", subtotal, [1, 0.98, 0.35]);
-  drawSummaryRow("KASBON TEAM (JIKA ADA)", totalKasbon, [0.95, 0.27, 0.27]);
-  drawSummaryRow("TOTAL KESELURUHAN", totalKeseluruhan, [0.72, 0.82, 0.91]);
-  y -= 24;
+  drawSummaryRow("SUBTOTAL", subtotal, [1, 0.96, 0.2]);
+  drawSummaryRow("KASBON TEAM (JIKA ADA)", totalKasbon, [0.94, 0.15, 0.15]);
+  drawSummaryRow("TOTAL KESELURUHAN", totalKeseluruhan, [0.73, 0.83, 0.92]);
+  y -= 26;
 
-  if (y < 250) {
+  if (y < 240) {
     page = pdf.addPage(pageSize);
     y = page.getHeight() - margin;
   }
@@ -258,38 +312,39 @@ export async function GET(request: Request) {
     y,
     size: 14,
     font: bold,
-    color: rgb(0.1, 0.12, 0.16),
+    color: rgb(0.08, 0.11, 0.14),
   });
   y -= 18;
 
-  const reimbHeaders = ["NO", "TANGGAL", "KETERANGAN", "QTY", "HARGA SATUAN", "TOTAL"];
-  let x = margin;
-  reimbHeaders.forEach((item, index) => {
+  const reimburseHeaders = ["NO", "TANGGAL", "KETERANGAN", "QTY", "HARGA SATUAN", "TOTAL"];
+  let reimburseX = margin;
+  reimburseHeaders.forEach((item, index) => {
     drawCell({
       page,
       text: item,
-      x,
+      x: reimburseX,
       y,
       w: reimburseCols[index],
-      h: tableRow + 2,
+      h: tableRow + 4,
       font: bold,
       align: "center",
       fill: [0.9, 0.9, 0.9],
     });
-    x += reimburseCols[index];
+    reimburseX += reimburseCols[index];
   });
-  y -= tableRow + 2;
+  y -= tableRow + 4;
 
   const printableReimburseRows =
     reimburseRows.length > 0
       ? reimburseRows
-      : [{ date: to, description: "Tidak ada reimburse", qty: 0, unitPrice: 0, total: 0 }];
+      : [{ date: getGeneratedFileDate(), description: "-", qty: 0, unitPrice: 0, total: 0 }];
 
   printableReimburseRows.forEach((row, index) => {
     if (y < margin + tableRow * 3) {
       page = pdf.addPage(pageSize);
       y = page.getHeight() - margin;
     }
+
     const values = [
       String(index + 1),
       row.date,
@@ -298,6 +353,7 @@ export async function GET(request: Request) {
       formatCurrency(row.unitPrice),
       formatCurrency(row.total),
     ];
+
     let cellX = margin;
     values.forEach((value, cellIndex) => {
       drawCell({
@@ -308,7 +364,7 @@ export async function GET(request: Request) {
         w: reimburseCols[cellIndex],
         h: tableRow,
         font,
-        align: cellIndex >= 3 ? "right" : cellIndex === 0 ? "center" : "left",
+        align: cellIndex === 0 ? "center" : cellIndex >= 3 ? "right" : "left",
       });
       cellX += reimburseCols[cellIndex];
     });
@@ -320,22 +376,22 @@ export async function GET(request: Request) {
     text: "TOTAL REIMBURSE",
     x: margin,
     y,
-    w: reimburseCols.slice(0, 5).reduce((sum, width) => sum + width, 0),
+    w: reimburseLabelWidth,
     h: tableRow,
     font: bold,
     align: "center",
-    fill: [1, 0.98, 0.35],
+    fill: [1, 0.96, 0.2],
   });
   drawCell({
     page,
     text: formatCurrency(totalReimburse),
-    x: margin + reimburseCols.slice(0, 5).reduce((sum, width) => sum + width, 0),
+    x: margin + reimburseLabelWidth,
     y,
     w: reimburseCols[5],
     h: tableRow,
     font: bold,
     align: "right",
-    fill: [1, 0.98, 0.35],
+    fill: [1, 0.96, 0.2],
   });
 
   const bytes = await pdf.save();

@@ -27,18 +27,15 @@ function getGeneratedFileDate() {
   }).format(new Date());
 }
 
-function isHiddenExportNote(note: string) {
-  const normalized = note.trim().toLowerCase();
-  return normalized.startsWith("import pekerja dari ");
-}
-
-function buildDescriptionText(params: {
-  exportMode: "selected" | "project" | "specialist";
-  notes: string[];
-  projectNames: string[];
-}) {
-  const visibleNotes = params.notes.map((note) => note.trim()).filter((note) => note && !isHiddenExportNote(note));
-  return visibleNotes.join(", ");
+function getReportDateLabel() {
+  return `TANGGAL ${new Intl.DateTimeFormat("id-ID", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+    timeZone: "Asia/Jakarta",
+  })
+    .format(new Date())
+    .toUpperCase()}`;
 }
 
 export async function GET(request: Request) {
@@ -54,11 +51,9 @@ export async function GET(request: Request) {
   }
 
   const {
-    to,
-    exportMode,
-    reportTitle,
     workers,
     reimburseRows,
+    reportTitle,
     totalUpah,
     totalLembur,
     totalKasbon,
@@ -72,7 +67,9 @@ export async function GET(request: Request) {
   const merges: XLSX.Range[] = [];
 
   rows.push([reportTitle.toUpperCase()]);
-  merges.push(makeMerge(0, 0, 0, 10));
+  merges.push(makeMerge(0, 0, 0, 9));
+  rows.push([getReportDateLabel()]);
+  merges.push(makeMerge(1, 0, 1, 9));
   rows.push([]);
 
   rows.push([
@@ -85,75 +82,52 @@ export async function GET(request: Request) {
     "UPAH/HARI",
     "JUMLAH UPAH",
     "KASBON (Rp)",
-    "KETERANGAN",
     "TOTAL DIBAYAR (Rp)",
   ]);
 
-  if (workers.length === 0) {
+  const printableWorkers =
+    workers.length > 0
+      ? workers
+      : [
+          {
+            workerName: "-",
+            daysWorked: 0,
+            overtimeHours: 0,
+            overtimeRate: 0,
+            totalOvertimePay: 0,
+            dailyRate: 0,
+            totalWage: 0,
+            totalKasbon: 0,
+            totalPaid: 0,
+            projectNames: [],
+            notes: [],
+          },
+        ];
+
+  printableWorkers.forEach((row, index) => {
     rows.push([
-      "1",
-      "-",
-      "0",
-      "0",
-      formatCurrency(0),
-      formatCurrency(0),
-      formatCurrency(0),
-      formatCurrency(0),
-      formatCurrency(0),
-      "-",
-      formatCurrency(0),
+      String(index + 1),
+      row.workerName,
+      String(row.daysWorked),
+      formatHours(row.overtimeHours),
+      formatCurrency(row.overtimeRate),
+      formatCurrency(row.totalOvertimePay),
+      formatCurrency(row.dailyRate),
+      formatCurrency(row.totalWage),
+      formatCurrency(row.totalKasbon),
+      formatCurrency(row.totalPaid),
     ]);
-  } else {
-    workers.forEach((row, index) => {
-      rows.push([
-        String(index + 1),
-        row.workerName,
-        String(row.daysWorked),
-        formatHours(row.overtimeHours),
-        formatCurrency(row.overtimeRate),
-        formatCurrency(row.totalOvertimePay),
-        formatCurrency(row.dailyRate),
-        formatCurrency(row.totalWage),
-        formatCurrency(row.totalKasbon),
-        buildDescriptionText({ exportMode, notes: row.notes, projectNames: row.projectNames }),
-        formatCurrency(row.totalPaid),
-      ]);
-    });
-  }
+  });
 
   const summaryRowStart = rows.length;
-  rows.push(["JUMLAH UPAH", "", "", "", "", "", "", "", "", "", formatCurrency(totalUpah)]);
-  rows.push(["JUMLAH LEMBUR", "", "", "", "", "", "", "", "", "", formatCurrency(totalLembur)]);
-  rows.push([
-    "REIMBURSE MATERIAL",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    formatCurrency(totalReimburse),
-  ]);
-  rows.push(["SUBTOTAL", "", "", "", "", "", "", "", "", "", formatCurrency(subtotal)]);
-  rows.push(["KASBON TEAM (JIKA ADA)", "", "", "", "", "", "", "", "", "", formatCurrency(totalKasbon)]);
-  rows.push([
-    "TOTAL KESELURUHAN",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    formatCurrency(totalKeseluruhan),
-  ]);
+  rows.push(["JUMLAH UPAH", "", "", "", "", "", "", "", "", formatCurrency(totalUpah)]);
+  rows.push(["JUMLAH LEMBUR", "", "", "", "", "", "", "", "", formatCurrency(totalLembur)]);
+  rows.push(["REIMBURSE MATERIAL", "", "", "", "", "", "", "", "", formatCurrency(totalReimburse)]);
+  rows.push(["SUBTOTAL", "", "", "", "", "", "", "", "", formatCurrency(subtotal)]);
+  rows.push(["KASBON TEAM (JIKA ADA)", "", "", "", "", "", "", "", "", formatCurrency(totalKasbon)]);
+  rows.push(["TOTAL KESELURUHAN", "", "", "", "", "", "", "", "", formatCurrency(totalKeseluruhan)]);
   for (let i = 0; i < 6; i += 1) {
-    merges.push(makeMerge(summaryRowStart + i, 0, summaryRowStart + i, 9));
+    merges.push(makeMerge(summaryRowStart + i, 0, summaryRowStart + i, 8));
   }
 
   rows.push([]);
@@ -165,7 +139,7 @@ export async function GET(request: Request) {
   const printableReimburseRows =
     reimburseRows.length > 0
       ? reimburseRows
-      : [{ date: to, description: "Tidak ada reimburse", qty: 0, unitPrice: 0, total: 0 }];
+      : [{ date: generatedFileDate, description: "-", qty: 0, unitPrice: 0, total: 0 }];
 
   printableReimburseRows.forEach((row, index) => {
     rows.push([
@@ -187,15 +161,14 @@ export async function GET(request: Request) {
   sheet["!merges"] = merges;
   sheet["!cols"] = [
     { wch: 6 },
-    { wch: 24 },
+    { wch: 30 },
     { wch: 12 },
-    { wch: 12 },
+    { wch: 14 },
+    { wch: 18 },
+    { wch: 20 },
     { wch: 16 },
     { wch: 18 },
-    { wch: 14 },
-    { wch: 16 },
-    { wch: 16 },
-    { wch: 36 },
+    { wch: 18 },
     { wch: 20 },
   ];
   XLSX.utils.book_append_sheet(workbook, sheet, "Rekap Upah");

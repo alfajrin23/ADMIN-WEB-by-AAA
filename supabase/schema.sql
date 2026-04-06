@@ -36,7 +36,7 @@ create table if not exists public.project_expenses (
 
 create table if not exists public.attendance_records (
   id uuid primary key default gen_random_uuid(),
-  project_id uuid not null references public.projects(id) on delete cascade,
+  project_id uuid references public.projects(id) on delete cascade,
   worker_name text not null,
   team_type text not null default 'tukang' check (team_type in ('tukang', 'laden', 'spesialis')),
   specialist_team_name text,
@@ -92,6 +92,8 @@ alter table public.attendance_records
 add column if not exists reimburse_type text;
 alter table public.attendance_records
 add column if not exists reimburse_amount numeric(14, 2) not null default 0;
+alter table public.attendance_records
+alter column project_id drop not null;
 
 alter table public.attendance_records
 drop constraint if exists attendance_records_team_type_check;

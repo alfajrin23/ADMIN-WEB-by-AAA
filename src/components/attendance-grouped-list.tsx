@@ -46,6 +46,10 @@ function createAttendanceItemHref(pathname: "/attendance/view" | "/attendance/ed
   return `${pathname}?${query.toString()}`;
 }
 
+function getProjectLabel(item: AttendanceRecord) {
+  return item.projectName?.trim() || "Belum dipilih saat rekap";
+}
+
 export function AttendanceGroupedList({
   groups,
   selectedIds,
@@ -90,15 +94,14 @@ export function AttendanceGroupedList({
 
           <div className="mt-3 table-card">
             <div className="data-table-shell">
-              <table className="data-table data-table--sticky data-table--compact min-w-[980px] table-fixed text-[11px] leading-5 sm:text-xs">
+              <table className="data-table data-table--sticky data-table--compact min-w-[920px] table-fixed text-[11px] leading-5 sm:text-xs">
                 <thead>
                   <tr className="text-left text-slate-500">
                     <th className="w-10 text-center">Pilih</th>
                     <th>Pekerja</th>
-                    <th>Project</th>
-                    <th>Kehadiran</th>
-                    <th>Pembayaran</th>
-                    <th>Info</th>
+                    <th>Kelompok</th>
+                    <th>Upah</th>
+                    <th>Status Rekap</th>
                     <th className="w-48 text-right">Aksi</th>
                   </tr>
                 </thead>
@@ -119,28 +122,33 @@ export function AttendanceGroupedList({
                       </td>
                       <td>
                         <p className="font-semibold text-slate-900">{item.workerName}</p>
-                        <p className="text-slate-600">
+                        <p className="text-slate-500">Tanggal input: {item.attendanceDate}</p>
+                      </td>
+                      <td className="text-slate-700">
+                        <p>
                           {item.teamType === "spesialis"
-                            ? `Spesialis - ${item.specialistTeamName ?? "Lainnya"}`
+                            ? item.specialistTeamName?.trim() || "Tim spesialis belum diisi"
                             : WORKER_TEAM_LABEL[item.teamType]}
+                        </p>
+                        <p className="text-slate-500">
+                          {item.projectId
+                            ? `Project akhir: ${getProjectLabel(item)}`
+                            : "Project akhir dipilih saat rekap / export"}
                         </p>
                       </td>
                       <td className="text-slate-700">
-                        <p>{item.projectName?.trim() || "Tanpa Project"}</p>
-                        <p className="text-slate-500">Tanggal: {item.attendanceDate}</p>
-                      </td>
-                      <td className="text-slate-700">
-                        <p className="capitalize">Status: {item.status}</p>
-                        <p>Hari kerja: {item.workDays}</p>
-                        <p>Lembur: {formatHours(item.overtimeHours)} jam</p>
-                      </td>
-                      <td className="text-slate-700">
                         <p>Harian: {formatCurrency(item.dailyWage)}</p>
-                        <p>Kasbon: {formatCurrency(item.kasbonAmount)}</p>
-                        <p className="font-semibold text-emerald-700">Net: {formatCurrency(item.netPay)}</p>
+                        {item.projectId ? (
+                          <>
+                            <p>Hari kerja: {item.workDays}</p>
+                            <p>Lembur: {formatHours(item.overtimeHours)} jam</p>
+                          </>
+                        ) : (
+                          <p className="text-slate-500">Hari kerja, lembur, dan kasbon diisi saat rekap.</p>
+                        )}
                       </td>
                       <td className="text-slate-700">
-                        {item.payrollPaid ? (
+                        {item.projectId ? (
                           <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
                             Sudah direkap
                           </span>
@@ -149,8 +157,15 @@ export function AttendanceGroupedList({
                             Belum direkap
                           </span>
                         )}
-                        {item.notes ? (
-                          <p className="mt-2 line-clamp-2 text-[11px] text-slate-500">{item.notes}</p>
+                        <p className="mt-2 text-[11px] text-slate-500">
+                          {item.projectId
+                            ? `Kasbon: ${formatCurrency(item.kasbonAmount)}`
+                            : "Belum ada project, hari kerja, atau komponen rekap final."}
+                        </p>
+                        {item.projectId ? (
+                          <p className="text-[11px] font-semibold text-emerald-700">
+                            Total dibayar: {formatCurrency(item.netPay)}
+                          </p>
                         ) : null}
                       </td>
                       <td className="w-48">

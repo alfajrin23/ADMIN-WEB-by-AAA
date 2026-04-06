@@ -53,9 +53,9 @@ export default async function ViewAttendancePage({ searchParams }: ViewAttendanc
             <dd className="mt-1 text-sm font-semibold text-slate-900">{attendance.workerName}</dd>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <dt className="text-xs text-slate-500">Project</dt>
+            <dt className="text-xs text-slate-500">Project Final</dt>
             <dd className="mt-1 text-sm font-semibold text-slate-900">
-              {attendance.projectName ?? "-"}
+              {attendance.projectName ?? "Belum dipilih saat rekap / export"}
             </dd>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -67,9 +67,9 @@ export default async function ViewAttendancePage({ searchParams }: ViewAttendanc
             </dd>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <dt className="text-xs text-slate-500">Status Kehadiran</dt>
+            <dt className="text-xs text-slate-500">Status Rekap</dt>
             <dd className="mt-1 text-sm font-semibold capitalize text-slate-900">
-              {attendance.status}
+              {attendance.projectId ? "Sudah direkap" : "Belum direkap"}
             </dd>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">

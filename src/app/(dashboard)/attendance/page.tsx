@@ -5,6 +5,7 @@ import {
   prepareAttendanceExportAction,
 } from "@/app/actions";
 import { AttendanceExportWorkerEditor } from "@/components/attendance-export-worker-editor";
+import { AttendanceDateBoundaryRefresh } from "@/components/attendance-date-boundary-refresh";
 import { AttendanceGroupedListShell } from "@/components/attendance-grouped-list-shell";
 import { AttendanceSearchInput } from "@/components/attendance-search-input";
 import { AttendanceSubmitButton } from "@/components/attendance-submit-button";
@@ -19,8 +20,10 @@ import {
 import { ReimburseLinesInput } from "@/components/reimburse-lines-input";
 import { RupiahInput } from "@/components/rupiah-input";
 import { SuccessToast } from "@/components/success-toast";
+import { ensureDailyAttendanceDrafts } from "@/lib/attendance-daily-reset";
 import { getAttendanceWorkerPresets } from "@/lib/attendance-worker-presets";
 import { SPECIALIST_TEAM_PRESETS, WORKER_TEAM_LABEL, WORKER_TEAMS } from "@/lib/constants";
+import { getCurrentJakartaDate } from "@/lib/date";
 import {
   canAccessAttendance,
   canExportReports,
@@ -57,11 +60,6 @@ const EMPTY_SPECIALIST_TEAM_FILTER = "__empty_specialist_team__";
 
 function isDateString(value: string | undefined) {
   return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
-}
-
-function getMonthStartDate() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
 }
 
 function parseSelectedIds(value: string | string[] | undefined) {
@@ -215,8 +213,8 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
   }
 
   const params = await searchParams;
-  const today = new Date().toISOString().slice(0, 10);
-  const from = isDateString(params.from) ? String(params.from) : getMonthStartDate();
+  const today = getCurrentJakartaDate();
+  const from = isDateString(params.from) ? String(params.from) : today;
   const to = isDateString(params.to) ? String(params.to) : today;
   const projectFilter = typeof params.project === "string" ? params.project : "";
   const selectedIds = parseSelectedIds(params.selected);
@@ -257,6 +255,11 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
     activeModal = null;
   }
 
+  const shouldResetDailyRecap = from === today && to === today;
+  const didSeedTodayDrafts = shouldResetDailyRecap
+    ? await ensureDailyAttendanceDrafts(today)
+    : false;
+
   const [projects, wageRecap, selectedRecap] = await Promise.all([
     getProjects(),
     getWageRecap({
@@ -265,6 +268,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
       projectId: projectFilter || undefined,
       includePaid: true,
       recapMode: "gabung",
+      disableAttendanceCache: didSeedTodayDrafts,
     }),
     selectedIds.length > 0
       ? getWageRecap({
@@ -273,6 +277,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
           includePaid: true,
           recapMode: "gabung",
           attendanceIds: selectedIds,
+          disableAttendanceCache: didSeedTodayDrafts,
         })
       : Promise.resolve(null),
   ]);
@@ -453,6 +458,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
 
   return (
     <div className="space-y-4">
+      <AttendanceDateBoundaryRefresh currentDate={today} />
       <SuccessToast message={success} />
       {error ? (
         <section className="panel border-rose-200 bg-rose-50 p-4">
@@ -478,8 +484,9 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
             <div>
               <h2 className="section-title">Daftar Data Absensi</h2>
               <p className="section-description">
-                Input awal hanya menyimpan nama pekerja, tim, dan upah harian. Project, hari kerja,
-                lembur, kasbon, dan tim kerja final diisi saat rekap / export.
+                Halaman ini menampilkan absensi kerja untuk tanggal aktif hari ini. Saat tanggal
+                baru dimulai, daftar rekap otomatis kembali ke draft dan project final diisi lagi
+                saat rekap / export.
               </p>
             </div>
             <div className="space-y-3">

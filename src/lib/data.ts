@@ -18,6 +18,7 @@ import {
   WORKER_TEAMS,
   WORKER_TEAM_LABEL,
 } from "@/lib/constants";
+import { getCurrentJakartaDate, getMonthStartJakartaDate } from "@/lib/date";
 import { readExcelDatabase } from "@/lib/excel-db";
 import { getFirestoreServerClient } from "@/lib/firebase";
 import { activeDataSource } from "@/lib/storage";
@@ -270,12 +271,11 @@ function resolveClientScopeKey(value: string | null | undefined) {
 }
 
 function getMonthStartDate() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  return getMonthStartJakartaDate();
 }
 
 function getTodayDate() {
-  return new Date().toISOString().slice(0, 10);
+  return getCurrentJakartaDate();
 }
 
 function resolveJoinName(value: unknown) {
@@ -572,14 +572,8 @@ const getCachedSupabaseAllExpenseRows = unstable_cache(
 
 const getCachedSupabaseAllAttendanceRows = unstable_cache(
   async (): Promise<Record<string, unknown>[]> => {
-    const result = await withSupabaseSpecialistTeamNameFallback<Record<string, unknown>[]>(
-      ({ omitSpecialistTeamName }) =>
-        getAllSupabaseRowsResult(
-          "attendance_records",
-          getSupabaseAttendanceSelect({ omitSpecialistTeamName }),
-        ),
-    );
-    return (result.data ?? []).filter((row) => !isAttendanceWorkerPresetRow(row));
+    const rows = await getFreshSupabaseAllAttendanceRows();
+    return rows;
   },
   ["supabase-all-attendance"],
   {
@@ -587,6 +581,17 @@ const getCachedSupabaseAllAttendanceRows = unstable_cache(
     tags: [CACHE_TAGS.attendance],
   },
 );
+
+async function getFreshSupabaseAllAttendanceRows() {
+  const result = await withSupabaseSpecialistTeamNameFallback<Record<string, unknown>[]>(
+    ({ omitSpecialistTeamName }) =>
+      getAllSupabaseRowsResult(
+        "attendance_records",
+        getSupabaseAttendanceSelect({ omitSpecialistTeamName }),
+      ),
+  );
+  return (result.data ?? []).filter((row) => !isAttendanceWorkerPresetRow(row));
+}
 
 const getCachedSupabasePayrollResetRows = unstable_cache(
   async (): Promise<Record<string, unknown>[]> => {
@@ -2325,6 +2330,7 @@ export async function getWageRecap(options?: {
   attendanceIds?: string[];
   includePaid?: boolean;
   recapMode?: "gabung" | "per_project";
+  disableAttendanceCache?: boolean;
 }): Promise<WageRecap> {
   const from = options?.from ?? getMonthStartDate();
   const to = options?.to ?? getTodayDate();
@@ -2345,6 +2351,7 @@ export async function getWageRecap(options?: {
   );
   const includePaid = options?.includePaid ?? false;
   const recapMode = options?.recapMode ?? "per_project";
+  const disableAttendanceCache = options?.disableAttendanceCache ?? false;
 
   if (activeDataSource === "excel") {
     const db = readExcelDatabase();
@@ -2410,9 +2417,12 @@ export async function getWageRecap(options?: {
   }
 
   if (activeDataSource === "supabase") {
+    const attendanceRowsPromise = disableAttendanceCache
+      ? getFreshSupabaseAllAttendanceRows()
+      : getCachedSupabaseAllAttendanceRows();
     const [projects, attendanceRowsRaw, payrollResetRowsRaw] = await Promise.all([
       getCachedSupabaseProjects(),
-      getCachedSupabaseAllAttendanceRows(),
+      attendanceRowsPromise,
       getCachedSupabasePayrollResetRows(),
     ]);
     const projectNameMap = Object.fromEntries(

@@ -60,6 +60,7 @@ import {
   updateExcelProject,
 } from "@/lib/excel-db";
 import { getFirestoreServerClient } from "@/lib/firebase";
+import { getCurrentJakartaDate } from "@/lib/date";
 import { activeDataSource } from "@/lib/storage";
 import {
   getSupabaseAttendanceSelect,
@@ -252,7 +253,7 @@ async function ensureSupabaseAttendanceDraftProjectId(
       name: ATTENDANCE_DRAFT_PROJECT_NAME,
       code: ATTENDANCE_DRAFT_PROJECT_CODE,
       client_name: "SYSTEM",
-      start_date: new Date().toISOString().slice(0, 10),
+      start_date: getCurrentJakartaDate(),
       status: "aktif",
     })
     .select("id")
@@ -2235,8 +2236,7 @@ export async function createAttendanceAction(formData: FormData) {
   const normalizedOvertimeWage =
     parsedStatus === "hadir" ? resolveAutoOvertimeWage(normalizedDailyWage) : 0;
   const workDays = Math.min(getPositiveInteger(formData, "work_days", 1), 31);
-  const attendanceDate =
-    getString(formData, "attendance_date") || new Date().toISOString().slice(0, 10);
+  const attendanceDate = getString(formData, "attendance_date") || getCurrentJakartaDate();
 
   const payload = {
     id: createAttendanceMutationId({
@@ -2418,8 +2418,7 @@ export async function updateAttendanceAction(formData: FormData) {
     kasbon_amount: Number.isFinite(kasbonAmount) ? kasbonAmount : 0,
     reimburse_type: reimburseType,
     reimburse_amount: normalizedReimburseAmount,
-    attendance_date:
-      getString(formData, "attendance_date") || new Date().toISOString().slice(0, 10),
+    attendance_date: getString(formData, "attendance_date") || getCurrentJakartaDate(),
     notes: resolveDraftAttendanceNotes({
       currentNotes: getString(formData, "notes") || null,
       specialistTeamName,
@@ -2622,8 +2621,7 @@ function buildAttendanceRecapRowsFromFormData(formData: FormData): AttendanceRec
         reimburseType && Number.isFinite(reimburseAmounts[index]) && reimburseAmounts[index] > 0
           ? reimburseAmounts[index]
           : 0;
-      const attendanceDate =
-        attendanceDates[index] ?? new Date().toISOString().slice(0, 10);
+      const attendanceDate = attendanceDates[index] ?? getCurrentJakartaDate();
       const note = notes[index] ?? "";
 
       if (!attendanceId || !workerName) {
@@ -2959,8 +2957,7 @@ export async function confirmPayrollPaidAction(formData: FormData) {
     return;
   }
 
-  const paidUntilDate =
-    getString(formData, "paid_until_date") || new Date().toISOString().slice(0, 10);
+  const paidUntilDate = getString(formData, "paid_until_date") || getCurrentJakartaDate();
   const specialistTeamNameRaw = getString(formData, "specialist_team_name");
   const specialistTeamName = teamType === "spesialis" ? specialistTeamNameRaw || null : null;
   const workerName = getString(formData, "worker_name") || null;

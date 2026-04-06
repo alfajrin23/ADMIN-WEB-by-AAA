@@ -2,6 +2,12 @@ import * as fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import * as XLSX from "xlsx/xlsx.mjs";
+import {
+  ATTENDANCE_WORKER_PRESET_NOTE_PREFIX,
+  parseAttendanceWorkerPresetNote,
+} from "@/lib/attendance-worker-preset-store";
+import { activeDataSource } from "@/lib/storage";
+import { getSupabaseServerClient } from "@/lib/supabase";
 
 XLSX.set_fs(fs);
 
@@ -187,7 +193,54 @@ function parseWorkerPresetRows(sourcePath: string): AttendanceWorkerPreset[] {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-export function getAttendanceWorkerPresets() {
+async function getSupabaseAttendanceWorkerPresets() {
+  const supabase = getSupabaseServerClient();
+  if (!supabase) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from("attendance_records")
+    .select("worker_name, daily_wage, notes")
+    .like("notes", `${ATTENDANCE_WORKER_PRESET_NOTE_PREFIX}%`)
+    .order("worker_name", { ascending: true });
+  if (error || !Array.isArray(data)) {
+    return [];
+  }
+
+  return data
+    .map((row) => {
+      const name = normalizeText(row.worker_name);
+      if (!name) {
+        return null;
+      }
+
+      const notePayload =
+        typeof row.notes === "string" ? parseAttendanceWorkerPresetNote(row.notes) : null;
+      const rawDailyWage = Number(row.daily_wage ?? 0);
+      const fallbackWage = Number.isFinite(rawDailyWage) ? Math.max(Math.round(rawDailyWage), 0) : 0;
+
+      return {
+        name,
+        wageMin: notePayload?.wageMin ?? fallbackWage,
+        wageMax: notePayload?.wageMax ?? fallbackWage,
+        sourceLabels:
+          notePayload && notePayload.sourceLabels.length > 0 ? notePayload.sourceLabels : ["Supabase"],
+        referenceCount: notePayload?.referenceCount ?? 1,
+      } satisfies AttendanceWorkerPreset;
+    })
+    .filter((row): row is AttendanceWorkerPreset => Boolean(row))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+export async function getAttendanceWorkerPresets() {
+  if (activeDataSource === "supabase") {
+    const supabaseRows = await getSupabaseAttendanceWorkerPresets();
+    if (supabaseRows.length > 0) {
+      return supabaseRows;
+    }
+  }
+
   const sourcePath = resolveWorkerWorkbookPath();
   if (!sourcePath) {
     return [];

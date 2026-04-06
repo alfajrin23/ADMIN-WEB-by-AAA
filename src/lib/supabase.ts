@@ -118,7 +118,7 @@ export function getSupabaseAttendanceSelect(options?: {
   }
 
   if (options?.identityOnly) {
-    columns.push("attendance_date");
+    columns.push("attendance_date", "notes");
     return columns.join(", ");
   }
 

@@ -1,4 +1,8 @@
 import { unstable_cache } from "next/cache";
+import {
+  isAttendanceWorkerPresetNote,
+  isAttendanceWorkerPresetProjectCode,
+} from "@/lib/attendance-worker-preset-store";
 import { CACHE_TAGS } from "@/lib/cache-tags";
 import {
   COST_CATEGORIES,
@@ -213,6 +217,14 @@ function getAttendanceOvertimePay(row: AttendanceRecord) {
     return 0;
   }
   return row.overtimePay;
+}
+
+function isAttendanceWorkerPresetRow(row: Record<string, unknown>) {
+  return isAttendanceWorkerPresetNote(typeof row.notes === "string" ? row.notes : null);
+}
+
+function isAttendanceWorkerPresetProjectRow(row: Record<string, unknown>) {
+  return isAttendanceWorkerPresetProjectCode(typeof row.code === "string" ? row.code : null);
 }
 
 function normalizeText(value: string | null | undefined) {
@@ -453,7 +465,7 @@ const getCachedSupabaseProjectRows = unstable_cache(
       return [];
     }
 
-    return data;
+    return data.filter((row) => !isAttendanceWorkerPresetProjectRow(row));
   },
   ["supabase-project-rows"],
   {
@@ -510,6 +522,10 @@ const getCachedSupabaseProjectRowById = unstable_cache(
       return null;
     }
 
+    if (isAttendanceWorkerPresetProjectRow(data)) {
+      return null;
+    }
+
     return data;
   },
   ["supabase-project-row-by-id"],
@@ -557,7 +573,7 @@ const getCachedSupabaseAllAttendanceRows = unstable_cache(
           getSupabaseAttendanceSelect({ omitSpecialistTeamName }),
         ),
     );
-    return result.data ?? [];
+    return (result.data ?? []).filter((row) => !isAttendanceWorkerPresetRow(row));
   },
   ["supabase-all-attendance"],
   {
@@ -1817,6 +1833,10 @@ export async function getAttendanceById(attendanceId: string): Promise<Attendanc
           .maybeSingle(),
     );
     if (attendanceResult.error || !attendanceResult.data) {
+      return null;
+    }
+
+    if (isAttendanceWorkerPresetRow(attendanceResult.data)) {
       return null;
     }
 

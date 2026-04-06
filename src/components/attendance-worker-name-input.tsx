@@ -70,8 +70,8 @@ export function AttendanceWorkerNameInput({
               matchedWorker,
             )}${matchedWorker.referenceCount > 1 ? ". Nama ini muncul lebih dari satu kali di file master." : "."}`
           : workerOptions.length > 0
-            ? `Master pekerja dari Excel tersedia (${workerOptions.length} nama unik), ditampilkan tanpa grouping di form input.`
-            : "Master pekerja Excel belum ditemukan, jadi nama pekerja diisi manual."}
+            ? `Master pekerja tersedia (${workerOptions.length} nama unik), ditampilkan tanpa grouping di form input.`
+            : "Master pekerja belum ditemukan, jadi nama pekerja diisi manual."}
       </p>
     </>
   );

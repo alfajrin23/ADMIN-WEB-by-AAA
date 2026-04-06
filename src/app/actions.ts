@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { queueActivityLog } from "@/lib/activity-logs";
+import { isAttendanceWorkerPresetNote } from "@/lib/attendance-worker-preset-store";
 import {
   canImportData,
   canManageAttendance,
@@ -377,17 +378,19 @@ async function findDuplicateAttendanceRecord(
             return [];
           }
 
-          return result.data.map((row) => ({
-            id: String(row.id ?? ""),
-            projectId: String(row.project_id ?? ""),
-            workerName: String(row.worker_name ?? ""),
-            teamType: parseWorkerTeamValue(String(row.team_type ?? "")),
-            specialistTeamName:
-              !result.omitSpecialistTeamName && typeof row.specialist_team_name === "string"
-                ? row.specialist_team_name
-                : null,
-            attendanceDate: String(row.attendance_date ?? ""),
-          }));
+          return result.data
+            .filter((row) => !isAttendanceWorkerPresetNote(typeof row.notes === "string" ? row.notes : null))
+            .map((row) => ({
+              id: String(row.id ?? ""),
+              projectId: String(row.project_id ?? ""),
+              workerName: String(row.worker_name ?? ""),
+              teamType: parseWorkerTeamValue(String(row.team_type ?? "")),
+              specialistTeamName:
+                !result.omitSpecialistTeamName && typeof row.specialist_team_name === "string"
+                  ? row.specialist_team_name
+                  : null,
+              attendanceDate: String(row.attendance_date ?? ""),
+            }));
         }),
       )
     ).flat();

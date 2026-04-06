@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "import:worker-presets": "node scripts/import-attendance-worker-presets.mjs",
     "migrate:firebase": "node scripts/migrate-to-firebase.mjs",
     "firebase:init": "node scripts/firebase-init-firestore.mjs"
   },

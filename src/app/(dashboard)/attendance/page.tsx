@@ -277,7 +277,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
       : Promise.resolve(null),
   ]);
 
-  const workerPresets = getAttendanceWorkerPresets();
+  const workerPresets = await getAttendanceWorkerPresets();
 
   const specialistTeamOptions = Array.from(
     new Map(

@@ -27,7 +27,7 @@ export default async function EditAttendancePage({ searchParams }: EditAttendanc
   if (!attendance) {
     notFound();
   }
-  const workerPresets = getAttendanceWorkerPresets();
+  const workerPresets = await getAttendanceWorkerPresets();
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-4">

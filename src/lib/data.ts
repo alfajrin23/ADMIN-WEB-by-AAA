@@ -1,7 +1,9 @@
 import { unstable_cache } from "next/cache";
 import {
+  isAttendanceDraftNote,
+  parseAttendanceDraftNote,
   isAttendanceWorkerPresetNote,
-  isAttendanceWorkerPresetProjectCode,
+  isSystemProjectCode,
 } from "@/lib/attendance-worker-preset-store";
 import { CACHE_TAGS } from "@/lib/cache-tags";
 import {
@@ -224,7 +226,11 @@ function isAttendanceWorkerPresetRow(row: Record<string, unknown>) {
 }
 
 function isAttendanceWorkerPresetProjectRow(row: Record<string, unknown>) {
-  return isAttendanceWorkerPresetProjectCode(typeof row.code === "string" ? row.code : null);
+  return isSystemProjectCode(typeof row.code === "string" ? row.code : null);
+}
+
+function isDraftAttendanceRow(row: Record<string, unknown>) {
+  return isAttendanceDraftNote(typeof row.notes === "string" ? row.notes : null);
 }
 
 function normalizeText(value: string | null | undefined) {
@@ -1249,6 +1255,9 @@ function filterVisibleExpenses(entries: ExpenseEntry[]) {
 }
 
 function mapAttendance(row: Record<string, unknown>, projectName?: string): AttendanceRecord {
+  const isDraftAttendance = isDraftAttendanceRow(row);
+  const notePayload =
+    typeof row.notes === "string" ? parseAttendanceDraftNote(row.notes) : null;
   const rawWage = Number(row.daily_wage ?? 0);
   const rawOvertimeHours = Number(row.overtime_hours ?? 0);
   const rawOvertimeWage = Number(row.overtime_wage ?? 0);
@@ -1277,8 +1286,8 @@ function mapAttendance(row: Record<string, unknown>, projectName?: string): Atte
 
   return {
     id: String(row.id ?? ""),
-    projectId: String(row.project_id ?? ""),
-    projectName,
+    projectId: isDraftAttendance ? "" : String(row.project_id ?? ""),
+    projectName: isDraftAttendance ? undefined : projectName,
     workerName: String(row.worker_name ?? ""),
     teamType: WORKER_TEAMS.some((item) => item.value === row.team_type)
       ? (row.team_type as AttendanceRecord["teamType"])
@@ -1286,7 +1295,9 @@ function mapAttendance(row: Record<string, unknown>, projectName?: string): Atte
     specialistTeamName: resolveLegacySpecialistTeamName({
       teamType: String(row.team_type ?? ""),
       specialistTeamName:
-        typeof row.specialist_team_name === "string" ? row.specialist_team_name : null,
+        typeof row.specialist_team_name === "string"
+          ? row.specialist_team_name
+          : notePayload?.specialistTeamName ?? notePayload?.originSpecialistGroup ?? null,
       projectName,
     }),
     status,
@@ -1301,7 +1312,8 @@ function mapAttendance(row: Record<string, unknown>, projectName?: string): Atte
     netPay,
     payrollPaid: false,
     attendanceDate: String(row.attendance_date ?? new Date().toISOString()),
-    notes: typeof row.notes === "string" ? row.notes : null,
+    notes:
+      typeof row.notes === "string" && !notePayload ? row.notes : null,
     createdAt: String(row.created_at ?? new Date().toISOString()),
   };
 }

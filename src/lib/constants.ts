@@ -259,6 +259,7 @@ export type SpecialistCostPreset = (typeof SPECIALIST_COST_PRESETS)[number]["val
 
 export const SPECIALIST_TEAM_PRESETS = [
   { value: "Jakarta", label: "Spesialis Jakarta" },
+  { value: "Cianjur", label: "Spesialis Cianjur" },
   { value: "Cianjur - Baja", label: "Spesialis Cianjur - Baja" },
   { value: "Cianjur - Listrik", label: "Spesialis Cianjur - Listrik" },
   { value: "Cianjur - Sipil", label: "Spesialis Cianjur - Sipil" },

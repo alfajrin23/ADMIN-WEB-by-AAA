@@ -1,12 +1,24 @@
 export const ATTENDANCE_WORKER_PRESET_NOTE_PREFIX = "ADMINWEBWORKERPRESET:";
 export const ATTENDANCE_WORKER_PRESET_PROJECT_CODE = "SYS-WORKER-PRESET";
 export const ATTENDANCE_WORKER_PRESET_PROJECT_NAME = "MASTER PEKERJA (SISTEM)";
+export const ATTENDANCE_DRAFT_NOTE_PREFIX = "ADMINWEBDRAFTATTENDANCE:";
+export const ATTENDANCE_DRAFT_PROJECT_CODE = "SYS-ATTENDANCE-DRAFT";
+export const ATTENDANCE_DRAFT_PROJECT_NAME = "DRAFT ABSENSI (SISTEM)";
 
 export type AttendanceWorkerPresetNotePayload = {
   wageMin: number;
   wageMax: number;
   sourceLabels: string[];
   referenceCount: number;
+  importedAt?: string;
+  sourceWorkbook?: string | null;
+};
+
+export type AttendanceDraftNotePayload = {
+  isDraft?: boolean;
+  source?: string | null;
+  originSpecialistGroup?: string | null;
+  specialistTeamName?: string | null;
   importedAt?: string;
   sourceWorkbook?: string | null;
 };
@@ -39,6 +51,10 @@ function normalizeReferenceCount(value: unknown) {
     return 1;
   }
   return parsed;
+}
+
+function normalizeOptionalText(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim().replace(/\s+/g, " ") : null;
 }
 
 export function buildAttendanceWorkerPresetNote(
@@ -101,4 +117,62 @@ export function isAttendanceWorkerPresetProjectCode(
   value: string | null | undefined,
 ) {
   return (value ?? "").trim().toUpperCase() === ATTENDANCE_WORKER_PRESET_PROJECT_CODE;
+}
+
+export function buildAttendanceDraftNote(payload?: AttendanceDraftNotePayload) {
+  return `${ATTENDANCE_DRAFT_NOTE_PREFIX}${JSON.stringify({
+    isDraft: payload?.isDraft !== false,
+    source: normalizeOptionalText(payload?.source),
+    originSpecialistGroup: normalizeOptionalText(payload?.originSpecialistGroup),
+    specialistTeamName: normalizeOptionalText(payload?.specialistTeamName),
+    importedAt:
+      typeof payload?.importedAt === "string" && payload.importedAt.trim()
+        ? payload.importedAt.trim()
+        : undefined,
+    sourceWorkbook: normalizeOptionalText(payload?.sourceWorkbook),
+  })}`;
+}
+
+export function parseAttendanceDraftNote(
+  value: string | null | undefined,
+): AttendanceDraftNotePayload | null {
+  const raw = value?.trim();
+  if (!raw || !raw.startsWith(ATTENDANCE_DRAFT_NOTE_PREFIX)) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw.slice(ATTENDANCE_DRAFT_NOTE_PREFIX.length));
+    return {
+      isDraft: parsed?.isDraft !== false,
+      source: normalizeOptionalText(parsed?.source),
+      originSpecialistGroup: normalizeOptionalText(parsed?.originSpecialistGroup),
+      specialistTeamName: normalizeOptionalText(parsed?.specialistTeamName),
+      importedAt:
+        typeof parsed?.importedAt === "string" && parsed.importedAt.trim()
+          ? parsed.importedAt.trim()
+          : undefined,
+      sourceWorkbook: normalizeOptionalText(parsed?.sourceWorkbook),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function isAttendanceDraftNote(
+  value: string | null | undefined,
+) {
+  return parseAttendanceDraftNote(value)?.isDraft ?? false;
+}
+
+export function isAttendanceDraftProjectCode(
+  value: string | null | undefined,
+) {
+  return (value ?? "").trim().toUpperCase() === ATTENDANCE_DRAFT_PROJECT_CODE;
+}
+
+export function isSystemProjectCode(
+  value: string | null | undefined,
+) {
+  return isAttendanceWorkerPresetProjectCode(value) || isAttendanceDraftProjectCode(value);
 }

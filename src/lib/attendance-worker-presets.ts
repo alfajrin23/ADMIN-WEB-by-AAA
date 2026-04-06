@@ -3,7 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import * as XLSX from "xlsx/xlsx.mjs";
 import {
-  ATTENDANCE_WORKER_PRESET_NOTE_PREFIX,
+  isAttendanceWorkerPresetNote,
+  parseAttendanceDraftNote,
   parseAttendanceWorkerPresetNote,
 } from "@/lib/attendance-worker-preset-store";
 import { activeDataSource } from "@/lib/storage";
@@ -201,35 +202,77 @@ async function getSupabaseAttendanceWorkerPresets() {
 
   const { data, error } = await supabase
     .from("attendance_records")
-    .select("worker_name, daily_wage, notes")
-    .like("notes", `${ATTENDANCE_WORKER_PRESET_NOTE_PREFIX}%`)
+    .select("worker_name, daily_wage, team_type, specialist_team_name, notes")
     .order("worker_name", { ascending: true });
   if (error || !Array.isArray(data)) {
     return [];
   }
 
-  return data
-    .map((row) => {
-      const name = normalizeText(row.worker_name);
-      if (!name) {
-        return null;
-      }
+  const aggregated = new Map<
+    string,
+    {
+      name: string;
+      wages: number[];
+      sourceLabels: Set<string>;
+      referenceCount: number;
+    }
+  >();
 
-      const notePayload =
-        typeof row.notes === "string" ? parseAttendanceWorkerPresetNote(row.notes) : null;
-      const rawDailyWage = Number(row.daily_wage ?? 0);
-      const fallbackWage = Number.isFinite(rawDailyWage) ? Math.max(Math.round(rawDailyWage), 0) : 0;
+  for (const row of data) {
+    if (isAttendanceWorkerPresetNote(typeof row.notes === "string" ? row.notes : null)) {
+      continue;
+    }
 
-      return {
+    const name = normalizeText(row.worker_name);
+    if (!name) {
+      continue;
+    }
+
+    const key = name.toUpperCase();
+    const current =
+      aggregated.get(key) ??
+      {
         name,
-        wageMin: notePayload?.wageMin ?? fallbackWage,
-        wageMax: notePayload?.wageMax ?? fallbackWage,
-        sourceLabels:
-          notePayload && notePayload.sourceLabels.length > 0 ? notePayload.sourceLabels : ["Supabase"],
-        referenceCount: notePayload?.referenceCount ?? 1,
+        wages: [],
+        sourceLabels: new Set<string>(),
+        referenceCount: 0,
+      };
+
+    current.referenceCount += 1;
+    const notePayload =
+      typeof row.notes === "string" ? parseAttendanceWorkerPresetNote(row.notes) : null;
+    const rawDailyWage = Number(row.daily_wage ?? 0);
+    const wage = Number.isFinite(rawDailyWage) ? Math.max(Math.round(rawDailyWage), 0) : 0;
+    if (wage > 0) {
+      current.wages.push(wage);
+    }
+
+    const specialistTeamName = normalizeText(row.specialist_team_name);
+    const draftNote =
+      typeof row.notes === "string" ? parseAttendanceDraftNote(row.notes) : null;
+    const sourceLabel =
+      notePayload?.sourceLabels?.[0] ??
+      (row.team_type === "spesialis"
+        ? specialistTeamName ||
+          draftNote?.specialistTeamName ||
+          draftNote?.originSpecialistGroup ||
+          "Spesialis"
+        : "Supabase");
+    current.sourceLabels.add(sourceLabel || "Supabase");
+    aggregated.set(key, current);
+  }
+
+  return Array.from(aggregated.values())
+    .map((item) => {
+      const wages = item.wages.length > 0 ? item.wages : [0];
+      return {
+        name: item.name,
+        wageMin: Math.min(...wages),
+        wageMax: Math.max(...wages),
+        sourceLabels: Array.from(item.sourceLabels).sort((left, right) => left.localeCompare(right)),
+        referenceCount: item.referenceCount,
       } satisfies AttendanceWorkerPreset;
     })
-    .filter((row): row is AttendanceWorkerPreset => Boolean(row))
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 

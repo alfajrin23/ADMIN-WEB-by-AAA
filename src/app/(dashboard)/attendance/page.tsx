@@ -695,8 +695,9 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                       placeholder="Contoh: Jakarta / Cianjur - Baja"
                     />
                     <p className="mt-1 text-[11px] text-slate-500">
-                      Gunakan untuk membedakan spesialis Jakarta atau Cianjur. Tim final tetap bisa
-                      diubah lagi saat rekap.
+                      Isi asal tim spesialis saat input awal, misalnya Jakarta atau Cianjur. Tim
+                      final seperti Cianjur - Baja / Listrik / Sipil tetap bisa diubah lagi saat
+                      rekap.
                     </p>
                   </div>
                 </div>

@@ -4,7 +4,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { queueActivityLog } from "@/lib/activity-logs";
-import { isAttendanceWorkerPresetNote } from "@/lib/attendance-worker-preset-store";
+import {
+  ATTENDANCE_DRAFT_PROJECT_CODE,
+  ATTENDANCE_DRAFT_PROJECT_NAME,
+  buildAttendanceDraftNote,
+  isAttendanceDraftNote,
+  parseAttendanceDraftNote,
+  isAttendanceWorkerPresetNote,
+} from "@/lib/attendance-worker-preset-store";
 import {
   canImportData,
   canManageAttendance,
@@ -224,6 +231,76 @@ function createDeterministicUuid(seed: string) {
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${version}-${variant}-${hash.slice(20, 32)}`;
 }
 
+async function ensureSupabaseAttendanceDraftProjectId(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
+) {
+  const existing = await supabase
+    .from("projects")
+    .select("id")
+    .eq("code", ATTENDANCE_DRAFT_PROJECT_CODE)
+    .maybeSingle();
+  if (existing.error) {
+    return null;
+  }
+  if (existing.data?.id) {
+    return String(existing.data.id);
+  }
+
+  const created = await supabase
+    .from("projects")
+    .insert({
+      name: ATTENDANCE_DRAFT_PROJECT_NAME,
+      code: ATTENDANCE_DRAFT_PROJECT_CODE,
+      client_name: "SYSTEM",
+      start_date: new Date().toISOString().slice(0, 10),
+      status: "aktif",
+    })
+    .select("id")
+    .single();
+  if (created.error || !created.data?.id) {
+    return null;
+  }
+  return String(created.data.id);
+}
+
+function resolveDraftAttendanceNotes(input: {
+  currentNotes: string | null;
+  specialistTeamName: string | null;
+  source: "manual-input" | "excel-import";
+  sourceWorkbook?: string | null;
+}) {
+  if (input.currentNotes && !isAttendanceDraftNote(input.currentNotes)) {
+    return input.currentNotes;
+  }
+
+  return buildAttendanceDraftNote({
+    isDraft: true,
+    source: input.source,
+    originSpecialistGroup: input.specialistTeamName,
+    specialistTeamName: input.specialistTeamName,
+    importedAt: new Date().toISOString(),
+    sourceWorkbook: input.sourceWorkbook ?? null,
+  });
+}
+
+function resolveFinalAttendanceNotes(
+  value: string | null | undefined,
+  specialistTeamName: string | null,
+) {
+  if (specialistTeamName) {
+    return buildAttendanceDraftNote({
+      isDraft: false,
+      specialistTeamName,
+      importedAt: new Date().toISOString(),
+    });
+  }
+
+  if (!value || isAttendanceDraftNote(value)) {
+    return null;
+  }
+  return value;
+}
+
 function parseAttendanceStatusValue(value: string): AttendanceStatus {
   return ATTENDANCE_STATUSES.some((item) => item.value === value)
     ? (value as AttendanceStatus)
@@ -368,9 +445,7 @@ async function findDuplicateAttendanceRecord(
                 )
                 .eq("attendance_date", attendanceDate);
 
-              return projectId
-                ? query.eq("project_id", projectId)
-                : query.is("project_id", null);
+              return projectId ? query.eq("project_id", projectId) : query;
             },
           );
 
@@ -380,17 +455,21 @@ async function findDuplicateAttendanceRecord(
 
           return result.data
             .filter((row) => !isAttendanceWorkerPresetNote(typeof row.notes === "string" ? row.notes : null))
-            .map((row) => ({
-              id: String(row.id ?? ""),
-              projectId: String(row.project_id ?? ""),
-              workerName: String(row.worker_name ?? ""),
-              teamType: parseWorkerTeamValue(String(row.team_type ?? "")),
-              specialistTeamName:
-                !result.omitSpecialistTeamName && typeof row.specialist_team_name === "string"
-                  ? row.specialist_team_name
-                  : null,
-              attendanceDate: String(row.attendance_date ?? ""),
-            }));
+            .map((row) => {
+              const draftNote =
+                typeof row.notes === "string" ? parseAttendanceDraftNote(row.notes) : null;
+              return {
+                id: String(row.id ?? ""),
+                projectId: draftNote?.isDraft ? "" : String(row.project_id ?? ""),
+                workerName: String(row.worker_name ?? ""),
+                teamType: parseWorkerTeamValue(String(row.team_type ?? "")),
+                specialistTeamName:
+                  !result.omitSpecialistTeamName && typeof row.specialist_team_name === "string"
+                    ? row.specialist_team_name
+                    : draftNote?.specialistTeamName ?? draftNote?.originSpecialistGroup ?? null,
+                attendanceDate: String(row.attendance_date ?? ""),
+              };
+            });
         }),
       )
     ).flat();
@@ -2138,6 +2217,10 @@ export async function createAttendanceAction(formData: FormData) {
   const teamType = getParsedWorkerTeam(formData);
   const specialistTeamNameRaw = getString(formData, "specialist_team_name");
   const specialistTeamName = teamType === "spesialis" ? specialistTeamNameRaw || null : null;
+  if (teamType === "spesialis" && !specialistTeamName) {
+    redirect(withReturnMessage(returnTo, "error", "Tim spesialis / asal wajib diisi untuk pekerja spesialis."));
+    return;
+  }
   const dailyWage = getNumber(formData, "daily_wage");
   const overtimeHours = Math.max(getNumber(formData, "overtime_hours"), 0);
   const kasbonAmount = getNumber(formData, "kasbon_amount");
@@ -2176,7 +2259,11 @@ export async function createAttendanceAction(formData: FormData) {
     reimburse_amount: normalizedReimburseAmount,
     work_days: workDays,
     attendance_date: attendanceDate,
-    notes: getString(formData, "notes") || null,
+    notes: resolveDraftAttendanceNotes({
+      currentNotes: getString(formData, "notes") || null,
+      specialistTeamName,
+      source: "manual-input",
+    }),
   };
 
   const duplicate = await findDuplicateAttendanceRecord([
@@ -2206,9 +2293,14 @@ export async function createAttendanceAction(formData: FormData) {
     if (!supabase) {
       return;
     }
+    const draftProjectId = payload.project_id || await ensureSupabaseAttendanceDraftProjectId(supabase);
+    if (!draftProjectId) {
+      redirect(withReturnMessage(returnTo, "error", "Gagal menyiapkan penyimpanan draft absensi."));
+      return;
+    }
     const attendancePayload = {
       id: payload.id,
-      project_id: payload.project_id || null,
+      project_id: draftProjectId,
       worker_name: payload.worker_name,
       team_type: payload.team_type,
       specialist_team_name: payload.specialist_team_name,
@@ -2294,6 +2386,10 @@ export async function updateAttendanceAction(formData: FormData) {
   const teamType = getParsedWorkerTeam(formData);
   const specialistTeamNameRaw = getString(formData, "specialist_team_name");
   const specialistTeamName = teamType === "spesialis" ? specialistTeamNameRaw || null : null;
+  if (teamType === "spesialis" && !specialistTeamName) {
+    redirect(withReturnMessage(returnTo, "error", "Tim spesialis / asal wajib diisi untuk pekerja spesialis."));
+    return;
+  }
   const dailyWage = getNumber(formData, "daily_wage");
   const overtimeHours = Math.max(getNumber(formData, "overtime_hours"), 0);
   const kasbonAmount = getNumber(formData, "kasbon_amount");
@@ -2324,7 +2420,11 @@ export async function updateAttendanceAction(formData: FormData) {
     reimburse_amount: normalizedReimburseAmount,
     attendance_date:
       getString(formData, "attendance_date") || new Date().toISOString().slice(0, 10),
-    notes: getString(formData, "notes") || null,
+    notes: resolveDraftAttendanceNotes({
+      currentNotes: getString(formData, "notes") || null,
+      specialistTeamName,
+      source: "manual-input",
+    }),
   };
   const duplicate = await findDuplicateAttendanceRecord([
     {
@@ -2353,8 +2453,13 @@ export async function updateAttendanceAction(formData: FormData) {
     if (!supabase) {
       return;
     }
+    const draftProjectId = payload.project_id || await ensureSupabaseAttendanceDraftProjectId(supabase);
+    if (!draftProjectId) {
+      redirect(withReturnMessage(returnTo, "error", "Gagal menyiapkan penyimpanan draft absensi."));
+      return;
+    }
     const attendancePayload = {
-      project_id: payload.project_id || null,
+      project_id: draftProjectId,
       worker_name: payload.worker_name,
       team_type: payload.team_type,
       specialist_team_name: payload.specialist_team_name,
@@ -2552,7 +2657,7 @@ function buildAttendanceRecapRowsFromFormData(formData: FormData): AttendanceRec
         reimburse_type: reimburseType,
         reimburse_amount: reimburseAmount,
         attendance_date: attendanceDate,
-        notes: note || null,
+        notes: resolveFinalAttendanceNotes(note || null, specialistTeamName),
       };
     })
     .filter((row): row is AttendanceRecapRowInput => Boolean(row));

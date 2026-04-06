@@ -243,7 +243,9 @@ export function AttendanceExportWorkerEditor({
                           placeholder="Contoh: Cianjur - Sipil"
                         />
                         <p className="mt-1 text-[11px] text-slate-500">
-                          Contoh: Jakarta, Cianjur - Baja, Cianjur - Listrik, atau Cianjur - Sipil.
+                          Input awal bisa tetap Jakarta atau Cianjur. Saat finalisasi, bisa
+                          diubah ke Jakarta, Cianjur - Baja, Cianjur - Listrik, atau Cianjur -
+                          Sipil.
                         </p>
                       </div>
                     ) : (

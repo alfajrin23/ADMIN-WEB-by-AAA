@@ -165,6 +165,7 @@ export type DashboardData = {
   projectExpenseTotals: Array<{
     projectId: string;
     projectName: string;
+    clientName: string;
     projectStatus: ProjectStatus;
     transactionCount: number;
     totalExpense: number;

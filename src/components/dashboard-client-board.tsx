@@ -19,31 +19,6 @@ type DashboardClientBoardProps = {
   clients: DashboardClientBoardItem[];
 };
 
-function getRelativeOffset(index: number, activeIndex: number, total: number) {
-  let offset = index - activeIndex;
-  const half = total / 2;
-  if (offset > half) {
-    offset -= total;
-  } else if (offset < -half) {
-    offset += total;
-  }
-  return offset;
-}
-
-function getSlot(offset: number) {
-  const distance = Math.abs(offset);
-  if (distance === 0) {
-    return "active";
-  }
-  if (distance === 1) {
-    return "near";
-  }
-  if (distance === 2) {
-    return "far";
-  }
-  return "hidden";
-}
-
 export function DashboardClientBoard({ clients }: DashboardClientBoardProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
@@ -74,24 +49,17 @@ export function DashboardClientBoard({ clients }: DashboardClientBoardProps) {
       onMouseLeave={() => setIsPaused(false)}
     >
       <div className="client-carousel-stage">
-        {clients.map((client, index) => {
-          const offset = getRelativeOffset(index, safeActiveIndex, clients.length);
-          const slot = getSlot(offset);
-          const side = offset < 0 ? "left" : offset > 0 ? "right" : "center";
-
-          return (
-            <article
-              key={client.clientName}
-              className={`client-carousel-card client-carousel-card--${slot}`}
-              data-side={side}
-              aria-hidden={slot === "hidden"}
-              style={{ zIndex: clients.length - Math.abs(offset) }}
-            >
+        <div
+          className="client-carousel-track"
+          style={{ transform: `translate3d(0, -${safeActiveIndex * 100}%, 0)` }}
+        >
+          {clients.map((client) => (
+            <article key={client.clientName} className="client-carousel-card">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-slate-950">{client.clientName}</p>
                   <p className="mt-1 text-[11px] text-slate-500">
-                    Ringkasan biaya klien tampil bergantian seperti carousel portfolio.
+                    Ringkasan biaya klien tampil bergantian dengan slide vertikal dari atas ke bawah.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -126,8 +94,8 @@ export function DashboardClientBoard({ clients }: DashboardClientBoardProps) {
                 ))}
               </div>
             </article>
-          );
-        })}
+          ))}
+        </div>
       </div>
 
       {clients.length > 1 ? (
@@ -145,7 +113,7 @@ export function DashboardClientBoard({ clients }: DashboardClientBoardProps) {
                 setActiveIndex((prev) => (prev - 1 + clients.length) % clients.length)
               }
             >
-              <ArrowLeftIcon />
+              <ArrowLeftIcon className="-rotate-90" />
             </button>
             <div className="client-carousel-dots">
               {clients.map((client, index) => (
@@ -166,7 +134,7 @@ export function DashboardClientBoard({ clients }: DashboardClientBoardProps) {
               aria-label="Klien berikutnya"
               onClick={() => setActiveIndex((prev) => (prev + 1) % clients.length)}
             >
-              <ArrowRightIcon />
+              <ArrowRightIcon className="rotate-90" />
             </button>
           </div>
         </div>

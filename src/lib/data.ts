@@ -985,12 +985,16 @@ function getProjectStatusRank(status: Project["status"] | undefined) {
 
 function buildProjectExpenseTotals(expenses: ExpenseEntry[], projects: Project[] = []) {
   const projectNameById = new Map(projects.map((project) => [project.id, project.name]));
+  const projectClientNameById = new Map(
+    projects.map((project) => [project.id, resolveClientScopeName(project.clientName)]),
+  );
   const projectStatusById = new Map(projects.map((project) => [project.id, project.status]));
   const totals: Record<
     string,
     {
       projectId: string;
       projectName: string;
+      clientName: string;
       projectStatus: Project["status"];
       transactionCount: number;
       totalExpense: number;
@@ -1004,10 +1008,12 @@ function buildProjectExpenseTotals(expenses: ExpenseEntry[], projects: Project[]
     if (!totals[key]) {
       const projectName =
         expense.projectName?.trim() || projectNameById.get(expense.projectId) || "Project";
+      const clientName = projectClientNameById.get(expense.projectId) ?? resolveClientScopeName(null);
       const projectStatus = projectStatusById.get(expense.projectId) ?? "aktif";
       totals[key] = {
         projectId: expense.projectId || "",
         projectName,
+        clientName,
         projectStatus,
         transactionCount: 0,
         totalExpense: 0,
@@ -2708,7 +2714,7 @@ const getCachedSupabaseDashboardData = unstable_cache(
       categoryOptions,
     });
   },
-  ["supabase-dashboard-data"],
+  ["supabase-dashboard-data-v2"],
   {
     revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
     tags: [CACHE_TAGS.projects, CACHE_TAGS.expenses, CACHE_TAGS.expenseCategories, CACHE_TAGS.attendance],

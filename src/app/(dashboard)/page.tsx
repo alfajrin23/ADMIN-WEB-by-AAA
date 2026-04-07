@@ -1,23 +1,21 @@
 import { DashboardCharts } from "@/components/dashboard-charts";
 import { DashboardClientBoard } from "@/components/dashboard-client-board";
-import { AttendanceIcon, ProjectIcon, ShieldIcon, WalletIcon } from "@/components/icons";
+import { DashboardProjectExpenseList } from "@/components/dashboard-project-expense-list";
+import {
+  CashInIcon,
+  ProjectIcon,
+  TrendUpIcon,
+  UsersIcon,
+} from "@/components/icons";
 import { requireAuthUser } from "@/lib/auth";
 import { getDashboardData } from "@/lib/data";
 import { formatCompactCurrency } from "@/lib/format";
 import { activeDataSource, getStorageLabel } from "@/lib/storage";
 
-const dateFormatter = new Intl.DateTimeFormat("id-ID", {
-  day: "2-digit",
-  month: "long",
-  year: "numeric",
-});
-
 export default async function DashboardPage() {
-  const user = await requireAuthUser();
+  await requireAuthUser();
   const dashboard = await getDashboardData();
-  const today = dateFormatter.format(new Date());
-  const totalBudget = dashboard.categoryTotals.reduce((sum, item) => sum + item.total, 0);
-  const budgetScopeLabel = "Keseluruhan Portfolio";
+  const budgetScopeLabel = "Semua Project";
 
   const clientRowsBase = dashboard.categoryTotalsByClient
     .map((client) => ({
@@ -51,6 +49,55 @@ export default async function DashboardPage() {
       : 0,
   }));
 
+  const projectExpenseRows = dashboard.projectExpenseTotals
+    .filter((item) => item.totalExpense > 0)
+    .slice()
+    .sort((a, b) => {
+      if (b.totalExpense !== a.totalExpense) {
+        return b.totalExpense - a.totalExpense;
+      }
+      return a.projectName.localeCompare(b.projectName, "id-ID");
+    });
+
+  const summaryCards = [
+    {
+      key: "month-expense",
+      label: "Pengeluaran Bulan Ini",
+      value: formatCompactCurrency(dashboard.monthExpense),
+      note: "Ritme biaya bulan berjalan untuk memantau laju cash out.",
+      accent: "amber",
+      icon: <TrendUpIcon className="h-4 w-4" />,
+      chip: `${budgetScopeLabel}`,
+    },
+    {
+      key: "active-projects",
+      label: "Project Aktif",
+      value: dashboard.activeProjects.toLocaleString("id-ID"),
+      note: `${dashboard.totalProjects.toLocaleString("id-ID")} total project tercatat di sistem.`,
+      accent: "blue",
+      icon: <ProjectIcon className="h-4 w-4" />,
+      chip: "Status lapangan",
+    },
+    {
+      key: "active-workers",
+      label: "Pekerja Aktif",
+      value: dashboard.activeWorkers.toLocaleString("id-ID"),
+      note: "Ringkasan tenaga kerja aktif dari absensi terbaru.",
+      accent: "emerald",
+      icon: <UsersIcon className="h-4 w-4" />,
+      chip: "Absensi aktif",
+    },
+    {
+      key: "kasbon",
+      label: "Total Kasbon",
+      value: formatCompactCurrency(dashboard.totalKasbon),
+      note: "Akumulasi kasbon pekerja yang sudah masuk ke sistem.",
+      accent: "slate",
+      icon: <CashInIcon className="h-4 w-4" />,
+      chip: "Kasbon berjalan",
+    },
+  ] as const;
+
   return (
     <div className="space-y-4">
       {activeDataSource === "demo" ? (
@@ -66,83 +113,42 @@ export default async function DashboardPage() {
         </section>
       ) : null}
 
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {/* Ringkasan kecil: hanya data inti yang dibutuhkan user di bagian atas. */}
-        <article className="soft-card p-4">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
-              <ShieldIcon className="h-4 w-4" />
-            </span>
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
-                Role Aktif
-              </p>
-              <p className="mt-1 text-sm font-semibold text-slate-950">{user.roleLabel}</p>
+      <section className="dashboard-kpi-grid">
+        {summaryCards.map((card) => (
+          <article
+            key={card.key}
+            className={`dashboard-kpi-card dashboard-kpi-card--${card.accent}`}
+          >
+            <div className="dashboard-kpi-card__header">
+              <span className="dashboard-kpi-card__icon">{card.icon}</span>
+              <span className="dashboard-kpi-card__chip">{card.chip}</span>
             </div>
-          </div>
-        </article>
-
-        <article className="soft-card p-4">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
-              <AttendanceIcon className="h-4 w-4" />
-            </span>
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
-                Tanggal
-              </p>
-              <p className="mt-1 text-sm font-semibold text-slate-950">{today}</p>
-            </div>
-          </div>
-        </article>
-
-        <article className="soft-card p-4">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700">
-              <ProjectIcon className="h-4 w-4" />
-            </span>
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
-                Total Project
-              </p>
-              <p className="mt-1 text-sm font-semibold text-slate-950">
-                {dashboard.totalProjects.toLocaleString("id-ID")}
-              </p>
-            </div>
-          </div>
-        </article>
-
-        <article className="soft-card p-4">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
-              <WalletIcon className="h-4 w-4" />
-            </span>
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
-                Total Budget
-              </p>
-              <p className="mt-1 text-sm font-semibold text-slate-950">{formatCompactCurrency(totalBudget)}</p>
-              <p className="mt-1 text-[11px] text-slate-500">{budgetScopeLabel}</p>
-            </div>
-          </div>
-        </article>
+            <p className="dashboard-kpi-card__label">{card.label}</p>
+            <p className="dashboard-kpi-card__value">{card.value}</p>
+            <p className="dashboard-kpi-card__note">{card.note}</p>
+          </article>
+        ))}
       </section>
 
-      <section className="soft-card p-4 md:p-5">
-        <div className="section-header">
-          <div>
-            <h2 className="section-title">Biaya Pengeluaran per Klien</h2>
-            <p className="section-description">
-              Section ini menggantikan budget filter dan menampilkan kartu klien yang bergeser satu
-              per satu seperti membuka buku ringkasan biaya.
-            </p>
+      <section className="dashboard-focus-grid">
+        <section className="soft-card dashboard-client-panel p-4 md:p-5">
+          <div className="section-header">
+            <div>
+              <h2 className="section-title">Biaya Pengeluaran per Klien</h2>
+              <p className="section-description">
+                Kartu klien bergerak vertikal dari atas ke bawah agar ritmenya selaras dengan panel
+                pengeluaran per project.
+              </p>
+            </div>
+            <span className="badge badge-primary">{clientRows.length} klien</span>
           </div>
-          <span className="badge badge-primary">{clientRows.length} klien</span>
-        </div>
 
-        <div className="mt-4">
-          <DashboardClientBoard clients={clientRows} />
-        </div>
+          <div className="dashboard-client-panel__body mt-4">
+            <DashboardClientBoard clients={clientRows} />
+          </div>
+        </section>
+
+        <DashboardProjectExpenseList rows={projectExpenseRows} />
       </section>
 
       <DashboardCharts

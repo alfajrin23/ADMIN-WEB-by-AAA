@@ -2102,7 +2102,9 @@ function buildExpenseSearchHaystack(row: {
     ...dateTokens,
     `tanggal ${expenseDate}`,
     row.description ?? "",
+    `keterangan ${row.description ?? ""}`,
     row.usageInfo ?? "",
+    `penggunaan ${row.usageInfo ?? ""}`,
     row.requesterName ?? "",
     `pengaju ${row.requesterName ?? ""}`,
     `atas nama ${row.requesterName ?? ""}`,
@@ -2113,7 +2115,9 @@ function buildExpenseSearchHaystack(row: {
     `project ${row.projectName ?? ""}`,
     `proyek ${row.projectName ?? ""}`,
     row.category ? getCostCategoryLabel(row.category) : "",
+    row.category ? `kategori ${getCostCategoryLabel(row.category)}` : "",
     row.category ?? "",
+    row.category ? `kategori ${row.category}` : "",
     String(amountValue),
     String(normalizedAmount),
     groupedAmount,
@@ -2262,6 +2266,13 @@ function matchesExpenseDetailDateFilter(
   return true;
 }
 
+function applyExpenseDetailSearchLimit<T>(rows: T[], limit: number) {
+  if (!Number.isFinite(limit) || limit <= 0) {
+    return rows;
+  }
+  return rows.slice(0, limit);
+}
+
 export async function searchExpenseDetails(
   queryText: string,
   limit = 200,
@@ -2280,16 +2291,17 @@ export async function searchExpenseDetails(
   if (activeDataSource === "excel") {
     const db = readExcelDatabase();
     const projectMap = Object.fromEntries(db.projects.map((project) => [project.id, project.name]));
-    return db.project_expenses
+    return applyExpenseDetailSearchLimit(
+      db.project_expenses
       .map((row) => mapExpense(row, projectMap[row.project_id]))
-      .filter((row) => isVisibleExpense(row))
       .filter((row) => matchesExpenseDetailDateFilter(row.expenseDate, dateFilters))
       .filter((row) =>
         normalizedQuery ? matchExpenseSearchQuery(row, normalizedQuery, queryDigits) : true,
       )
       .map((row) => mapExpenseSearchResult(row, row.projectName?.trim() || "Project"))
-      .sort(sortExpenseSearchResults)
-      .slice(0, limit);
+      .sort(sortExpenseSearchResults),
+      limit,
+    );
   }
 
   if (activeDataSource === "supabase") {
@@ -2301,16 +2313,17 @@ export async function searchExpenseDetails(
       projects.map((project) => [project.id, project.name] as const),
     );
 
-    return expenseRows
+    return applyExpenseDetailSearchLimit(
+      expenseRows
       .map((row) => mapExpense(row, projectNameMap[String(row.project_id)]))
-      .filter((row) => isVisibleExpense(row))
       .filter((row) => matchesExpenseDetailDateFilter(row.expenseDate, dateFilters))
       .filter((row) =>
         normalizedQuery ? matchExpenseSearchQuery(row, normalizedQuery, queryDigits) : true,
       )
       .map((row) => mapExpenseSearchResult(row, row.projectName?.trim() || "Project"))
-      .sort(sortExpenseSearchResults)
-      .slice(0, limit);
+      .sort(sortExpenseSearchResults),
+      limit,
+    );
   }
 
   if (activeDataSource === "firebase") {
@@ -2322,25 +2335,27 @@ export async function searchExpenseDetails(
       projectRows.map((row) => [String(row.id ?? ""), String(row.name ?? "Project")]),
     );
 
-    return expenseRows
+    return applyExpenseDetailSearchLimit(
+      expenseRows
       .map((row) => mapExpense(row, projectMap[String(row.project_id ?? "")]))
-      .filter((row) => isVisibleExpense(row))
       .filter((row) => matchesExpenseDetailDateFilter(row.expenseDate, dateFilters))
       .filter((row) =>
         normalizedQuery ? matchExpenseSearchQuery(row, normalizedQuery, queryDigits) : true,
       )
       .map((row) => mapExpenseSearchResult(row, row.projectName?.trim() || "Project"))
-      .sort(sortExpenseSearchResults)
-      .slice(0, limit);
+      .sort(sortExpenseSearchResults),
+      limit,
+    );
   }
 
-  return sampleExpenses
-    .filter((row) => isVisibleExpense(row))
+  return applyExpenseDetailSearchLimit(
+    sampleExpenses
     .filter((row) => matchesExpenseDetailDateFilter(row.expenseDate, dateFilters))
     .filter((row) => (normalizedQuery ? matchExpenseSearchQuery(row, normalizedQuery, queryDigits) : true))
     .map((row) => mapExpenseSearchResult(row, row.projectName?.trim() || "Project"))
-    .sort(sortExpenseSearchResults)
-    .slice(0, limit);
+    .sort(sortExpenseSearchResults),
+    limit,
+  );
 }
 
 export async function getWageRecap(options?: {

@@ -214,7 +214,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
       : Promise.resolve(emptyProjectSuggestions),
     activeView === "rekap" && selectedProjectId ? getProjectDetail(selectedProjectId) : Promise.resolve(null),
     activeModal === "detail-search" && hasDetailSearchCriteria
-      ? searchExpenseDetails(detailSearchQuery, 1200, {
+      ? searchExpenseDetails(detailSearchQuery, 0, {
           from: detailDateFrom || undefined,
           to: detailDateTo || undefined,
           year: detailYear ?? undefined,

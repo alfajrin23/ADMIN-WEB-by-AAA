@@ -4,6 +4,7 @@ import {
   createAttendanceAction,
   prepareAttendanceExportAction,
 } from "@/app/actions";
+import { AttendanceSelectedIdsInputs } from "@/components/attendance-selected-ids-inputs";
 import { AttendanceExportWorkerEditor } from "@/components/attendance-export-worker-editor";
 import { AttendanceDateBoundaryRefresh } from "@/components/attendance-date-boundary-refresh";
 import { AttendanceGroupedListShell } from "@/components/attendance-grouped-list-shell";
@@ -57,6 +58,7 @@ type AttendancePageProps = {
 type WageRecapRow = Awaited<ReturnType<typeof getWageRecap>>["rows"][number];
 
 const EMPTY_SPECIALIST_TEAM_FILTER = "__empty_specialist_team__";
+const ATTENDANCE_RECAP_SELECTION_FORM_ID = "attendance-recap-selection-form";
 
 function isDateString(value: string | undefined) {
   return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
@@ -71,7 +73,7 @@ function parseSelectedIds(value: string | string[] | undefined) {
 }
 
 function normalizeSearchText(value: string | undefined) {
-  return value?.trim().toLowerCase() ?? "";
+  return value?.trim().toLowerCase().replace(/\s+/g, " ") ?? "";
 }
 
 function compareText(a: string | null | undefined, b: string | null | undefined) {
@@ -320,6 +322,8 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
       }
       return compareText(b.attendanceDate, a.attendanceDate);
     });
+  const visibleRowIdSet = new Set(visibleRows.map((row) => row.id));
+  const hiddenSelectedIds = selectedIds.filter((selectedId) => !visibleRowIdSet.has(selectedId));
 
   const groupedRows = new Map<
     string,
@@ -417,6 +421,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
     from,
     to,
     project: projectFilter || undefined,
+    selectedIds,
     searchText,
   });
   const shouldShowSpecialistFilter = specialistTeamOptions.length > 0 || Boolean(specialistTeamFilter);
@@ -501,6 +506,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                   <input type="hidden" name="to" value={to} />
                   <input type="hidden" name="project" value={projectFilter} />
                   <input type="hidden" name="q" value={searchText} />
+                  <AttendanceSelectedIdsInputs sourceFormId={ATTENDANCE_RECAP_SELECTION_FORM_ID} />
                   <div className="min-w-[220px] flex-1">
                     <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
                       Filter tim spesialis
@@ -541,7 +547,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
               </Link>
             ) : null}
             <form
-              id="attendance-recap-selection-form"
+              id={ATTENDANCE_RECAP_SELECTION_FORM_ID}
               action="/attendance"
               method="get"
               className="hidden"
@@ -552,6 +558,9 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
               <input type="hidden" name="q" value={searchText} />
               <input type="hidden" name="specialist_team" value={specialistTeamFilter} />
               <input type="hidden" name="modal" value="rekap-export" />
+              {hiddenSelectedIds.map((selectedId) => (
+                <input key={`hidden-selected-${selectedId}`} type="hidden" name="selected" value={selectedId} />
+              ))}
             </form>
             {canExport ? (
               <button

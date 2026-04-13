@@ -9,6 +9,36 @@ type AttendanceSearchInputProps = {
   placeholder?: string;
 };
 
+const ATTENDANCE_RECAP_SELECTION_FORM_ID = "attendance-recap-selection-form";
+
+function normalizeSelectedAttendanceIds(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
+}
+
+function getVisibleAttendanceSelectionState(formId: string) {
+  const checkboxes = Array.from(
+    document.querySelectorAll<HTMLInputElement>(
+      `input[data-attendance-selection="true"][form="${formId}"]`,
+    ),
+  );
+  return {
+    visibleIds: normalizeSelectedAttendanceIds(checkboxes.map((input) => input.value)),
+    checkedIds: normalizeSelectedAttendanceIds(
+      checkboxes.filter((input) => input.checked).map((input) => input.value),
+    ),
+  };
+}
+
+function mergeAttendanceSelectedIds(params: {
+  searchParamSelectedIds: string[];
+  visibleIds: string[];
+  checkedIds: string[];
+}) {
+  const visibleIdSet = new Set(params.visibleIds);
+  const hiddenSelectedIds = params.searchParamSelectedIds.filter((selectedId) => !visibleIdSet.has(selectedId));
+  return normalizeSelectedAttendanceIds([...hiddenSelectedIds, ...params.checkedIds]);
+}
+
 export function AttendanceSearchInput({
   initialValue,
   placeholder = "Cari nama karyawan...",
@@ -48,7 +78,14 @@ function AttendanceSearchInputInner({
       } else {
         params.delete("q");
       }
+      const selectedIds = mergeAttendanceSelectedIds({
+        searchParamSelectedIds: normalizeSelectedAttendanceIds(searchParams.getAll("selected")),
+        ...getVisibleAttendanceSelectionState(ATTENDANCE_RECAP_SELECTION_FORM_ID),
+      });
       params.delete("selected");
+      for (const selectedId of selectedIds) {
+        params.append("selected", selectedId);
+      }
       params.delete("success");
       params.delete("error");
 

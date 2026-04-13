@@ -72,13 +72,16 @@ function buildLocalSearchHaystack(item: ProjectExpenseSearchResult) {
     `pengaju ${item.requesterName ?? ""}`,
     `atas nama ${item.requesterName ?? ""}`,
     item.description ?? "",
+    `keterangan ${item.description ?? ""}`,
     item.usageInfo ?? "",
     `penggunaan ${item.usageInfo ?? ""}`,
     `untuk ${item.usageInfo ?? ""}`,
     item.recipientName ?? "",
     `vendor ${item.recipientName ?? ""}`,
     getCostCategoryLabel(item.category),
+    `kategori ${getCostCategoryLabel(item.category)}`,
     item.category,
+    `kategori ${item.category}`,
     String(item.amount),
     String(absoluteAmount),
     groupedAmount,
@@ -199,7 +202,7 @@ export function ExpenseDetailSearchResults({
           <input
             value={filterQuery}
             onChange={(event) => setFilterQuery(event.currentTarget.value)}
-            placeholder="Cari tanggal, project, pengaju, keterangan, vendor, atau nominal"
+            placeholder="Cari tanggal, project, pengaju, keterangan, kategori, vendor, atau nominal"
             autoComplete="off"
           />
           {hasLocalFilters ? (

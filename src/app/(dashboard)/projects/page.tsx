@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import {
   createExpenseAction,
   createProjectAction,
-  deleteExpenseAction,
   deleteProjectAction,
   deleteSelectedProjectsAction,
   importExcelTemplateAction,
@@ -13,6 +12,7 @@ import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { ExpenseInputModeFields } from "@/components/expense-input-mode-fields";
 import { ExpenseDetailSearchForm } from "@/components/expense-detail-search-form";
 import { ExpenseDetailSearchResults } from "@/components/expense-detail-search-results";
+import { ProjectRecapExpenseList } from "@/components/project-recap-expense-list";
 import {
   CashInIcon,
   CloseIcon,
@@ -34,12 +34,9 @@ import { ProjectsSearchInput } from "@/components/projects-search-input";
 import { SuccessToast } from "@/components/success-toast";
 import {
   COST_CATEGORIES,
-  getCostCategoryLabel,
-  getCostCategoryStyle,
   mergeExpenseCategoryOptions,
   PROJECT_STATUSES,
   PROJECT_STATUS_STYLE,
-  resolveSummaryCostCategory,
 } from "@/lib/constants";
 import {
   getDescriptionSuggestionsByProject,
@@ -50,7 +47,7 @@ import {
   getRequesterSuggestionsByProject,
   searchExpenseDetails,
 } from "@/lib/data";
-import { formatCurrency, formatDate } from "@/lib/format";
+import { formatDate } from "@/lib/format";
 import {
   canAccessProjects,
   canExportReports,
@@ -237,52 +234,6 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
     scopedReportProjectIds && selectedProject
       ? `Filter laporan aktif: ${selectedProject.project.name}`
       : "Filter laporan aktif: Semua project";
-  const recapExpenses = selectedProject
-    ? selectedProject.expenses
-        .slice()
-        .sort((a, b) => {
-          if (a.expenseDate !== b.expenseDate) {
-            return a.expenseDate.localeCompare(b.expenseDate);
-          }
-          return (a.requesterName ?? "").localeCompare(b.requesterName ?? "");
-        })
-    : [];
-  const recapCategoryTotals = selectedProject
-    ? (() => {
-        const totalsByCategory = new Map<string, number>();
-        for (const expense of recapExpenses) {
-          const category = resolveSummaryCostCategory({
-            category: expense.category,
-            description: expense.description,
-            usageInfo: expense.usageInfo,
-          });
-          if (!category) {
-            continue;
-          }
-          totalsByCategory.set(
-            category,
-            (totalsByCategory.get(category) ?? 0) + expense.amount,
-          );
-        }
-
-        return mergeExpenseCategoryOptions(
-          expenseCategories,
-          recapExpenses.map((item) =>
-            resolveSummaryCostCategory({
-              category: item.category,
-              description: item.description,
-              usageInfo: item.usageInfo,
-            }),
-          ),
-        )
-          .map((item) => ({
-            category: item.value,
-            label: item.label,
-            total: totalsByCategory.get(item.value) ?? 0,
-          }))
-          .filter((item) => item.total !== 0);
-      })()
-    : [];
 
   const searchKeyword = normalizeSearchText(searchText);
   const filteredProjects = searchKeyword
@@ -893,239 +844,14 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
           {!selectedProject ? (
             <p className="mt-3 text-sm text-slate-500">Data project belum tersedia.</p>
           ) : (
-            <div className="mt-4 space-y-4">
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {recapCategoryTotals.map((item) => (
-                  <div key={item.category} className="soft-card-muted p-3">
-                    <p className="text-xs font-medium text-slate-500">
-                      <span
-                        className={`rounded-full px-2 py-1 text-[11px] font-semibold ${getCostCategoryStyle(item.category)}`}
-                      >
-                        {item.label}
-                      </span>
-                    </p>
-                    <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(item.total)}</p>
-                  </div>
-                ))}
-              </div>
-
-              <div className="space-y-3 xl:hidden">
-                {recapExpenses.map((item) => (
-                  <article
-                    key={item.id}
-                    className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
-                          {formatDate(item.expenseDate)}
-                        </p>
-                        <p className="mt-1 break-words text-sm font-semibold text-slate-900">
-                          {item.requesterName ?? "-"}
-                        </p>
-                      </div>
-                      <p
-                        className={`shrink-0 text-right text-sm font-semibold ${
-                          item.amount < 0 ? "text-rose-700" : "text-emerald-700"
-                        }`}
-                      >
-                        {item.amount < 0 ? "-" : "+"}
-                        {formatCurrency(Math.abs(item.amount))}
-                      </p>
-                    </div>
-
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <span
-                        className={`rounded-full px-2 py-1 text-[11px] font-semibold ${getCostCategoryStyle(item.category)}`}
-                      >
-                        {getCostCategoryLabel(item.category)}
-                      </span>
-                      {item.specialistType ? (
-                        <span className="rounded-full bg-cyan-50 px-2 py-1 text-[11px] font-semibold text-cyan-700">
-                          Spesialis: {item.specialistType}
-                        </span>
-                      ) : null}
-                    </div>
-
-                    <dl className="mt-3 grid gap-3 sm:grid-cols-2">
-                      <div>
-                        <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                          Rincian
-                        </dt>
-                        <dd className="mt-1 break-words text-sm text-slate-700">
-                          {item.description ?? "-"}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                          Vendor
-                        </dt>
-                        <dd className="mt-1 break-words text-sm text-slate-700">
-                          {item.recipientName ?? "-"}
-                        </dd>
-                      </div>
-                    </dl>
-
-                    <p className="mt-3 break-words rounded-xl bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
-                      {item.usageInfo ?? "-"} | {item.quantity} {item.unitLabel ?? "unit"} @{" "}
-                      {formatCurrency(item.unitPrice)}
-                    </p>
-
-                    <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-                      {canEdit ? (
-                        <>
-                          <Link
-                            href={`/projects/expenses/edit?id=${item.id}`}
-                            className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100"
-                          >
-                            <span className="btn-icon bg-emerald-100 text-emerald-700">
-                              <EditIcon />
-                            </span>
-                            Edit
-                          </Link>
-                          <form action={deleteExpenseAction}>
-                            <input type="hidden" name="expense_id" value={item.id} />
-                            <input
-                              type="hidden"
-                              name="return_to"
-                              value={createProjectsHref({
-                                projectId: selectedProject.project.id,
-                                searchText,
-                                view: "rekap",
-                              })}
-                            />
-                            <ConfirmActionButton
-                              className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-semibold text-rose-700 hover:bg-rose-100"
-                              modalDescription="Yakin ingin menghapus data biaya ini?"
-                            >
-                              <span className="btn-icon bg-rose-100 text-rose-700">
-                                <TrashIcon />
-                              </span>
-                              Hapus
-                            </ConfirmActionButton>
-                          </form>
-                        </>
-                      ) : (
-                        <span className="text-xs font-medium text-slate-500">Viewer</span>
-                      )}
-                    </div>
-                  </article>
-                ))}
-                {recapExpenses.length === 0 ? (
-                  <p className="rounded-2xl border border-slate-200 px-3 py-4 text-center text-sm text-slate-500">
-                    Belum ada transaksi biaya.
-                  </p>
-                ) : null}
-              </div>
-
-              <div className="table-card hidden xl:block">
-                <div className="data-table-shell">
-                <table className="data-table data-table--sticky data-table--compact min-w-[980px] table-fixed text-[12px] leading-5">
-                  <thead>
-                    <tr className="bg-slate-50 text-left text-slate-600">
-                      <th className="w-[11%]">Tanggal</th>
-                      <th className="w-[15%]">Nama Pengaju</th>
-                      <th className="w-[15%]">Kategori</th>
-                      <th className="w-[29%]">Rincian</th>
-                      <th className="w-[12%]">Vendor</th>
-                      <th className="w-[10%] text-right">Nominal</th>
-                      <th className="w-[8%] text-right">
-                        Aksi
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recapExpenses.map((item) => (
-                      <tr key={item.id}>
-                        <td className="align-top text-[11px] whitespace-nowrap">
-                          {formatDate(item.expenseDate)}
-                        </td>
-                        <td className="align-top break-words">
-                          {item.requesterName ?? "-"}
-                        </td>
-                        <td className="align-top">
-                          <span
-                            className={`inline-flex max-w-full rounded-full px-2 py-1 text-[10px] font-semibold ${getCostCategoryStyle(item.category)}`}
-                          >
-                            {getCostCategoryLabel(item.category)}
-                          </span>
-                          {item.specialistType ? (
-                            <p className="mt-1 break-words text-[10px] font-medium text-cyan-700">
-                              Spesialis: {item.specialistType}
-                            </p>
-                            ) : null}
-                        </td>
-                        <td className="align-top">
-                          <p className="break-words">{item.description ?? "-"}</p>
-                          <p className="mt-1 break-words text-[10px] text-slate-500">
-                            {item.usageInfo ?? "-"} | {item.quantity} {item.unitLabel ?? "unit"} @{" "}
-                            {formatCurrency(item.unitPrice)}
-                          </p>
-                        </td>
-                        <td className="align-top break-words">
-                          {item.recipientName ?? "-"}
-                        </td>
-                        <td
-                          className={`text-right text-[11px] font-semibold ${
-                            item.amount < 0 ? "text-rose-700" : "text-emerald-700"
-                          }`}
-                        >
-                          {item.amount < 0 ? "-" : "+"}
-                          {formatCurrency(Math.abs(item.amount))}
-                        </td>
-                        <td className="align-top">
-                          <div className="flex flex-col items-end gap-1.5">
-                            {canEdit ? (
-                              <>
-                                <Link
-                                  href={`/projects/expenses/edit?id=${item.id}`}
-                                  className="button-soft button-xs"
-                                >
-                                  <span className="btn-icon bg-emerald-100 text-emerald-700">
-                                    <EditIcon />
-                                  </span>
-                                  Edit
-                                </Link>
-                                <form action={deleteExpenseAction}>
-                                  <input type="hidden" name="expense_id" value={item.id} />
-                                  <input
-                                    type="hidden"
-                                    name="return_to"
-                                    value={createProjectsHref({
-                                      projectId: selectedProject.project.id,
-                                      searchText,
-                                      view: "rekap",
-                                    })}
-                                  />
-                                  <ConfirmActionButton
-                                    className="button-danger button-xs"
-                                    modalDescription="Yakin ingin menghapus data biaya ini?"
-                                  >
-                                    <span className="btn-icon bg-rose-100 text-rose-700">
-                                      <TrashIcon />
-                                    </span>
-                                    Hapus
-                                  </ConfirmActionButton>
-                                </form>
-                              </>
-                            ) : (
-                              <span className="text-xs font-medium text-slate-500">Viewer</span>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {recapExpenses.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
-                          Belum ada transaksi biaya.
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-                </div>
-              </div>
+            <div className="mt-4">
+              <ProjectRecapExpenseList
+                projectId={selectedProject.project.id}
+                expenses={selectedProject.expenses}
+                expenseCategories={expenseCategories}
+                canEdit={canEdit}
+                searchText={searchText}
+              />
             </div>
           )}
         </section>

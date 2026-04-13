@@ -2079,12 +2079,28 @@ function buildExpenseSearchHaystack(row: {
   recipientName?: string | null;
   category?: string | null;
   projectName?: string | null;
+  expenseDate?: string | null;
   amount?: number | null;
 }) {
   const amountValue = Number(row.amount ?? 0);
   const normalizedAmount = Number.isFinite(amountValue) ? Math.round(Math.abs(amountValue)) : 0;
   const groupedAmount = normalizedAmount.toLocaleString("id-ID");
+  const expenseDate = toDateOnly(String(row.expenseDate ?? ""));
+  const [year = "", month = "", day = ""] = expenseDate.split("-");
+  const normalizedMonth = month ? String(Number(month)).padStart(2, "0") : "";
+  const normalizedDay = day ? String(Number(day)).padStart(2, "0") : "";
+  const yearMonthToken = year && normalizedMonth ? `${year}-${normalizedMonth}` : "";
+  const dateTokens = [
+    expenseDate,
+    yearMonthToken,
+    year && normalizedMonth && normalizedDay ? `${normalizedDay}-${normalizedMonth}-${year}` : "",
+    year && normalizedMonth && normalizedDay ? `${normalizedDay}/${normalizedMonth}/${year}` : "",
+    year && normalizedMonth && normalizedDay ? `${year}${normalizedMonth}${normalizedDay}` : "",
+    year && normalizedMonth && normalizedDay ? `${normalizedDay}${normalizedMonth}${year}` : "",
+  ].filter((item) => item.length > 0);
   return [
+    ...dateTokens,
+    `tanggal ${expenseDate}`,
     row.description ?? "",
     row.usageInfo ?? "",
     row.requesterName ?? "",
@@ -2128,6 +2144,7 @@ function matchExpenseSearchQuery(
     recipientName?: string | null;
     category?: string | null;
     projectName?: string | null;
+    expenseDate?: string | null;
     amount?: number | null;
   },
   normalizedQuery: string,
@@ -2164,6 +2181,7 @@ function mapExpenseSearchResult(row: ExpenseEntry, projectName: string): Project
     requesterName: row.requesterName,
     description: row.description,
     usageInfo: row.usageInfo,
+    recipientName: row.recipientName,
     category: row.category,
     amount: row.amount,
   };

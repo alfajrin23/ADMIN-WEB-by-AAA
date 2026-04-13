@@ -181,7 +181,7 @@ function ExpenseDetailSearchFormInner({
         <input
           value={query}
           onChange={(event) => setQuery(event.currentTarget.value)}
-          placeholder="Contoh: hebel, proyek gudang, 1.500.000"
+          placeholder="Contoh: hebel, proyek gudang, 1.500.000, 13/04/2026"
           autoFocus
           autoComplete="off"
         />
@@ -200,7 +200,8 @@ function ExpenseDetailSearchFormInner({
         ) : null}
       </div>
       <p className="text-[11px] text-slate-500">
-        Hasil muncul otomatis saat Anda mengetik atau mengubah filter.
+        Hasil muncul otomatis saat Anda mengetik atau mengubah filter. Kata kunci juga bisa
+        mencari tanggal, nama pengaju, project, keterangan, vendor, dan nominal.
       </p>
       <div className="grid gap-2 sm:grid-cols-3">
         <div>

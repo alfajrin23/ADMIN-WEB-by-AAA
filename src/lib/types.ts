@@ -146,6 +146,7 @@ export type ProjectExpenseSearchResult = {
   requesterName: string | null;
   description: string | null;
   usageInfo: string | null;
+  recipientName: string | null;
   category: CostCategory;
   amount: number;
 };

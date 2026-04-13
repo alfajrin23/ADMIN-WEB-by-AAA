@@ -45,6 +45,12 @@ type HokProjectRow = HokProjectPreset & {
   selected: boolean;
 };
 
+type ScraperRow = {
+  id: string;
+  projectId: string;
+  amountRaw: string;
+};
+
 type ExpenseInputModeFieldsProps = {
   projects: ProjectOption[];
   initialProjectId?: string;
@@ -60,7 +66,9 @@ type ExpenseInputModeFieldsProps = {
 
 const STANDARD_MODE = "standard";
 const HOK_MODE = "hok_kmp_cianjur";
+const SCRAPER_MODE = "scraper";
 const EXPENSE_PROJECT_REFOCUS_KEY = "expense-modal-refocus-project";
+type ExpenseInputMode = typeof STANDARD_MODE | typeof HOK_MODE | typeof SCRAPER_MODE;
 
 function normalizeText(value: string | null | undefined) {
   return (value ?? "").trim().toLowerCase();
@@ -84,6 +92,32 @@ function createInitialHokRows(rows: HokProjectPreset[]): HokProjectRow[] {
     amountRaw: "",
     selected: row.defaultSelected,
   }));
+}
+
+function createScraperRow(projectId = ""): ScraperRow {
+  return {
+    id:
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `scraper-row-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    projectId,
+    amountRaw: "",
+  };
+}
+
+function createInitialScraperRows(initialProjectId?: string) {
+  return [createScraperRow(initialProjectId ?? "")];
+}
+
+function buildProjectOptionLabel(project: ProjectOption) {
+  const segments = [project.name];
+  if (project.code?.trim()) {
+    segments.push(project.code.trim());
+  }
+  if (project.clientName?.trim()) {
+    segments.push(project.clientName.trim());
+  }
+  return segments.join(" | ");
 }
 
 function getRequesterSourceLabel(value: HokProjectPreset["requesterSource"]) {
@@ -113,10 +147,12 @@ function ExpenseSubmitButton({
   disabled,
   mode,
   selectedHokRowCount,
+  selectedScraperRowCount,
 }: {
   disabled: boolean;
-  mode: typeof STANDARD_MODE | typeof HOK_MODE;
+  mode: ExpenseInputMode;
   selectedHokRowCount: number;
+  selectedScraperRowCount: number;
 }) {
   const { pending } = useFormStatus();
   const isDisabled = disabled || pending;
@@ -135,6 +171,8 @@ function ExpenseSubmitButton({
         ? "Menyimpan..."
         : mode === HOK_MODE
           ? `Simpan HOK ${selectedHokRowCount > 0 ? `(${selectedHokRowCount} project)` : ""}`
+          : mode === SCRAPER_MODE
+            ? `Simpan Scraper ${selectedScraperRowCount > 0 ? `(${selectedScraperRowCount} project)` : ""}`
           : "Simpan Biaya"}
     </button>
   );
@@ -155,14 +193,27 @@ export function ExpenseInputModeFields({
   const rootRef = useRef<HTMLDivElement>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const [submissionToken] = useState(createExpenseSubmissionToken);
-  const [mode, setMode] = useState<typeof STANDARD_MODE | typeof HOK_MODE>(STANDARD_MODE);
+  const [mode, setMode] = useState<ExpenseInputMode>(STANDARD_MODE);
   const [hokQuery, setHokQuery] = useState("");
   const [hokRows, setHokRows] = useState<HokProjectRow[]>(() => createInitialHokRows(hokProjectPresets));
   const [hokError, setHokError] = useState("");
+  const [scraperRows, setScraperRows] = useState<ScraperRow[]>(() =>
+    createInitialScraperRows(initialProjectId),
+  );
+  const [scraperError, setScraperError] = useState("");
 
   useEffect(() => {
     setHokRows(createInitialHokRows(hokProjectPresets));
   }, [hokProjectPresets]);
+
+  useEffect(() => {
+    setScraperRows((prev) => {
+      if (prev.length > 0) {
+        return prev;
+      }
+      return createInitialScraperRows(initialProjectId);
+    });
+  }, [initialProjectId]);
 
   const validateHokRows = useCallback(() => {
     const selectedRows = hokRows.filter((row) => row.selected);
@@ -181,6 +232,37 @@ export function ExpenseInputModeFields({
     return "";
   }, [hokRows]);
 
+  const validateScraperRows = useCallback(() => {
+    const activeRows = scraperRows.filter(
+      (row) => row.projectId.trim().length > 0 || normalizeDigits(row.amountRaw).length > 0,
+    );
+    if (activeRows.length === 0) {
+      return "Tambahkan minimal satu project pada mode scraper.";
+    }
+
+    const incompleteRows = activeRows.filter((row) => {
+      const amount = Number(normalizeDigits(row.amountRaw));
+      return !row.projectId.trim() || !Number.isFinite(amount) || amount <= 0;
+    });
+    if (incompleteRows.length > 0) {
+      return "Setiap baris scraper wajib berisi project dan nominal yang valid.";
+    }
+
+    const duplicateProjectIds = Array.from(
+      activeRows.reduce((duplicates, row, index) => {
+        if (activeRows.findIndex((item) => item.projectId === row.projectId) !== index) {
+          duplicates.add(row.projectId);
+        }
+        return duplicates;
+      }, new Set<string>()),
+    );
+    if (duplicateProjectIds.length > 0) {
+      return "Project scraper tidak boleh dipilih lebih dari satu kali.";
+    }
+
+    return "";
+  }, [scraperRows]);
+
   useEffect(() => {
     if (!hokError || mode !== HOK_MODE) {
       return;
@@ -193,32 +275,52 @@ export function ExpenseInputModeFields({
   }, [hokError, mode, validateHokRows]);
 
   useEffect(() => {
+    if (!scraperError || mode !== SCRAPER_MODE) {
+      return;
+    }
+
+    const nextError = validateScraperRows();
+    if (!nextError) {
+      setScraperError("");
+    }
+  }, [mode, scraperError, validateScraperRows]);
+
+  useEffect(() => {
     const form = rootRef.current?.closest("form");
     if (!(form instanceof HTMLFormElement)) {
       return;
     }
 
     const handleSubmit = (event: Event) => {
-      if (mode !== HOK_MODE) {
+      if (mode === STANDARD_MODE) {
         setHokError("");
+        setScraperError("");
         window.sessionStorage.setItem(EXPENSE_PROJECT_REFOCUS_KEY, "1");
         return;
       }
 
-      const validationMessage = validateHokRows();
+      const validationMessage =
+        mode === HOK_MODE ? validateHokRows() : mode === SCRAPER_MODE ? validateScraperRows() : "";
       if (!validationMessage) {
         setHokError("");
+        setScraperError("");
         window.sessionStorage.setItem(EXPENSE_PROJECT_REFOCUS_KEY, "1");
         return;
       }
 
       event.preventDefault();
-      setHokError(validationMessage);
+      if (mode === HOK_MODE) {
+        setHokError(validationMessage);
+        setScraperError("");
+        return;
+      }
+      setScraperError(validationMessage);
+      setHokError("");
     };
 
     form.addEventListener("submit", handleSubmit);
     return () => form.removeEventListener("submit", handleSubmit);
-  }, [mode, validateHokRows]);
+  }, [mode, validateHokRows, validateScraperRows]);
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -277,11 +379,71 @@ export function ExpenseInputModeFields({
   const isHokSubmitDisabled =
     mode === HOK_MODE &&
     (selectedHokRows.length === 0 || hokRowsMissingAmount.length > 0 || hokProjectPresets.length === 0);
+  const activeScraperRows = useMemo(
+    () =>
+      scraperRows.filter(
+        (row) => row.projectId.trim().length > 0 || normalizeDigits(row.amountRaw).length > 0,
+      ),
+    [scraperRows],
+  );
+  const completedScraperRows = useMemo(
+    () =>
+      activeScraperRows.filter((row) => {
+        const amount = Number(normalizeDigits(row.amountRaw));
+        return row.projectId.trim().length > 0 && Number.isFinite(amount) && amount > 0;
+      }),
+    [activeScraperRows],
+  );
+  const scraperRowsInvalid = useMemo(
+    () =>
+      activeScraperRows.filter((row) => {
+        const amount = Number(normalizeDigits(row.amountRaw));
+        return !row.projectId.trim() || !Number.isFinite(amount) || amount <= 0;
+      }),
+    [activeScraperRows],
+  );
+  const scraperHasDuplicateProjects = useMemo(() => {
+    return activeScraperRows.some(
+      (row, index) => activeScraperRows.findIndex((item) => item.projectId === row.projectId) !== index,
+    );
+  }, [activeScraperRows]);
+  const scraperPayload = useMemo(
+    () =>
+      JSON.stringify(
+        completedScraperRows.map((row) => ({
+          id: row.id,
+          projectId: row.projectId,
+          projectName: projects.find((project) => project.id === row.projectId)?.name ?? "",
+          amount: normalizeDigits(row.amountRaw),
+        })),
+      ),
+    [completedScraperRows, projects],
+  );
+  const isScraperSubmitDisabled =
+    mode === SCRAPER_MODE &&
+    (completedScraperRows.length === 0 || scraperRowsInvalid.length > 0 || scraperHasDuplicateProjects);
 
   const updateHokRow = (projectId: string, patch: Partial<Pick<HokProjectRow, "selected" | "amountRaw">>) => {
     setHokRows((prev) =>
       prev.map((row) => (row.projectId === projectId ? { ...row, ...patch } : row)),
     );
+  };
+
+  const updateScraperRow = (rowId: string, patch: Partial<Pick<ScraperRow, "projectId" | "amountRaw">>) => {
+    setScraperRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, ...patch } : row)));
+  };
+
+  const appendScraperRow = () => {
+    setScraperRows((prev) => [...prev, createScraperRow()]);
+  };
+
+  const removeScraperRow = (rowId: string) => {
+    setScraperRows((prev) => {
+      if (prev.length <= 1) {
+        return [createScraperRow()];
+      }
+      return prev.filter((row) => row.id !== rowId);
+    });
   };
 
   const toggleAllVisibleHokRows = (selected: boolean) => {
@@ -332,6 +494,18 @@ export function ExpenseInputModeFields({
           >
             Mode HOK KMP Cianjur
           </button>
+          <button
+            type="button"
+            data-ui-button="true"
+            onClick={() => setMode(SCRAPER_MODE)}
+            className={`inline-flex items-center rounded-xl border px-3 py-2 text-xs font-semibold ${
+              mode === SCRAPER_MODE
+                ? "border-amber-700 bg-amber-700 text-white"
+                : "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+            }`}
+          >
+            Mode Input Scraper
+          </button>
         </div>
         {hokProjectPresets.length > 0 ? (
           <p className="mt-2 text-[11px] text-slate-500">
@@ -343,6 +517,11 @@ export function ExpenseInputModeFields({
             Belum ada project KMP Cianjur yang siap dipakai untuk mode HOK.
           </p>
         )}
+        <p className="mt-2 text-[11px] text-slate-500">
+          Mode scraper memakai <strong>nama pengajuan</strong>, <strong>tanggal</strong>,
+          <strong> kategori</strong>, dan <strong>keterangan</strong> yang sama, lalu project dan
+          nominal diisi manual per baris.
+        </p>
       </div>
 
       {mode === STANDARD_MODE ? (
@@ -509,6 +688,145 @@ export function ExpenseInputModeFields({
             </p>
           </div>
         </>
+      ) : mode === SCRAPER_MODE ? (
+        <>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+            Mode scraper aktif. Nama pengajuan, tanggal, kategori, dan keterangan akan sama untuk
+            semua baris yang Anda input.
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">Kategori</label>
+              <select name="category" defaultValue={defaultExpenseCategory} required>
+                {expenseCategories.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">Tanggal</label>
+              <input type="date" name="expense_date" defaultValue={today} required />
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">
+                Nama pengajuan
+              </label>
+              <input name="requester_name" placeholder="Contoh: Admin Scraper" required />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">Keterangan</label>
+              <input name="description" placeholder="Contoh: Hasil input scraper" required />
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-semibold text-slate-700">Daftar project mode scraper</p>
+                <p className="text-[11px] text-slate-500">
+                  Isi project dan nominal per baris. Satu project hanya boleh muncul sekali.
+                </p>
+              </div>
+              <button
+                type="button"
+                data-ui-button="true"
+                className="button-soft button-xs"
+                onClick={appendScraperRow}
+              >
+                Tambah Baris
+              </button>
+            </div>
+
+            <div className="mt-3 space-y-3">
+              {scraperRows.map((row, index) => {
+                const amountDisplay = row.amountRaw ? formatThousands(row.amountRaw) : "";
+                return (
+                  <div
+                    key={row.id}
+                    className="grid gap-3 rounded-xl border border-slate-200 bg-white p-3 lg:grid-cols-[minmax(0,1.5fr)_180px_auto]"
+                  >
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-500">
+                        Project #{index + 1}
+                      </label>
+                      <select
+                        value={row.projectId}
+                        onChange={(event) =>
+                          updateScraperRow(row.id, { projectId: event.currentTarget.value })
+                        }
+                      >
+                        <option value="">Pilih project</option>
+                        {projects.map((project) => (
+                          <option key={project.id} value={project.id}>
+                            {buildProjectOptionLabel(project)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-500">Nominal</label>
+                      <div className="flex overflow-hidden rounded-xl border border-slate-200 bg-white focus-within:border-amber-700 focus-within:shadow-[0_0_0_3px_rgba(217,119,6,0.14)]">
+                        <span className="inline-flex items-center border-r border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-600">
+                          Rp
+                        </span>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={amountDisplay}
+                          onChange={(event) =>
+                            updateScraperRow(row.id, {
+                              amountRaw: normalizeDigits(event.currentTarget.value),
+                            })
+                          }
+                          placeholder="Masukkan nominal"
+                          className="w-full !rounded-none !border-0 !shadow-none focus:!border-0 focus:!shadow-none"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-end">
+                      <button
+                        type="button"
+                        data-ui-button="true"
+                        onClick={() => removeScraperRow(row.id)}
+                        className="inline-flex w-full items-center justify-center rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+                      >
+                        Hapus Baris
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              <p className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600">
+                {completedScraperRows.length} project siap disimpan
+              </p>
+              <p className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600">
+                {scraperRowsInvalid.length} baris perlu dicek
+              </p>
+              <p className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600">
+                Total baris: {scraperRows.length}
+              </p>
+            </div>
+            {scraperHasDuplicateProjects ? (
+              <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+                Ada project yang dipilih lebih dari satu kali. Sisakan satu baris per project.
+              </p>
+            ) : null}
+          </div>
+
+          <input type="hidden" name="scraper_rows_json" value={scraperPayload} />
+          {scraperError ? (
+            <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+              {scraperError}
+            </p>
+          ) : null}
+        </>
       ) : (
         <>
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
@@ -657,9 +975,10 @@ export function ExpenseInputModeFields({
       )}
 
       <ExpenseSubmitButton
-        disabled={isHokSubmitDisabled}
+        disabled={isHokSubmitDisabled || isScraperSubmitDisabled}
         mode={mode}
         selectedHokRowCount={selectedHokRows.length}
+        selectedScraperRowCount={completedScraperRows.length}
       />
     </div>
   );

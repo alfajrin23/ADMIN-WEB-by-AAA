@@ -5,7 +5,11 @@ import { useMemo, useState } from "react";
 import { deleteManyExpensesAction, updateManyExpensesAction } from "@/app/actions";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { EditIcon, EyeIcon, SaveIcon, TrashIcon } from "@/components/icons";
-import { SPECIALIST_COST_PRESETS } from "@/lib/constants";
+import {
+  getCostCategoryLabel,
+  getCostCategoryStyle,
+  SPECIALIST_COST_PRESETS,
+} from "@/lib/constants";
 import { formatCurrency, formatDate } from "@/lib/format";
 import type { ProjectExpenseSearchResult } from "@/lib/types";
 
@@ -38,10 +42,29 @@ function toCompactSearchToken(value: string) {
     .toLowerCase();
 }
 
+function buildDateSearchTokens(value: string) {
+  const dateOnly = value.slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateOnly);
+  if (!match) {
+    return [dateOnly].filter((item) => item.length > 0);
+  }
+  const [, year, month, day] = match;
+  return [
+    dateOnly,
+    `${day}-${month}-${year}`,
+    `${day}/${month}/${year}`,
+    `${year}${month}${day}`,
+    `${day}${month}${year}`,
+    `${year}-${month}`,
+  ];
+}
+
 function buildLocalSearchHaystack(item: ProjectExpenseSearchResult) {
   const absoluteAmount = Math.round(Math.abs(item.amount));
   const groupedAmount = absoluteAmount.toLocaleString("id-ID");
   return [
+    ...buildDateSearchTokens(item.expenseDate),
+    `tanggal ${item.expenseDate}`,
     item.projectName,
     `project ${item.projectName}`,
     `proyek ${item.projectName}`,
@@ -52,6 +75,10 @@ function buildLocalSearchHaystack(item: ProjectExpenseSearchResult) {
     item.usageInfo ?? "",
     `penggunaan ${item.usageInfo ?? ""}`,
     `untuk ${item.usageInfo ?? ""}`,
+    item.recipientName ?? "",
+    `vendor ${item.recipientName ?? ""}`,
+    getCostCategoryLabel(item.category),
+    item.category,
     String(item.amount),
     String(absoluteAmount),
     groupedAmount,
@@ -81,6 +108,9 @@ export function ExpenseDetailSearchResults({
   bulkEditReturnTo = "/projects",
 }: ExpenseDetailSearchResultsProps) {
   const [filterQuery, setFilterQuery] = useState("");
+  const [filterProjectId, setFilterProjectId] = useState("");
+  const [filterCategory, setFilterCategory] = useState("");
+  const [filterDate, setFilterDate] = useState("");
   const [isBulkEditorOpen, setIsBulkEditorOpen] = useState(false);
   const [applyCategory, setApplyCategory] = useState(false);
   const [applyExpenseYear, setApplyExpenseYear] = useState(false);
@@ -89,24 +119,61 @@ export function ExpenseDetailSearchResults({
   const [applyUsageInfo, setApplyUsageInfo] = useState(false);
   const [applyRecipientName, setApplyRecipientName] = useState(false);
   const currentYear = useMemo(() => String(new Date().getFullYear()), []);
+  const projectOptions = useMemo(
+    () =>
+      Array.from(
+        results.reduce((map, item) => {
+          if (!map.has(item.projectId)) {
+            map.set(item.projectId, item.projectName);
+          }
+          return map;
+        }, new Map<string, string>()),
+      )
+        .map(([value, label]) => ({ value, label }))
+        .sort((a, b) => a.label.localeCompare(b.label, "id-ID")),
+    [results],
+  );
+  const categoryOptions = useMemo(() => {
+    const categoryMap = new Map<string, string>();
+    for (const item of expenseCategories) {
+      categoryMap.set(item.value, item.label);
+    }
+    for (const item of results) {
+      if (!categoryMap.has(item.category)) {
+        categoryMap.set(item.category, getCostCategoryLabel(item.category));
+      }
+    }
+    return Array.from(categoryMap.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, "id-ID"));
+  }, [expenseCategories, results]);
 
   const filteredResults = useMemo(() => {
     const normalizedFilterQuery = normalizeFilterQuery(filterQuery);
-    if (!normalizedFilterQuery) {
-      return results;
-    }
-
-    const queryDigits = getDigits(normalizedFilterQuery);
-    const queryTerms = normalizedFilterQuery.split(" ").filter((item) => item.length > 0);
-    const compactQuery = toCompactSearchToken(normalizedFilterQuery);
     return results.filter((item) => {
+      if (filterProjectId && item.projectId !== filterProjectId) {
+        return false;
+      }
+      if (filterCategory && item.category !== filterCategory) {
+        return false;
+      }
+      if (filterDate && item.expenseDate !== filterDate) {
+        return false;
+      }
+      if (!normalizedFilterQuery) {
+        return true;
+      }
+
       const haystack = buildLocalSearchHaystack(item);
       if (haystack.includes(normalizedFilterQuery)) {
         return true;
       }
+      const queryDigits = getDigits(normalizedFilterQuery);
+      const queryTerms = normalizedFilterQuery.split(" ").filter((term) => term.length > 0);
       if (queryTerms.length > 1 && queryTerms.every((term) => haystack.includes(term))) {
         return true;
       }
+      const compactQuery = toCompactSearchToken(normalizedFilterQuery);
       if (compactQuery && toCompactSearchToken(haystack).includes(compactQuery)) {
         return true;
       }
@@ -116,12 +183,13 @@ export function ExpenseDetailSearchResults({
       const amountDigits = getDigits(String(Math.round(Math.abs(item.amount))));
       return amountDigits.includes(queryDigits);
     });
-  }, [filterQuery, results]);
+  }, [filterCategory, filterDate, filterProjectId, filterQuery, results]);
   const filteredExpenseIds = useMemo(
     () => Array.from(new Set(filteredResults.map((item) => item.expenseId))),
     [filteredResults],
   );
   const isBulkActionDisabled = filteredExpenseIds.length === 0;
+  const hasLocalFilters = Boolean(filterQuery || filterProjectId || filterCategory || filterDate);
 
   return (
     <div className="space-y-2">
@@ -131,18 +199,47 @@ export function ExpenseDetailSearchResults({
           <input
             value={filterQuery}
             onChange={(event) => setFilterQuery(event.currentTarget.value)}
-            placeholder="Contoh: 1.500.000, semen, baut 8 mm"
+            placeholder="Cari tanggal, project, pengaju, keterangan, vendor, atau nominal"
             autoComplete="off"
           />
-          {filterQuery ? (
+          {hasLocalFilters ? (
             <button
               type="button"
-              onClick={() => setFilterQuery("")}
+              onClick={() => {
+                setFilterQuery("");
+                setFilterProjectId("");
+                setFilterCategory("");
+                setFilterDate("");
+              }}
               className="inline-flex items-center justify-center rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
             >
               Reset Filter
             </button>
           ) : null}
+        </div>
+        <div className="mt-2 grid gap-2 sm:grid-cols-3">
+          <select value={filterProjectId} onChange={(event) => setFilterProjectId(event.currentTarget.value)}>
+            <option value="">Semua project</option>
+            {projectOptions.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+          <select value={filterCategory} onChange={(event) => setFilterCategory(event.currentTarget.value)}>
+            <option value="">Semua kategori</option>
+            {categoryOptions.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+          <input
+            type="date"
+            value={filterDate}
+            onChange={(event) => setFilterDate(event.currentTarget.value)}
+            autoComplete="off"
+          />
         </div>
         <p className="mt-2 text-xs text-slate-500">
           Menampilkan {filteredResults.length} dari {results.length} data.
@@ -383,6 +480,13 @@ export function ExpenseDetailSearchResults({
                 <td className="border border-slate-200 px-3 py-2 align-top">{item.requesterName ?? "-"}</td>
                 <td className="border border-slate-200 px-3 py-2 align-top">
                   <p>{item.description ?? "-"}</p>
+                  <p className="mt-1">
+                    <span
+                      className={`inline-flex rounded-full px-2 py-1 text-[10px] font-semibold ${getCostCategoryStyle(item.category)}`}
+                    >
+                      {getCostCategoryLabel(item.category)}
+                    </span>
+                  </p>
                   <p className="text-xs text-slate-500">{item.usageInfo ?? "-"}</p>
                 </td>
                 <td

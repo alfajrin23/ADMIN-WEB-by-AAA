@@ -535,12 +535,18 @@ function getExpenseSubmissionToken(formData: FormData) {
 }
 
 function createExpenseMutationId(input: {
-  mode: "standard" | "hok_kmp_cianjur";
+  mode: "standard" | "hok_kmp_cianjur" | "scraper";
   submissionToken: string;
   projectId: string;
+  rowKey?: string;
 }) {
+  const seedParts = ["expense", input.mode, input.submissionToken.trim(), input.projectId.trim()];
+  const rowKey = input.rowKey?.trim();
+  if (rowKey) {
+    seedParts.push(rowKey);
+  }
   return createDeterministicUuid(
-    ["expense", input.mode, input.submissionToken.trim(), input.projectId.trim()].join("|"),
+    seedParts.join("|"),
   );
 }
 
@@ -1601,12 +1607,255 @@ async function createHokExpenseEntries(
   }
 }
 
+async function createScraperExpenseEntries(
+  actor: Awaited<ReturnType<typeof requireEditorActionUser>>,
+  formData: FormData,
+  successReturnTo: string | null,
+  errorReturnTo: string | null,
+) {
+  const rawRows = getString(formData, "scraper_rows_json");
+  let parsedRows: unknown;
+  try {
+    parsedRows = rawRows ? JSON.parse(rawRows) : [];
+  } catch {
+    if (errorReturnTo) {
+      redirect(withReturnMessage(errorReturnTo, "error", "Data mode scraper tidak valid."));
+    }
+    return;
+  }
+
+  if (!Array.isArray(parsedRows) || parsedRows.length === 0) {
+    if (errorReturnTo) {
+      redirect(withReturnMessage(errorReturnTo, "error", "Tambahkan minimal satu baris project scraper."));
+    }
+    return;
+  }
+
+  const requesterName = getString(formData, "requester_name");
+  const description = getString(formData, "description");
+  const parsedCategory = getParsedCategory(formData);
+  if (!requesterName || !description || !parsedCategory) {
+    if (errorReturnTo) {
+      redirect(
+        withReturnMessage(
+          errorReturnTo,
+          "error",
+          "Lengkapi nama pengajuan, kategori, dan keterangan untuk mode scraper.",
+        ),
+      );
+    }
+    return;
+  }
+
+  const specialistType = getSpecialistType(formData, parsedCategory);
+  const recipientName = getString(formData, "recipient_name") || null;
+  const usageInfo = getString(formData, "usage_info") || null;
+  const quantity = getNumber(formData, "quantity");
+  const unitLabel = getString(formData, "unit_label") || null;
+  const unitPrice = getNumber(formData, "unit_price");
+  const expenseDate = getString(formData, "expense_date") || new Date().toISOString().slice(0, 10);
+
+  const rows = parsedRows
+    .map((item, index) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+
+      const rowId =
+        typeof (item as { id?: unknown }).id === "string"
+          ? (item as { id: string }).id.trim()
+          : `row-${index + 1}`;
+      const projectId =
+        typeof (item as { projectId?: unknown }).projectId === "string"
+          ? (item as { projectId: string }).projectId.trim()
+          : "";
+      const projectName =
+        typeof (item as { projectName?: unknown }).projectName === "string"
+          ? (item as { projectName: string }).projectName.trim()
+          : "";
+      const amount = parsePositiveAmount((item as { amount?: unknown }).amount);
+      if (!projectId || amount <= 0) {
+        return null;
+      }
+
+      return {
+        rowId,
+        projectId,
+        projectName,
+        amount,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+  if (rows.length === 0) {
+    if (errorReturnTo) {
+      redirect(
+        withReturnMessage(
+          errorReturnTo,
+          "error",
+          "Setiap baris scraper wajib memiliki project dan nominal yang valid.",
+        ),
+      );
+    }
+    return;
+  }
+
+  const duplicateProjectIds = Array.from(
+    rows.reduce((duplicates, row, index) => {
+      if (rows.findIndex((item) => item.projectId === row.projectId) !== index) {
+        duplicates.add(row.projectId);
+      }
+      return duplicates;
+    }, new Set<string>()),
+  );
+  if (duplicateProjectIds.length > 0) {
+    if (errorReturnTo) {
+      redirect(
+        withReturnMessage(
+          errorReturnTo,
+          "error",
+          "Project pada mode scraper tidak boleh dipilih lebih dari satu kali dalam sekali simpan.",
+        ),
+      );
+    }
+    return;
+  }
+
+  const submissionToken = getExpenseSubmissionToken(formData);
+  const shouldSyncCategory = shouldSyncExpenseCategory(formData);
+  const basePayload = {
+    category: parsedCategory,
+    specialist_type: specialistType,
+    requester_name: requesterName,
+    description,
+    recipient_name: recipientName,
+    quantity,
+    unit_label: unitLabel,
+    usage_info: usageInfo,
+    unit_price: unitPrice,
+    expense_date: expenseDate,
+  };
+
+  if (activeDataSource === "excel") {
+    for (const row of rows) {
+      insertExcelExpense({
+        ...basePayload,
+        project_id: row.projectId,
+        amount: row.amount,
+      });
+    }
+  } else if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return;
+    }
+
+    const saveExpensePromise = supabase.from("project_expenses").upsert(
+      rows.map((row) => ({
+        id: createExpenseMutationId({
+          mode: "scraper",
+          submissionToken,
+          projectId: row.projectId,
+          rowKey: row.rowId,
+        }),
+        project_id: row.projectId,
+        category: basePayload.category,
+        specialist_type: basePayload.specialist_type,
+        requester_name: basePayload.requester_name,
+        description: basePayload.description,
+        recipient_name: basePayload.recipient_name,
+        quantity: basePayload.quantity,
+        unit_label: basePayload.unit_label,
+        usage_info: basePayload.usage_info,
+        unit_price: basePayload.unit_price,
+        amount: row.amount,
+        expense_date: basePayload.expense_date,
+      })),
+      {
+        onConflict: "id",
+      },
+    );
+    const expenseResult = shouldSyncCategory
+      ? (await Promise.all([upsertSupabaseCategories(supabase, [basePayload.category]), saveExpensePromise]))[1]
+      : await saveExpensePromise;
+    if (expenseResult.error) {
+      if (errorReturnTo) {
+        redirect(withReturnMessage(errorReturnTo, "error", "Gagal menyimpan data scraper. Silakan coba lagi."));
+      }
+      return;
+    }
+  } else if (activeDataSource === "firebase") {
+    const firestore = getFirestoreServerClient();
+    if (!firestore) {
+      return;
+    }
+    await runFirebaseWriteSafely(async () => {
+      const batch = firestore.batch();
+      for (const row of rows) {
+        const id = createExpenseMutationId({
+          mode: "scraper",
+          submissionToken,
+          projectId: row.projectId,
+          rowKey: row.rowId,
+        });
+        batch.set(
+          firestore.collection("project_expenses").doc(id),
+          {
+            id,
+            ...basePayload,
+            project_id: row.projectId,
+            amount: row.amount,
+            created_at: createTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+      await batch.commit();
+    });
+  } else {
+    return;
+  }
+
+  revalidateProjectPages();
+  revalidateExpenseCache();
+  revalidatePath("/logs");
+  queueActivityLog({
+    actor,
+    actionType: "create",
+    module: "expense",
+    description: `Menambah data biaya mode scraper ke ${rows.length} project.`,
+    payload: {
+      expense_mode: "scraper",
+      project_ids: rows.map((row) => row.projectId),
+      project_names: rows.map((row) => row.projectName || row.projectId),
+      requester_name: basePayload.requester_name,
+      description: basePayload.description,
+      category: basePayload.category,
+      expense_date: basePayload.expense_date,
+      total_amount: rows.reduce((sum, row) => sum + row.amount, 0),
+    },
+  });
+  if (successReturnTo) {
+    redirect(
+      withReturnMessage(
+        successReturnTo,
+        "success",
+        `Data scraper berhasil disimpan ke ${rows.length} project.`,
+      ),
+    );
+  }
+}
+
 export async function createExpenseAction(formData: FormData) {
   const actor = await requireEditorActionUser();
   const successReturnTo = getReturnTo(formData);
   const errorReturnTo = getReturnTo(formData, "error_return_to") ?? successReturnTo;
   if (getString(formData, "expense_input_mode") === "hok_kmp_cianjur") {
     await createHokExpenseEntries(actor, formData, successReturnTo, errorReturnTo);
+    return;
+  }
+  if (getString(formData, "expense_input_mode") === "scraper") {
+    await createScraperExpenseEntries(actor, formData, successReturnTo, errorReturnTo);
     return;
   }
 

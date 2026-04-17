@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { updateProjectAction } from "@/app/actions";
+import { updateProjectAction } from "@/app/actions/project.action";
 import { SaveIcon } from "@/components/icons";
 import { requireProjectEditorUser } from "@/lib/auth";
 import { PROJECT_STATUSES } from "@/lib/constants";

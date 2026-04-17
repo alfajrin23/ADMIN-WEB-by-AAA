@@ -1,4 +1,5 @@
 import { unstable_cache } from "next/cache";
+import { cache } from "react";
 import {
   isAttendanceDraftNote,
   parseAttendanceDraftNote,
@@ -446,7 +447,7 @@ async function getAllSupabaseRowsResult(
 const SUPABASE_CACHE_REVALIDATE_SECONDS = 60;
 const SUPABASE_PROJECT_SELECT =
   "id, name, code, client_name, start_date, status, created_at";
-const SUPABASE_EXPENSE_METADATA_SELECT = "project_id, requester_name, description, category";
+const SUPABASE_EXPENSE_METADATA_SELECT = "project_id, requester_name, description, usage_info, category";
 const SUPABASE_EXPENSE_FULL_SELECT =
   "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at";
 
@@ -480,7 +481,9 @@ const getCachedSupabaseProjectRows = unstable_cache(
   },
 );
 
-const getCachedSupabaseExpenseMetadata = unstable_cache(
+// Expense collections can exceed Next.js's 2 MB unstable_cache limit.
+// Use request memoization so repeated reads in one render still share the same fetch.
+const getCachedSupabaseExpenseMetadata = cache(
   async (): Promise<CachedSupabaseExpenseMetadata> => {
     const supabase = getSupabaseServerClient();
     if (!supabase) {
@@ -503,11 +506,6 @@ const getCachedSupabaseExpenseMetadata = unstable_cache(
       categoryRows: !categoryError && Array.isArray(categoryRows) ? categoryRows : [],
       expenseRows,
     };
-  },
-  ["supabase-expense-metadata"],
-  {
-    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
-    tags: [CACHE_TAGS.expenses, CACHE_TAGS.expenseCategories],
   },
 );
 
@@ -541,7 +539,7 @@ const getCachedSupabaseProjectRowById = unstable_cache(
   },
 );
 
-const getCachedSupabaseProjectExpenseRows = unstable_cache(
+const getCachedSupabaseProjectExpenseRows = cache(
   async (projectId: string): Promise<Record<string, unknown>[]> => {
     if (!projectId) {
       return [];
@@ -553,21 +551,11 @@ const getCachedSupabaseProjectExpenseRows = unstable_cache(
       (query) => query.eq("project_id", projectId).order("expense_date", { ascending: true }),
     );
   },
-  ["supabase-project-expenses-by-project"],
-  {
-    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
-    tags: [CACHE_TAGS.expenses],
-  },
 );
 
-const getCachedSupabaseAllExpenseRows = unstable_cache(
+const getCachedSupabaseAllExpenseRows = cache(
   async (): Promise<Record<string, unknown>[]> =>
     getAllSupabaseRows("project_expenses", SUPABASE_EXPENSE_FULL_SELECT),
-  ["supabase-all-expenses"],
-  {
-    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
-    tags: [CACHE_TAGS.expenses],
-  },
 );
 
 const getCachedSupabaseAllAttendanceRows = unstable_cache(
@@ -1491,24 +1479,35 @@ type KmpCianjurHokProjectPreset = {
   defaultSelected: boolean;
 };
 
-const getCachedSupabaseKmpCianjurHokProjectPresets = unstable_cache(
+const getSupabaseKmpCianjurHokProjectPresetsCached = unstable_cache(
   async (): Promise<KmpCianjurHokProjectPreset[]> => {
-    const [projects, expenseRows] = await Promise.all([
+    const [projects, metadata] = await Promise.all([
       getCachedSupabaseProjects(),
-      getCachedSupabaseAllExpenseRows(),
+      getCachedSupabaseExpenseMetadata(),
     ]);
     const projectNameMap = Object.fromEntries(
       projects.map((project) => [project.id, project.name] as const),
     );
-    const expenses = expenseRows.map((row) => mapExpense(row, projectNameMap[String(row.project_id)]));
+    const expenses = metadata.expenseRows.map((row) => ({
+      projectId: String(row.project_id ?? ""),
+      projectName: projectNameMap[String(row.project_id)],
+      category: toCategorySlug(String(row.category ?? "")) || "operasional",
+      requesterName: typeof row.requester_name === "string" ? row.requester_name : null,
+      description: typeof row.description === "string" ? row.description : null,
+      usageInfo: typeof row.usage_info === "string" ? row.usage_info : null,
+    } as ExpenseEntry));
     return buildKmpCianjurHokProjectPresets(projects, expenses);
   },
-  ["supabase-kmp-cianjur-hok-project-presets"],
+  ["supabase-kmp-hok-presets-v2"],
   {
     revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
     tags: [CACHE_TAGS.projects, CACHE_TAGS.expenses],
-  },
+  }
 );
+
+async function getSupabaseKmpCianjurHokProjectPresets(): Promise<KmpCianjurHokProjectPreset[]> {
+  return getSupabaseKmpCianjurHokProjectPresetsCached();
+}
 
 export async function getKmpCianjurHokProjectPresets(): Promise<
   KmpCianjurHokProjectPreset[]
@@ -1522,7 +1521,7 @@ export async function getKmpCianjurHokProjectPresets(): Promise<
   }
 
   if (activeDataSource === "supabase") {
-    return getCachedSupabaseKmpCianjurHokProjectPresets();
+    return getSupabaseKmpCianjurHokProjectPresets();
   }
 
   if (activeDataSource === "firebase") {
@@ -2725,34 +2724,29 @@ function buildDashboardDataFromCollections(input: {
   };
 }
 
-const getCachedSupabaseDashboardData = unstable_cache(
-  async (): Promise<DashboardData> => {
-    const [projects, expenseRows, attendanceRows, categoryOptions] = await Promise.all([
-      getCachedSupabaseProjects(),
-      getCachedSupabaseAllExpenseRows(),
-      getCachedSupabaseAllAttendanceRows(),
-      getExpenseCategories(),
-    ]);
+// Tidak di-wrap dengan unstable_cache karena sub-queries sudah di-cache.
+// Expenses + attendance combined > 2MB → melebihi batas cache Next.js.
+async function getSupabaseDashboardData(): Promise<DashboardData> {
+  const [projects, expenseRows, attendanceRows, categoryOptions] = await Promise.all([
+    getCachedSupabaseProjects(),
+    getCachedSupabaseAllExpenseRows(),
+    getCachedSupabaseAllAttendanceRows(),
+    getExpenseCategories(),
+  ]);
 
-    const projectNameMap = Object.fromEntries(
-      projects.map((project) => [project.id, project.name] as const),
-    );
-    const expenses = expenseRows.map((row) => mapExpense(row, projectNameMap[String(row.project_id)]));
-    const attendance = attendanceRows.map((row) => mapAttendance(row));
+  const projectNameMap = Object.fromEntries(
+    projects.map((project) => [project.id, project.name] as const),
+  );
+  const expenses = expenseRows.map((row) => mapExpense(row, projectNameMap[String(row.project_id)]));
+  const attendance = attendanceRows.map((row) => mapAttendance(row));
 
-    return buildDashboardDataFromCollections({
-      projects,
-      expenses,
-      attendance,
-      categoryOptions,
-    });
-  },
-  ["supabase-dashboard-data-v2"],
-  {
-    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
-    tags: [CACHE_TAGS.projects, CACHE_TAGS.expenses, CACHE_TAGS.expenseCategories, CACHE_TAGS.attendance],
-  },
-);
+  return buildDashboardDataFromCollections({
+    projects,
+    expenses,
+    attendance,
+    categoryOptions,
+  });
+}
 
 export async function getDashboardData(): Promise<DashboardData> {
   if (activeDataSource === "excel") {
@@ -2771,7 +2765,7 @@ export async function getDashboardData(): Promise<DashboardData> {
   }
 
   if (activeDataSource === "supabase") {
-    return getCachedSupabaseDashboardData();
+    return getSupabaseDashboardData();
   }
 
   if (activeDataSource === "firebase") {

@@ -14,15 +14,55 @@ function normalizeSupabaseKey(value: string | undefined) {
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
 const supabaseAnonKey = normalizeSupabaseKey(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
 
-export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+export const isSupabaseConfigured = Boolean(supabaseUrl && (supabaseServiceRoleKey || supabaseAnonKey));
 
 type SupabaseCompatResult<T> = {
   data: T | null;
   error: unknown;
 };
 
+let _warnedNoServiceRole = false;
+
+/**
+ * Server client untuk operasi WRITE (insert/update/delete).
+ * Menggunakan service_role key yang bypass RLS.
+ * Jika service_role belum diset, fallback ke anon key dengan warning.
+ */
 export function getSupabaseServerClient() {
+  if (!supabaseUrl) {
+    return null;
+  }
+
+  const key = supabaseServiceRoleKey || supabaseAnonKey;
+  if (!key) {
+    return null;
+  }
+
+  if (!supabaseServiceRoleKey && !_warnedNoServiceRole) {
+    _warnedNoServiceRole = true;
+    console.warn(
+      "[supabase] SUPABASE_SERVICE_ROLE_KEY belum diset. " +
+      "Menggunakan anon key sebagai fallback. " +
+      "Dengan RLS yang ketat, operasi write AKAN GAGAL. " +
+      "Segera set SUPABASE_SERVICE_ROLE_KEY di environment variables."
+    );
+  }
+
+  return createClient(supabaseUrl, key, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+}
+
+/**
+ * Read-only client menggunakan anon key.
+ * Cocok untuk operasi SELECT pada tabel dengan RLS select policy terbuka.
+ */
+export function getSupabaseReadClient() {
   if (!supabaseUrl || !supabaseAnonKey) {
     return null;
   }

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { deleteAttendanceAction } from "@/app/actions";
+import { deleteAttendanceAction } from "@/app/actions/attendance.action";
 import { AttendanceProjectSelectionToggle } from "@/components/attendance-project-selection-toggle";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { EditIcon, EyeIcon, TrashIcon } from "@/components/icons";

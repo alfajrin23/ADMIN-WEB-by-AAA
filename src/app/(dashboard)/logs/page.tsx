@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { updateActivityLogAction } from "@/app/actions";
+import { updateActivityLogAction } from "@/app/actions/log.action";
 import { updateUserRoleAction } from "@/app/auth-actions";
 import { CloseIcon, EditIcon, EyeIcon, FilterIcon, RolesIcon, SaveIcon } from "@/components/icons";
 import { type ActivityLog, getActivityLogs } from "@/lib/activity-logs";

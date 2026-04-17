@@ -1,6 +1,9 @@
 import "server-only";
 
-import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
+import { promisify } from "node:util";
+
+const scryptAsync = promisify(scrypt);
 import { unstable_cache } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -90,11 +93,18 @@ const getCachedUserRowById = unstable_cache(
   },
 );
 
+let _sessionSecretWarned = false;
+
 function getSessionSecret() {
-  return (
-    process.env.AUTH_SESSION_SECRET?.trim() ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ||
-    "admin-web-default-secret"
+  const secret = process.env.AUTH_SESSION_SECRET?.trim();
+  if (secret && secret.length >= 16) {
+    return secret;
+  }
+
+  // Hard error: tidak ada secret sama sekali atau terlalu pendek
+  throw new Error(
+    "AUTH_SESSION_SECRET wajib diset di environment variables dengan minimal 16 karakter. " +
+    "Ini penting untuk keamanan session, tidak ada fallback anon key."
   );
 }
 
@@ -194,22 +204,34 @@ export function isValidUsername(value: string) {
 }
 
 export function isValidPassword(value: string) {
-  return value.length >= 6;
+  if (value.length < 8) {
+    return false;
+  }
+  // Minimal harus mengandung huruf dan angka
+  const hasLetter = /[a-zA-Z]/.test(value);
+  const hasDigit = /[0-9]/.test(value);
+  return hasLetter && hasDigit;
 }
 
-export function hashPassword(password: string) {
+export function getPasswordRequirementText() {
+  return "Minimal 8 karakter, harus mengandung huruf dan angka.";
+}
+
+export async function hashPassword(password: string) {
   const salt = randomBytes(16).toString("base64url");
-  const hashed = scryptSync(password, salt, 64).toString("base64url");
+  const hashedBuffer = await scryptAsync(password, salt, 64) as Buffer;
+  const hashed = hashedBuffer.toString("base64url");
   return `scrypt$${salt}$${hashed}`;
 }
 
-export function verifyPassword(password: string, storedHash: string) {
+export async function verifyPassword(password: string, storedHash: string) {
   const [algo, salt, hash] = storedHash.split("$");
   if (algo !== "scrypt" || !salt || !hash) {
     return false;
   }
 
-  const computed = scryptSync(password, salt, 64).toString("base64url");
+  const computedBuffer = await scryptAsync(password, salt, 64) as Buffer;
+  const computed = computedBuffer.toString("base64url");
   if (computed.length !== hash.length) {
     return false;
   }
@@ -291,7 +313,7 @@ export async function getCurrentUser(): Promise<AppUser | null> {
 export async function requireAuthUser() {
   const user = await getCurrentUser();
   if (!user) {
-    redirect("/login");
+    redirect("/login?clear_session=1");
   }
   return user;
 }

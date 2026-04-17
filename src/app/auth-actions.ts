@@ -8,6 +8,7 @@ import {
   createUserSession,
   clearUserSession,
   getAppUsers,
+  getPasswordRequirementText,
   hashPassword,
   isAppRole,
   isValidPassword,
@@ -27,6 +28,7 @@ import {
   type AppPermissionMatrix,
 } from "@/lib/roles";
 import { getSupabaseServerClient } from "@/lib/supabase";
+import { checkRateLimit, LOGIN_RATE_LIMIT, REGISTER_RATE_LIMIT } from "@/lib/rate-limit";
 
 function getString(formData: FormData, key: string) {
   const value = formData.get(key);
@@ -126,33 +128,76 @@ export async function loginAction(formData: FormData) {
     redirect(toErrorRedirect("/login", "Username dan password wajib diisi."));
   }
 
+  // Rate limiting: max 5 login per 15 menit per username
+  const rateLimitResult = checkRateLimit(`login:${username}`, LOGIN_RATE_LIMIT);
+  if (!rateLimitResult.success) {
+    const resetMinutes = Math.ceil((rateLimitResult.resetAt - Date.now()) / 60000);
+    redirect(
+      toErrorRedirect(
+        "/login",
+        `Terlalu banyak percobaan login. Coba lagi dalam ${resetMinutes} menit.`,
+      ),
+    );
+  }
+
   const supabase = getSupabaseServerClient();
   if (!supabase) {
     redirect(toErrorRedirect("/login", "Supabase belum terkonfigurasi."));
   }
 
-  const { data } = await supabase
-    .from("app_users")
-    .select("id, full_name, username, role, password_hash, created_at")
-    .eq("username", username)
-    .maybeSingle();
+  let foundUser: AuthUserRow | null = null;
+  try {
+    const { data, error } = await supabase
+      .from("app_users")
+      .select("id, full_name, username, role, password_hash, created_at")
+      .eq("username", username)
+      .maybeSingle();
 
-  const foundUser = data as AuthUserRow | null;
-  if (
-    !foundUser ||
-    !isAppRole(foundUser.role) ||
-    !verifyPassword(password, foundUser.password_hash)
-  ) {
+    if (error) {
+      console.warn("[login] Gagal query user dari database.", error.message);
+      redirect(toErrorRedirect("/login", "Terjadi kesalahan saat login. Silakan coba lagi."));
+    }
+
+    foundUser = data as AuthUserRow | null;
+  } catch (err) {
+    // Re-throw Next.js redirect errors
+    if (err && typeof err === "object" && "digest" in err) {
+      throw err;
+    }
+    console.warn("[login] Exception saat query user.", err);
+    redirect(toErrorRedirect("/login", "Terjadi kesalahan saat login. Silakan coba lagi."));
+  }
+
+  if (!foundUser || !foundUser.password_hash) {
     redirect(toErrorRedirect("/login", "Username atau password salah."));
   }
 
-  await createUserSession(foundUser.id);
+  // Validasi role — terima semua role yang dikenal (built-in maupun custom)
+  // Custom roles menyimpan derivedRole (dev/staff/viewer) di kolom role
+  const userRole = foundUser.role;
+  if (!userRole) {
+    redirect(toErrorRedirect("/login", "Akun belum memiliki role. Hubungi admin."));
+  }
+
+  const isPasswordValid = await verifyPassword(password, foundUser.password_hash);
+  if (!isPasswordValid) {
+    redirect(toErrorRedirect("/login", "Username atau password salah."));
+  }
+
+  try {
+    await createUserSession(foundUser.id);
+  } catch (err) {
+    console.warn("[login] Gagal membuat session.", err);
+    redirect(toErrorRedirect("/login", "Gagal membuat sesi login. Silakan coba lagi."));
+  }
+
+  const safeRole = isAppRole(userRole) ? userRole : "viewer";
   queueActivityLog({
     actor: {
       id: foundUser.id,
       fullName: foundUser.full_name,
       username: foundUser.username,
-      role: foundUser.role,
+      role: safeRole,
       createdAt: foundUser.created_at,
     },
     actionType: "login",
@@ -169,6 +214,18 @@ export async function registerAction(formData: FormData) {
   const password = getString(formData, "password");
   const passwordConfirm = getString(formData, "password_confirm");
 
+  // Rate limiting: max 3 register per 30 menit per username
+  const rateLimitResult = checkRateLimit(`register:${username}`, REGISTER_RATE_LIMIT);
+  if (!rateLimitResult.success) {
+    const resetMinutes = Math.ceil((rateLimitResult.resetAt - Date.now()) / 60000);
+    redirect(
+      toErrorRedirect(
+        "/register",
+        `Terlalu banyak percobaan registrasi. Coba lagi dalam ${resetMinutes} menit.`,
+      ),
+    );
+  }
+
   if (fullName.length < 3) {
     redirect(toErrorRedirect("/register", "Nama minimal 3 karakter."));
   }
@@ -181,7 +238,7 @@ export async function registerAction(formData: FormData) {
     );
   }
   if (!isValidPassword(password)) {
-    redirect(toErrorRedirect("/register", "Password minimal 6 karakter."));
+    redirect(toErrorRedirect("/register", getPasswordRequirementText()));
   }
   if (password !== passwordConfirm) {
     redirect(toErrorRedirect("/register", "Konfirmasi password tidak sama."));
@@ -211,7 +268,7 @@ export async function registerAction(formData: FormData) {
     .insert({
       full_name: fullName,
       username,
-      password_hash: hashPassword(password),
+      password_hash: await hashPassword(password),
       role: assignedRole,
     })
     .select("id, full_name, username, role, created_at")

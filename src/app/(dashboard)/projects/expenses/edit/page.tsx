@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { deleteExpenseAction, updateExpenseAction } from "@/app/actions";
+import { deleteExpenseAction } from "@/app/actions/expense.action";
+import { updateExpenseAction } from "@/app/actions/expense.action";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { SaveIcon, TrashIcon } from "@/components/icons";
 import { RupiahInput } from "@/components/rupiah-input";

@@ -1,13 +1,9 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
-  createExpenseAction,
-  createProjectAction,
-  deleteProjectAction,
-  deleteSelectedProjectsAction,
-  importExcelTemplateAction,
-  updateManyProjectsAction,
-} from "@/app/actions";
+  createExpenseAction } from "@/app/actions/expense.action";
+import { createProjectAction, deleteProjectAction, deleteSelectedProjectsAction, updateManyProjectsAction } from "@/app/actions/project.action";
+import { importExcelTemplateAction } from "@/app/actions/import.action";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { ExpenseInputModeFields } from "@/components/expense-input-mode-fields";
 import { ExpenseDetailSearchForm } from "@/components/expense-detail-search-form";
@@ -288,15 +284,21 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
     }
     descriptionSuggestionsByClientScope.set(scopeKey, current);
   }
+  const sortedDescriptionsByScopeKey = new Map<string, string[]>();
+  for (const [scopeKey, set] of descriptionSuggestionsByClientScope.entries()) {
+    sortedDescriptionsByScopeKey.set(
+      scopeKey,
+      Array.from(set).sort((a, b) => a.localeCompare(b, "id-ID")),
+    );
+  }
+
   const descriptionSuggestionsForProjects = Object.fromEntries(
     projects.map((project) => {
       const scopeKey =
         projectClientScopeKeyById.get(project.id) ?? `project:${project.id.toLowerCase()}`;
       return [
         project.id,
-        Array.from(descriptionSuggestionsByClientScope.get(scopeKey) ?? []).sort((a, b) =>
-          a.localeCompare(b, "id-ID"),
-        ),
+        sortedDescriptionsByScopeKey.get(scopeKey) ?? [],
       ] as const;
     }),
   );

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { deleteAttendanceAction, updateAttendanceAction } from "@/app/actions";
+import { deleteAttendanceAction } from "@/app/actions/attendance.action";
+import { updateAttendanceAction } from "@/app/actions/attendance.action";
 import { AttendanceSubmitButton } from "@/components/attendance-submit-button";
 import { AttendanceWorkerNameInput } from "@/components/attendance-worker-name-input";
 import { ConfirmActionButton } from "@/components/confirm-action-button";

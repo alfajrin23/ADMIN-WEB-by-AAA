@@ -147,121 +147,170 @@ create index if not exists idx_attendance_project_id_attendance_date on public.a
 create index if not exists idx_payroll_resets_project_id on public.payroll_resets(project_id);
 create index if not exists idx_payroll_resets_paid_until_date on public.payroll_resets(paid_until_date desc);
 
+-- ============================================================
+-- ROW LEVEL SECURITY (RLS)
+-- ============================================================
+-- Strategi:
+--   • service_role (server-side) mendapat akses penuh otomatis (bypass RLS).
+--   • anon key hanya mendapat akses SELECT pada tabel data operasional.
+--   • Tabel sensitif (app_users, activity_logs) TIDAK bisa diakses via anon.
+--   • Semua operasi INSERT/UPDATE/DELETE dilakukan via service_role di server.
+-- ============================================================
+
 alter table public.projects enable row level security;
 alter table public.expense_categories enable row level security;
 alter table public.project_expenses enable row level security;
 alter table public.attendance_records enable row level security;
 alter table public.payroll_resets enable row level security;
 
+-- Projects: anon bisa SELECT, write hanya via service_role
 drop policy if exists "projects_select_all" on public.projects;
 create policy "projects_select_all"
 on public.projects
 for select
 using (true);
 drop policy if exists "projects_insert_all" on public.projects;
-create policy "projects_insert_all"
+drop policy if exists "projects_insert_service" on public.projects;
+create policy "projects_insert_service"
 on public.projects
 for insert
+to service_role
 with check (true);
 drop policy if exists "projects_update_all" on public.projects;
-create policy "projects_update_all"
+drop policy if exists "projects_update_service" on public.projects;
+create policy "projects_update_service"
 on public.projects
 for update
+to service_role
 using (true)
 with check (true);
 drop policy if exists "projects_delete_all" on public.projects;
-create policy "projects_delete_all"
+drop policy if exists "projects_delete_service" on public.projects;
+create policy "projects_delete_service"
 on public.projects
 for delete
+to service_role
 using (true);
 
+-- Expense categories: anon bisa SELECT, write hanya via service_role
 drop policy if exists "expense_categories_select_all" on public.expense_categories;
 create policy "expense_categories_select_all"
 on public.expense_categories
 for select
 using (true);
 drop policy if exists "expense_categories_insert_all" on public.expense_categories;
-create policy "expense_categories_insert_all"
+drop policy if exists "expense_categories_insert_service" on public.expense_categories;
+create policy "expense_categories_insert_service"
 on public.expense_categories
 for insert
+to service_role
 with check (true);
 drop policy if exists "expense_categories_update_all" on public.expense_categories;
-create policy "expense_categories_update_all"
+drop policy if exists "expense_categories_update_service" on public.expense_categories;
+create policy "expense_categories_update_service"
 on public.expense_categories
 for update
+to service_role
 using (true)
 with check (true);
 drop policy if exists "expense_categories_delete_all" on public.expense_categories;
-create policy "expense_categories_delete_all"
+drop policy if exists "expense_categories_delete_service" on public.expense_categories;
+create policy "expense_categories_delete_service"
 on public.expense_categories
 for delete
+to service_role
 using (true);
 
+-- Project expenses: anon bisa SELECT, write hanya via service_role
 drop policy if exists "project_expenses_select_all" on public.project_expenses;
 create policy "project_expenses_select_all"
 on public.project_expenses
 for select
 using (true);
 drop policy if exists "project_expenses_insert_all" on public.project_expenses;
-create policy "project_expenses_insert_all"
+drop policy if exists "project_expenses_insert_service" on public.project_expenses;
+create policy "project_expenses_insert_service"
 on public.project_expenses
 for insert
+to service_role
 with check (true);
 drop policy if exists "project_expenses_update_all" on public.project_expenses;
-create policy "project_expenses_update_all"
+drop policy if exists "project_expenses_update_service" on public.project_expenses;
+create policy "project_expenses_update_service"
 on public.project_expenses
 for update
+to service_role
 using (true)
 with check (true);
 drop policy if exists "project_expenses_delete_all" on public.project_expenses;
-create policy "project_expenses_delete_all"
+drop policy if exists "project_expenses_delete_service" on public.project_expenses;
+create policy "project_expenses_delete_service"
 on public.project_expenses
 for delete
+to service_role
 using (true);
 
+-- Attendance records: anon bisa SELECT, write hanya via service_role
 drop policy if exists "attendance_records_select_all" on public.attendance_records;
 create policy "attendance_records_select_all"
 on public.attendance_records
 for select
 using (true);
 drop policy if exists "attendance_records_insert_all" on public.attendance_records;
-create policy "attendance_records_insert_all"
+drop policy if exists "attendance_records_insert_service" on public.attendance_records;
+create policy "attendance_records_insert_service"
 on public.attendance_records
 for insert
+to service_role
 with check (true);
 drop policy if exists "attendance_records_update_all" on public.attendance_records;
-create policy "attendance_records_update_all"
+drop policy if exists "attendance_records_update_service" on public.attendance_records;
+create policy "attendance_records_update_service"
 on public.attendance_records
 for update
+to service_role
 using (true)
 with check (true);
 drop policy if exists "attendance_records_delete_all" on public.attendance_records;
-create policy "attendance_records_delete_all"
+drop policy if exists "attendance_records_delete_service" on public.attendance_records;
+create policy "attendance_records_delete_service"
 on public.attendance_records
 for delete
+to service_role
 using (true);
 
+-- Payroll resets: anon bisa SELECT, write hanya via service_role
 drop policy if exists "payroll_resets_select_all" on public.payroll_resets;
 create policy "payroll_resets_select_all"
 on public.payroll_resets
 for select
 using (true);
 drop policy if exists "payroll_resets_insert_all" on public.payroll_resets;
-create policy "payroll_resets_insert_all"
+drop policy if exists "payroll_resets_insert_service" on public.payroll_resets;
+create policy "payroll_resets_insert_service"
 on public.payroll_resets
 for insert
+to service_role
 with check (true);
 drop policy if exists "payroll_resets_update_all" on public.payroll_resets;
-create policy "payroll_resets_update_all"
+drop policy if exists "payroll_resets_update_service" on public.payroll_resets;
+create policy "payroll_resets_update_service"
 on public.payroll_resets
 for update
+to service_role
 using (true)
 with check (true);
 drop policy if exists "payroll_resets_delete_all" on public.payroll_resets;
-create policy "payroll_resets_delete_all"
+drop policy if exists "payroll_resets_delete_service" on public.payroll_resets;
+create policy "payroll_resets_delete_service"
 on public.payroll_resets
 for delete
+to service_role
 using (true);
+
+-- ============================================================
+-- USER & AUTH TABLES
+-- ============================================================
 
 create table if not exists public.app_users (
   id uuid primary key default gen_random_uuid(),
@@ -320,95 +369,139 @@ create index if not exists idx_role_permissions_module on public.role_permission
 create index if not exists idx_activity_logs_created_at on public.activity_logs(created_at desc);
 create index if not exists idx_activity_logs_actor_id on public.activity_logs(actor_id);
 
+-- ============================================================
+-- RLS UNTUK TABEL SENSITIF
+-- ============================================================
+-- app_users, app_roles, role_permissions, activity_logs
+-- HANYA bisa diakses via service_role (server-side).
+-- anon key TIDAK bisa membaca password_hash dll.
+-- ============================================================
+
 alter table public.app_users enable row level security;
 alter table public.app_roles enable row level security;
 alter table public.role_permissions enable row level security;
 alter table public.activity_logs enable row level security;
 
+-- app_users: HANYA service_role
 drop policy if exists "app_users_select_all" on public.app_users;
-create policy "app_users_select_all"
+drop policy if exists "app_users_select_service" on public.app_users;
+create policy "app_users_select_service"
 on public.app_users
 for select
+to service_role
 using (true);
 drop policy if exists "app_users_insert_all" on public.app_users;
-create policy "app_users_insert_all"
+drop policy if exists "app_users_insert_service" on public.app_users;
+create policy "app_users_insert_service"
 on public.app_users
 for insert
+to service_role
 with check (true);
 drop policy if exists "app_users_update_all" on public.app_users;
-create policy "app_users_update_all"
+drop policy if exists "app_users_update_service" on public.app_users;
+create policy "app_users_update_service"
 on public.app_users
 for update
+to service_role
 using (true)
 with check (true);
 drop policy if exists "app_users_delete_all" on public.app_users;
-create policy "app_users_delete_all"
+drop policy if exists "app_users_delete_service" on public.app_users;
+create policy "app_users_delete_service"
 on public.app_users
 for delete
+to service_role
 using (true);
 
+-- app_roles: HANYA service_role
 drop policy if exists "app_roles_select_all" on public.app_roles;
-create policy "app_roles_select_all"
+drop policy if exists "app_roles_select_service" on public.app_roles;
+create policy "app_roles_select_service"
 on public.app_roles
 for select
+to service_role
 using (true);
 drop policy if exists "app_roles_insert_all" on public.app_roles;
-create policy "app_roles_insert_all"
+drop policy if exists "app_roles_insert_service" on public.app_roles;
+create policy "app_roles_insert_service"
 on public.app_roles
 for insert
+to service_role
 with check (true);
 drop policy if exists "app_roles_update_all" on public.app_roles;
-create policy "app_roles_update_all"
+drop policy if exists "app_roles_update_service" on public.app_roles;
+create policy "app_roles_update_service"
 on public.app_roles
 for update
+to service_role
 using (true)
 with check (true);
 drop policy if exists "app_roles_delete_all" on public.app_roles;
-create policy "app_roles_delete_all"
+drop policy if exists "app_roles_delete_service" on public.app_roles;
+create policy "app_roles_delete_service"
 on public.app_roles
 for delete
+to service_role
 using (true);
 
+-- role_permissions: HANYA service_role
 drop policy if exists "role_permissions_select_all" on public.role_permissions;
-create policy "role_permissions_select_all"
+drop policy if exists "role_permissions_select_service" on public.role_permissions;
+create policy "role_permissions_select_service"
 on public.role_permissions
 for select
+to service_role
 using (true);
 drop policy if exists "role_permissions_insert_all" on public.role_permissions;
-create policy "role_permissions_insert_all"
+drop policy if exists "role_permissions_insert_service" on public.role_permissions;
+create policy "role_permissions_insert_service"
 on public.role_permissions
 for insert
+to service_role
 with check (true);
 drop policy if exists "role_permissions_update_all" on public.role_permissions;
-create policy "role_permissions_update_all"
+drop policy if exists "role_permissions_update_service" on public.role_permissions;
+create policy "role_permissions_update_service"
 on public.role_permissions
 for update
+to service_role
 using (true)
 with check (true);
 drop policy if exists "role_permissions_delete_all" on public.role_permissions;
-create policy "role_permissions_delete_all"
+drop policy if exists "role_permissions_delete_service" on public.role_permissions;
+create policy "role_permissions_delete_service"
 on public.role_permissions
 for delete
+to service_role
 using (true);
 
+-- activity_logs: HANYA service_role
 drop policy if exists "activity_logs_select_all" on public.activity_logs;
-create policy "activity_logs_select_all"
+drop policy if exists "activity_logs_select_service" on public.activity_logs;
+create policy "activity_logs_select_service"
 on public.activity_logs
 for select
+to service_role
 using (true);
 drop policy if exists "activity_logs_insert_all" on public.activity_logs;
-create policy "activity_logs_insert_all"
+drop policy if exists "activity_logs_insert_service" on public.activity_logs;
+create policy "activity_logs_insert_service"
 on public.activity_logs
 for insert
+to service_role
 with check (true);
 drop policy if exists "activity_logs_update_all" on public.activity_logs;
-create policy "activity_logs_update_all"
+drop policy if exists "activity_logs_update_service" on public.activity_logs;
+create policy "activity_logs_update_service"
 on public.activity_logs
 for update
+to service_role
 using (true)
 with check (true);
 drop policy if exists "activity_logs_delete_all" on public.activity_logs;
-create policy "activity_logs_delete_all"
+drop policy if exists "activity_logs_delete_service" on public.activity_logs;
+create policy "activity_logs_delete_service"
 on public.activity_logs
 for delete
+to service_role
 using (true);

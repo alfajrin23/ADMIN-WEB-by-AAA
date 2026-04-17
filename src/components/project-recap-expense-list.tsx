@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { deleteExpenseAction } from "@/app/actions";
+import { deleteExpenseAction } from "@/app/actions/expense.action";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { EditIcon, TrashIcon } from "@/components/icons";
 import {

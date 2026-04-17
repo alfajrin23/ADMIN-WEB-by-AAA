@@ -8,9 +8,11 @@
     "start": "next start",
     "lint": "eslint",
     "import:attendance-workers": "node scripts/import-attendance-workers.mjs",
-    "import:worker-presets": "node scripts/import-attendance-workers.mjs",
+    "import:worker-presets": "node scripts/import-attendance-worker-presets.mjs",
     "migrate:firebase": "node scripts/migrate-to-firebase.mjs",
-    "firebase:init": "node scripts/firebase-init-firestore.mjs"
+    "firebase:init": "node scripts/firebase-init-firestore.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.95.3",
@@ -27,9 +29,12 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6.0.1",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "ts-morph": "^28.0.0",
+    "typescript": "^5",
+    "vitest": "^4.1.4"
   }
 }

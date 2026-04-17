@@ -1,9 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
-  createAttendanceAction,
-  prepareAttendanceExportAction,
-} from "@/app/actions";
+  createAttendanceAction } from "@/app/actions/attendance.action";
+import { prepareAttendanceExportAction } from "@/app/actions/attendance.action";
 import { AttendanceSelectedIdsInputs } from "@/components/attendance-selected-ids-inputs";
 import { AttendanceExportWorkerEditor } from "@/components/attendance-export-worker-editor";
 import { AttendanceDateBoundaryRefresh } from "@/components/attendance-date-boundary-refresh";

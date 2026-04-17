@@ -702,11 +702,8 @@ function getSheetRows(workbook: XLSX.WorkBook, sheetName: keyof ExcelDb) {
     : [];
 }
 
-function sleep(ms: number) {
-  const until = Date.now() + ms;
-  while (Date.now() < until) {
-    // keep API synchronous while retrying temporary file locks
-  }
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function isLockedFileError(error: unknown) {

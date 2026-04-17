@@ -93,7 +93,6 @@ const getCachedUserRowById = unstable_cache(
   },
 );
 
-let _sessionSecretWarned = false;
 
 function getSessionSecret() {
   const secret = process.env.AUTH_SESSION_SECRET?.trim();

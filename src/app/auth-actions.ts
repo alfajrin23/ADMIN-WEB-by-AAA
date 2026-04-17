@@ -15,6 +15,7 @@ import {
   isValidUsername,
   normalizeUsername,
   requireRoleManagerUser,
+  requireAuthUser,
   verifyPassword,
 } from "@/lib/auth";
 import { CACHE_TAGS } from "@/lib/cache-tags";
@@ -599,4 +600,47 @@ export async function deleteRoleAction(formData: FormData) {
 
   revalidateRolePages();
   redirect(toSuccessRedirect(returnTo, "Role berhasil dihapus."));
+}
+
+export async function updateProfileAction(formData: FormData) {
+  const user = await requireAuthUser();
+  const fullName = getString(formData, "full_name");
+  const password = getString(formData, "password");
+  
+  if (fullName.length < 3) {
+    return { ok: false, error: "Nama minimal 3 karakter." };
+  }
+
+  const payload: Record<string, string> = { full_name: fullName };
+  if (password) {
+    if (!isValidPassword(password)) {
+      return { ok: false, error: getPasswordRequirementText() };
+    }
+    payload.password_hash = await hashPassword(password);
+  }
+
+  const supabase = getSupabaseServerClient();
+  if (!supabase) {
+    return { ok: false, error: "Database belum terkonfigurasi." };
+  }
+
+  const updateResult = await supabase.from("app_users").update(payload).eq("id", user.id);
+  
+  if (updateResult.error) {
+    return { ok: false, error: "Gagal memperbarui profil." };
+  }
+
+  queueActivityLog({
+    actor: user,
+    actionType: "update",
+    module: "auth",
+    entityId: user.id,
+    entityName: fullName,
+    description: `Memperbarui profil (Nama: ${fullName}${password ? ', Password Diubah' : ''}).`,
+  });
+
+  revalidateTag(CACHE_TAGS.users, "max");
+  revalidatePath("/");
+  
+  return { ok: true, message: "Profil berhasil tersimpan!" };
 }

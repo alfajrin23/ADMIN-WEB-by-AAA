@@ -111,7 +111,7 @@ export function AttendanceGroupedList({
                 </thead>
                 <tbody>
                   {group.rows.map((item) => (
-                    <tr key={item.id} className="align-top">
+                    <tr key={item.id} className="align-top transition-all duration-300 hover:bg-indigo-50/40 group relative hover:shadow-[0_4px_12px_-4px_rgba(0,0,0,0.05)] hover:z-10">
                       <td className="w-10 text-center">
                         <input
                           type="checkbox"

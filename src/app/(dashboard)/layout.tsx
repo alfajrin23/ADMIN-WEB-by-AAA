@@ -18,6 +18,10 @@ import {
   canViewLogs,
   requireAuthUser,
 } from "@/lib/auth";
+import { ProfileEditTrigger } from "@/components/profile-edit-trigger";
+import { NotificationDropdown } from "@/components/notification-dropdown";
+import { getSystemUpdates } from "@/lib/data";
+import { DashboardShell } from "@/components/dashboard-shell";
 
 export default async function DashboardLayout({
   children,
@@ -25,12 +29,14 @@ export default async function DashboardLayout({
   children: React.ReactNode;
 }>) {
   const user = await requireAuthUser();
+  const updates = await getSystemUpdates();
 
   return (
     <div className="app-surface">
-      <div className="mx-auto grid min-h-screen max-w-[1480px] grid-cols-1 gap-4 p-4 lg:grid-cols-[272px_minmax(0,1fr)] lg:p-5">
-        <aside className="panel flex flex-col overflow-hidden p-4 lg:sticky lg:top-5 lg:h-[calc(100vh-2.5rem)]">
-          <Link href="/" prefetch className="flex items-center gap-3">
+      <DashboardShell
+        sidebar={
+          <aside className="panel flex flex-col p-4 lg:sticky lg:top-5 lg:h-[calc(100vh-2.5rem)]">
+            <Link href="/" prefetch className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-md shadow-slate-900/10">
               <Image
                 src="/logo-admin.svg"
@@ -56,9 +62,10 @@ export default async function DashboardLayout({
                 <p className="truncate text-sm font-semibold text-slate-900">{user.fullName}</p>
                 <p className="mt-1 truncate text-xs text-slate-500">@{user.username}</p>
               </div>
-              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-900 text-white">
-                <ShieldIcon className="h-4 w-4" />
-              </span>
+              <div className="flex items-center gap-1">
+                <NotificationDropdown updates={updates} />
+                <ProfileEditTrigger defaultFullName={user.fullName} />
+              </div>
             </div>
             <div className="mt-3">
               <span className="badge badge-primary">{user.roleLabel}</span>
@@ -89,9 +96,14 @@ export default async function DashboardLayout({
                 </NavLink>
               ) : null}
               {canEditRoles(user) ? (
-                <NavLink href="/roles" icon={<RolesIcon />} tone="roles">
-                  Roles & Permission
-                </NavLink>
+                <>
+                  <NavLink href="/roles" icon={<RolesIcon />} tone="roles">
+                    Roles & Permission
+                  </NavLink>
+                  <NavLink href="/system-updates" icon={<ShieldIcon />} tone="logs">
+                    Info Sistem
+                  </NavLink>
+                </>
               ) : null}
             </nav>
           </div>
@@ -107,10 +119,10 @@ export default async function DashboardLayout({
             </form>
           </div>
         </aside>
-
+      }>
         <div className="min-w-0 space-y-4">
-          <header className="panel sticky top-4 z-20 px-4 py-3 backdrop-blur">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <header className="panel sticky top-4 z-20 px-4 py-3 backdrop-blur">
+              <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
                   Workspace
@@ -140,9 +152,9 @@ export default async function DashboardLayout({
             >
               Copyright by Al Fajrin A Alamsyah
             </a>
-          </footer>
-        </div>
-      </div>
+            </footer>
+          </div>
+      </DashboardShell>
     </div>
   );
 }

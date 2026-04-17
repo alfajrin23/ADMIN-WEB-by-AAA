@@ -241,28 +241,29 @@ export function ProjectRecapExpenseList({
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {filteredCategoryTotals.map((item) => (
-          <div key={item.category} className="soft-card-muted p-3">
-            <p className="text-xs font-medium text-slate-500">
+          <div key={item.category} className="soft-card-muted p-4 bg-gradient-to-br from-slate-50 to-white hover:from-indigo-50 hover:to-white transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:border-indigo-100 group relative overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent -translate-x-[100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
+            <p className="text-xs font-medium text-slate-500 relative z-10">
               <span
-                className={`rounded-full px-2 py-1 text-[11px] font-semibold ${getCostCategoryStyle(item.category)}`}
+                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors duration-300 ${getCostCategoryStyle(item.category)} group-hover:bg-indigo-100 group-hover:text-indigo-700`}
               >
                 {item.label}
               </span>
             </p>
-            <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(item.total)}</p>
+            <p className="mt-2 text-[15px] font-bold text-slate-900 group-hover:text-indigo-950 transition-colors duration-300 relative z-10">{formatCurrency(item.total)}</p>
           </div>
         ))}
       </div>
 
       <div className="space-y-3 xl:hidden">
         {filteredExpenses.map((item) => (
-          <article key={item.id} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+          <article key={item.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-md hover:border-indigo-100">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
                   {formatDate(item.expenseDate)}
                 </p>
-                <p className="mt-1 break-words text-sm font-semibold text-slate-900">
+                <p className="mt-1.5 break-words text-sm font-semibold text-slate-900">
                   {item.requesterName ?? "-"}
                 </p>
               </div>
@@ -372,8 +373,8 @@ export function ProjectRecapExpenseList({
             </thead>
             <tbody>
               {filteredExpenses.map((item) => (
-                <tr key={item.id}>
-                  <td className="align-top text-[11px] whitespace-nowrap">{formatDate(item.expenseDate)}</td>
+                <tr key={item.id} className="transition-colors duration-200 hover:bg-indigo-50/50 group">
+                  <td className="align-top text-[11px] whitespace-nowrap group-hover:text-indigo-900 transition-colors">{formatDate(item.expenseDate)}</td>
                   <td className="align-top break-words">{item.requesterName ?? "-"}</td>
                   <td className="align-top">
                     <span

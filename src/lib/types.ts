@@ -197,3 +197,12 @@ export type DashboardData = {
     transactionCount: number;
   }>;
 };
+
+export type SystemUpdate = {
+  id: string;
+  type: "update" | "announcement";
+  version: string;
+  features: string[];
+  releaseDate: string;
+  createdAt: string;
+};

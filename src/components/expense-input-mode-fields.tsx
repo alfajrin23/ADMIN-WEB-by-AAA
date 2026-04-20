@@ -219,7 +219,6 @@ export function ExpenseInputModeFields({
   const [scraperError, setScraperError] = useState("");
 
   // Continue Mode state
-  const continueAmountInputRef = useRef<HTMLInputElement>(null);
   const [continueEntries, setContinueEntries] = useState<ContinueEntry[]>([]);
   const [continueProjectId, setContinueProjectId] = useState(initialProjectId ?? "");
   const [continueCategory, setContinueCategory] = useState(defaultExpenseCategory);
@@ -228,6 +227,7 @@ export function ExpenseInputModeFields({
   const [continueDescription, setContinueDescription] = useState("");
   const [continueAmountRaw, setContinueAmountRaw] = useState("");
   const [continueError, setContinueError] = useState("");
+  const [continueProjectResetSignal, setContinueProjectResetSignal] = useState(0);
 
   useEffect(() => {
     setHokRows(createInitialHokRows(hokProjectPresets));
@@ -241,6 +241,25 @@ export function ExpenseInputModeFields({
       return createInitialScraperRows(initialProjectId);
     });
   }, [initialProjectId]);
+
+  const focusProjectInput = useCallback(() => {
+    const target = projectInputRef.current;
+    if (!(target instanceof HTMLInputElement)) {
+      return;
+    }
+    target.focus();
+    target.select();
+  }, []);
+
+  const resetContinueDraft = useCallback(() => {
+    setContinueProjectId("");
+    setContinueCategory(defaultExpenseCategory);
+    setContinueDate(today);
+    setContinueRequester("");
+    setContinueDescription("");
+    setContinueAmountRaw("");
+    setContinueProjectResetSignal((prev) => prev + 1);
+  }, [defaultExpenseCategory, today]);
 
   const validateHokRows = useCallback(() => {
     const selectedRows = hokRows.filter((row) => row.selected);
@@ -377,12 +396,11 @@ export function ExpenseInputModeFields({
     window.sessionStorage.removeItem(EXPENSE_PROJECT_REFOCUS_KEY);
 
     const frameId = window.requestAnimationFrame(() => {
-      projectInputRef.current?.focus();
-      projectInputRef.current?.select();
+      focusProjectInput();
     });
 
     return () => window.cancelAnimationFrame(frameId);
-  });
+  }, [focusProjectInput]);
 
   const normalizedHokQuery = normalizeText(hokQuery);
   const visibleHokRows = useMemo(() => {
@@ -527,10 +545,22 @@ export function ExpenseInputModeFields({
       amountRaw: normalizeDigits(continueAmountRaw),
     };
     setContinueEntries((prev) => [...prev, entry]);
-    setContinueAmountRaw("");
+    resetContinueDraft();
     setContinueError("");
-    setTimeout(() => continueAmountInputRef.current?.focus(), 50);
-  }, [continueProjectId, continueCategory, continueDate, continueRequester, continueDescription, continueAmountRaw, projects]);
+    window.requestAnimationFrame(() => {
+      focusProjectInput();
+    });
+  }, [
+    continueProjectId,
+    continueCategory,
+    continueDate,
+    continueRequester,
+    continueDescription,
+    continueAmountRaw,
+    focusProjectInput,
+    projects,
+    resetContinueDraft,
+  ]);
 
   const removeContinueEntry = (entryId: string) => {
     setContinueEntries((prev) => prev.filter((e) => e.id !== entryId));
@@ -823,9 +853,11 @@ export function ExpenseInputModeFields({
               <ProjectAutocomplete
                 projects={projects}
                 initialProjectId={initialProjectId}
+                inputRef={projectInputRef}
                 onProjectIdChange={setContinueProjectId}
                 hiddenInputName={null}
                 required={false}
+                resetSignal={continueProjectResetSignal}
               />
             </div>
 
@@ -888,7 +920,6 @@ export function ExpenseInputModeFields({
                     Rp
                   </span>
                   <input
-                    ref={continueAmountInputRef}
                     type="text"
                     inputMode="numeric"
                     value={continueAmountRaw ? formatThousands(continueAmountRaw) : ""}

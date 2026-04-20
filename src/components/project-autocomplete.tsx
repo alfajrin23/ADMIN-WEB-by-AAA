@@ -1,6 +1,6 @@
 "use client";
 
-import { type RefObject, useEffect, useId, useMemo, useState } from "react";
+import { type RefObject, useEffect, useId, useMemo, useRef, useState } from "react";
 
 export const PROJECT_AUTOCOMPLETE_SELECT_EVENT = "project-autocomplete:select";
 
@@ -20,6 +20,7 @@ type ProjectAutocompleteProps = {
   hiddenInputName?: string | null;
   placeholder?: string;
   required?: boolean;
+  resetSignal?: number | string;
 };
 
 type PreparedProjectOption = {
@@ -118,6 +119,7 @@ export function ProjectAutocomplete({
   hiddenInputName = "project_id",
   placeholder = "Ketik nama / kode / klien project...",
   required = true,
+  resetSignal,
 }: ProjectAutocompleteProps) {
   const listId = useId();
 
@@ -164,10 +166,23 @@ export function ProjectAutocomplete({
   }, [options, initialProjectId]);
 
   const [query, setQuery] = useState(initialProjectDisplayName);
+  const lastResetSignalRef = useRef(resetSignal);
 
   useEffect(() => {
     setQuery(initialProjectDisplayName);
   }, [initialProjectDisplayName]);
+
+  useEffect(() => {
+    if (typeof resetSignal === "undefined") {
+      return;
+    }
+    if (Object.is(lastResetSignalRef.current, resetSignal)) {
+      return;
+    }
+
+    lastResetSignalRef.current = resetSignal;
+    setQuery("");
+  }, [resetSignal]);
 
   useEffect(() => {
     const handleExternalProjectSelect = (event: Event) => {

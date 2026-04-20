@@ -680,51 +680,49 @@ async function createContinueExpenseEntries(
   }
 
   const submissionToken = getExpenseSubmissionToken(formData);
+  const rows = entries.map((entry) => {
+    const amount = Number(String(entry.amount).replace(/\D/g, ""));
+    return {
+      id: createExpenseMutationId({
+        mode: "standard",
+        submissionToken: `${submissionToken}:continue:${entry.id}`,
+        projectId: entry.projectId,
+      }),
+      project_id: entry.projectId,
+      category: entry.category,
+      specialist_type: null,
+      requester_name: entry.requesterName,
+      description: entry.description,
+      recipient_name: null,
+      quantity: 0,
+      unit_label: null,
+      usage_info: null,
+      unit_price: 0,
+      amount,
+      expense_date: entry.expenseDate || new Date().toISOString().slice(0, 10),
+    };
+  });
 
   if (activeDataSource === "excel") {
-    for (const entry of entries) {
-      const amount = Number(String(entry.amount).replace(/\D/g, ""));
+    for (const row of rows) {
       insertExcelExpense({
-        project_id: entry.projectId,
-        category: entry.category as Parameters<typeof insertExcelExpense>[0]["category"],
-        specialist_type: null,
-        requester_name: entry.requesterName,
-        description: entry.description,
-        recipient_name: null,
-        quantity: 0,
-        unit_label: null,
-        usage_info: null,
-        unit_price: 0,
-        amount,
-        expense_date: entry.expenseDate || new Date().toISOString().slice(0, 10),
+        project_id: row.project_id,
+        category: row.category as Parameters<typeof insertExcelExpense>[0]["category"],
+        specialist_type: row.specialist_type,
+        requester_name: row.requester_name,
+        description: row.description,
+        recipient_name: row.recipient_name,
+        quantity: row.quantity,
+        unit_label: row.unit_label,
+        usage_info: row.usage_info,
+        unit_price: row.unit_price,
+        amount: row.amount,
+        expense_date: row.expense_date,
       });
     }
   } else if (activeDataSource === "supabase") {
     const supabase = getSupabaseServerClient();
     if (!supabase) return;
-
-    const rows = entries.map((entry) => {
-      const amount = Number(String(entry.amount).replace(/\D/g, ""));
-      return {
-        id: createExpenseMutationId({
-          mode: "standard",
-          submissionToken: `${submissionToken}:continue:${entry.id}`,
-          projectId: entry.projectId,
-        }),
-        project_id: entry.projectId,
-        category: entry.category,
-        specialist_type: null,
-        requester_name: entry.requesterName,
-        description: entry.description,
-        recipient_name: null,
-        quantity: null,
-        unit_label: null,
-        usage_info: null,
-        unit_price: null,
-        amount,
-        expense_date: entry.expenseDate || new Date().toISOString().slice(0, 10),
-      };
-    });
 
     const { error } = await supabase.from("project_expenses").upsert(rows, { onConflict: "id" });
     if (error) {
@@ -739,29 +737,11 @@ async function createContinueExpenseEntries(
 
     await runFirebaseWriteSafely(async () => {
       const batch = firestore.batch();
-      for (const entry of entries) {
-        const amount = Number(String(entry.amount).replace(/\D/g, ""));
-        const id = createExpenseMutationId({
-          mode: "standard",
-          submissionToken: `${submissionToken}:continue:${entry.id}`,
-          projectId: entry.projectId,
-        });
+      for (const row of rows) {
         batch.set(
-          firestore.collection("project_expenses").doc(id),
+          firestore.collection("project_expenses").doc(row.id),
           {
-            id,
-            project_id: entry.projectId,
-            category: entry.category,
-            specialist_type: null,
-            requester_name: entry.requesterName,
-            description: entry.description,
-            recipient_name: null,
-            quantity: null,
-            unit_label: null,
-            usage_info: null,
-            unit_price: null,
-            amount,
-            expense_date: entry.expenseDate || new Date().toISOString().slice(0, 10),
+            ...row,
             created_at: createTimestamp(),
           },
           { merge: true },
@@ -782,6 +762,7 @@ async function createContinueExpenseEntries(
     module: "expense",
     description: `Menambah ${entries.length} data biaya sekaligus (Mode Continue).`,
     payload: {
+      expense_mode: "continue",
       entry_count: entries.length,
       project_ids: [...new Set(entries.map((e) => e.projectId))],
     },

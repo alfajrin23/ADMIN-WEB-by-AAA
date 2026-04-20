@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { deleteManyExpensesAction } from "@/app/actions/expense.action";
 import { updateManyExpensesAction } from "@/app/actions/expense.action";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
-import { EditIcon, EyeIcon, SaveIcon, TrashIcon } from "@/components/icons";
+import { CloseIcon, EditIcon, EyeIcon, SaveIcon, TrashIcon } from "@/components/icons";
+import { EditExpenseModal } from "@/components/edit-expense-modal";
 import {
   getCostCategoryLabel,
   getCostCategoryStyle,
@@ -112,17 +113,24 @@ export function ExpenseDetailSearchResults({
   bulkEditReturnTo = "/projects",
 }: ExpenseDetailSearchResultsProps) {
   const [filterQuery, setFilterQuery] = useState("");
+  const [filterInputValue, setFilterInputValue] = useState("");
+  const filterDebounceRef = useRef<number | null>(null);
   const [filterProjectId, setFilterProjectId] = useState("");
   const [filterCategory, setFilterCategory] = useState("");
   const [filterDate, setFilterDate] = useState("");
   const [isBulkEditorOpen, setIsBulkEditorOpen] = useState(false);
   const [applyCategory, setApplyCategory] = useState(false);
+  const [applyExpenseDate, setApplyExpenseDate] = useState(false);
+  const [applyExpenseMonth, setApplyExpenseMonth] = useState(false);
   const [applyExpenseYear, setApplyExpenseYear] = useState(false);
   const [applyRequesterName, setApplyRequesterName] = useState(false);
   const [applyDescription, setApplyDescription] = useState(false);
   const [applyUsageInfo, setApplyUsageInfo] = useState(false);
   const [applyRecipientName, setApplyRecipientName] = useState(false);
+  const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
   const currentYear = useMemo(() => String(new Date().getFullYear()), []);
+  const currentMonth = useMemo(() => new Date().getMonth() + 1, []);
+  const currentDate = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const projectOptions = useMemo(
     () =>
       Array.from(
@@ -201,8 +209,13 @@ export function ExpenseDetailSearchResults({
         <label className="mb-1 block text-xs font-semibold text-slate-600">Filter hasil pencarian</label>
         <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
           <input
-            value={filterQuery}
-            onChange={(event) => setFilterQuery(event.currentTarget.value)}
+            value={filterInputValue}
+            onChange={(event) => {
+              const nextValue = event.currentTarget.value;
+              setFilterInputValue(nextValue);
+              if (filterDebounceRef.current) clearTimeout(filterDebounceRef.current);
+              filterDebounceRef.current = window.setTimeout(() => setFilterQuery(nextValue), 220);
+            }}
             placeholder="Cari tanggal, project, pengaju, keterangan, kategori, vendor, atau nominal"
             autoComplete="off"
           />
@@ -210,6 +223,7 @@ export function ExpenseDetailSearchResults({
             <button
               type="button"
               onClick={() => {
+                setFilterInputValue("");
                 setFilterQuery("");
                 setFilterProjectId("");
                 setFilterCategory("");
@@ -264,10 +278,10 @@ export function ExpenseDetailSearchResults({
                 type="button"
                 data-ui-button="true"
                 disabled={isBulkActionDisabled}
-                onClick={() => setIsBulkEditorOpen((prev) => !prev)}
+                onClick={() => setIsBulkEditorOpen(true)}
                 className="inline-flex items-center justify-center rounded-xl border border-emerald-300 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {isBulkEditorOpen ? "Tutup Edit All" : "Buka Edit All"}
+                Buka Edit All
               </button>
               <form action={deleteManyExpensesAction}>
                 <input type="hidden" name="return_to" value={bulkEditReturnTo} />
@@ -294,17 +308,43 @@ export function ExpenseDetailSearchResults({
               </form>
             </div>
           </div>
+        </div>
+      ) : null}
 
-          {isBulkEditorOpen ? (
-            <form action={updateManyExpensesAction} className="mt-3 space-y-3">
+      {/* Edit All Modal */}
+      {isBulkEditorOpen ? (
+        <div className="modal-overlay fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <button
+            type="button"
+            onClick={() => setIsBulkEditorOpen(false)}
+            aria-label="Tutup modal edit all"
+            className="absolute inset-0 bg-slate-950/45"
+          />
+          <section className="modal-card panel relative z-10 max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Edit All — {filteredExpenseIds.length} Rincian</h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  Centang field yang ingin diubah. Field yang tidak dicentang tidak akan diubah.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsBulkEditorOpen(false)}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+              >
+                <span className="btn-icon bg-slate-100 text-slate-600">
+                  <CloseIcon />
+                </span>
+                Tutup
+              </button>
+            </div>
+
+            <form action={updateManyExpensesAction} className="mt-4 space-y-3">
               <input type="hidden" name="return_to" value={bulkEditReturnTo} />
               {filteredExpenseIds.map((expenseId) => (
                 <input key={`bulk-expense-${expenseId}`} type="hidden" name="expense_id" value={expenseId} />
               ))}
-
-              <div className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-[11px] text-emerald-700">
-                Centang field yang ingin diubah. Field yang tidak dicentang tidak akan diubah.
-              </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
@@ -357,12 +397,64 @@ export function ExpenseDetailSearchResults({
                 <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
                   <input
                     type="checkbox"
+                    name="apply_expense_date"
+                    value="1"
+                    checked={applyExpenseDate}
+                    onChange={(event) => setApplyExpenseDate(event.currentTarget.checked)}
+                  />
+                  Ubah tanggal
+                </label>
+                <input
+                  type="date"
+                  name="expense_date"
+                  defaultValue={currentDate}
+                  disabled={!applyExpenseDate}
+                  required={applyExpenseDate}
+                />
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    name="apply_expense_month"
+                    value="1"
+                    checked={applyExpenseMonth}
+                    onChange={(event) => setApplyExpenseMonth(event.currentTarget.checked)}
+                  />
+                  Ubah bulan saja
+                </label>
+                <select
+                  name="expense_month"
+                  defaultValue={currentMonth}
+                  disabled={!applyExpenseMonth}
+                  required={applyExpenseMonth}
+                >
+                  <option value="1">Januari</option>
+                  <option value="2">Februari</option>
+                  <option value="3">Maret</option>
+                  <option value="4">April</option>
+                  <option value="5">Mei</option>
+                  <option value="6">Juni</option>
+                  <option value="7">Juli</option>
+                  <option value="8">Agustus</option>
+                  <option value="9">September</option>
+                  <option value="10">Oktober</option>
+                  <option value="11">November</option>
+                  <option value="12">Desember</option>
+                </select>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
                     name="apply_expense_year"
                     value="1"
                     checked={applyExpenseYear}
                     onChange={(event) => setApplyExpenseYear(event.currentTarget.checked)}
                   />
-                  Ubah tahun
+                  Ubah tahun saja
                 </label>
                 <input
                   type="number"
@@ -377,6 +469,12 @@ export function ExpenseDetailSearchResults({
                   required={applyExpenseYear}
                 />
               </div>
+
+              {applyExpenseDate && (applyExpenseYear || applyExpenseMonth) ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
+                  Jika opsi Ubah tanggal dicentang bersamaan dengan Ubah bulan/tahun, maka "Ubah tanggal" yang akan digunakan.
+                </div>
+              ) : null}
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
@@ -458,7 +556,7 @@ export function ExpenseDetailSearchResults({
                 Simpan Edit All
               </button>
             </form>
-          ) : null}
+          </section>
         </div>
       ) : null}
 
@@ -503,15 +601,16 @@ export function ExpenseDetailSearchResults({
                 <td className="border border-slate-200 px-3 py-2 text-right align-top">
                   <div className="flex items-center justify-end gap-2">
                     {canEdit ? (
-                      <Link
-                        href={`/projects/expenses/edit?id=${item.expenseId}`}
+                      <button
+                        type="button"
+                        onClick={() => setEditingExpenseId(item.expenseId)}
                         className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:text-emerald-900"
                       >
                         <span className="btn-icon bg-emerald-100 text-emerald-700">
                           <EditIcon />
                         </span>
                         Edit
-                      </Link>
+                      </button>
                     ) : null}
                     <Link
                       href={createRekapHref(item.projectId, projectSearchText)}
@@ -536,6 +635,13 @@ export function ExpenseDetailSearchResults({
           </tbody>
         </table>
       </div>
+
+      {editingExpenseId ? (
+        <EditExpenseModal
+          expenseId={editingExpenseId}
+          onClose={() => setEditingExpenseId(null)}
+        />
+      ) : null}
     </div>
   );
 }

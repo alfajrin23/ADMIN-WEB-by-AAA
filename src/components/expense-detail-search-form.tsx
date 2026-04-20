@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { useRef } from "react";
 import { CloseIcon, SearchIcon } from "@/components/icons";
 
 type ExpenseDetailSearchFormProps = {
@@ -24,8 +27,16 @@ export function ExpenseDetailSearchForm({
   hasCriteria,
   resetHref,
 }: ExpenseDetailSearchFormProps) {
+  const formRef = useRef<HTMLFormElement>(null);
+  const timeoutRef = useRef<number | null>(null);
+
+  const handleInputChange = () => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = window.setTimeout(() => formRef.current?.requestSubmit(), 500);
+  };
+
   return (
-    <form action="/projects" method="get" className="space-y-2">
+    <form ref={formRef} action="/projects" method="get" className="space-y-2">
       <input type="hidden" name="modal" value="detail-search" />
       <input type="hidden" name="view" value={activeView} />
       {currentProjectId ? <input type="hidden" name="project" value={currentProjectId} /> : null}
@@ -35,6 +46,7 @@ export function ExpenseDetailSearchForm({
         <input
           name="detail_q"
           defaultValue={initialQuery}
+          onChange={handleInputChange}
           placeholder="Contoh: hebel, proyek gudang, 1.500.000, 13/04/2026"
           autoFocus
           autoComplete="off"
@@ -69,11 +81,11 @@ export function ExpenseDetailSearchForm({
       <div className="grid gap-2 sm:grid-cols-3">
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-500">Dari tanggal</label>
-          <input type="date" name="detail_from" defaultValue={initialFrom} autoComplete="off" />
+          <input type="date" name="detail_from" defaultValue={initialFrom} onChange={handleInputChange} autoComplete="off" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-500">Sampai tanggal</label>
-          <input type="date" name="detail_to" defaultValue={initialTo} autoComplete="off" />
+          <input type="date" name="detail_to" defaultValue={initialTo} onChange={handleInputChange} autoComplete="off" />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-500">Tahun</label>
@@ -85,6 +97,7 @@ export function ExpenseDetailSearchForm({
             max={9999}
             step={1}
             defaultValue={initialYear ? String(initialYear) : ""}
+            onChange={handleInputChange}
             placeholder="Contoh: 2026"
             autoComplete="off"
           />

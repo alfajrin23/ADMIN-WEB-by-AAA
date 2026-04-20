@@ -120,7 +120,7 @@ function AttendanceSearchInputInner({
             if (timeoutRef.current) {
               clearTimeout(timeoutRef.current);
             }
-            timeoutRef.current = window.setTimeout(() => applySearch(nextValue), 220);
+            timeoutRef.current = window.setTimeout(() => applySearch(nextValue), 500);
           }}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}

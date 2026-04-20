@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 type ProjectOption = {
   id: string;
@@ -23,6 +23,7 @@ export function ProjectChecklistSearch({
   excludeProjectId,
 }: ProjectChecklistSearchProps) {
   const [query, setQuery] = useState("");
+  const debounceRef = useRef<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const availableProjects = useMemo(
@@ -62,8 +63,12 @@ export function ProjectChecklistSearch({
     <div className="mt-2 space-y-2">
       <input
         type="text"
-        value={query}
-        onChange={(event) => setQuery(event.currentTarget.value)}
+        defaultValue=""
+        onChange={(event) => {
+          const nextValue = event.currentTarget.value;
+          if (debounceRef.current) clearTimeout(debounceRef.current);
+          debounceRef.current = window.setTimeout(() => setQuery(nextValue), 500);
+        }}
         placeholder="Cari project lain..."
         autoComplete="off"
       />

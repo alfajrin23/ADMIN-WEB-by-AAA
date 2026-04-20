@@ -18,7 +18,7 @@ export function DashboardShell({
       }`}
     >
       <div
-        className={`transition-all duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] overflow-visible relative z-[100] ${
+        className={`relative z-10 overflow-visible transition-all duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${
           isOpen
             ? "opacity-100 translate-x-0 w-[272px] lg:w-auto"
             : "opacity-0 -translate-x-12 w-0 overflow-hidden pointer-events-none"
@@ -34,7 +34,7 @@ export function DashboardShell({
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
-          className={`hidden lg:flex absolute shadow-md border border-slate-200 z-50 h-8 w-8 items-center justify-center rounded-full bg-white text-slate-500 hover:text-indigo-600 hover:scale-105 hover:shadow-lg transition-all focus:outline-none ${isOpen ? '-left-6 top-6' : '-left-2 top-6'}`}
+          className={`absolute z-10 hidden h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-md transition-all hover:scale-105 hover:text-indigo-600 hover:shadow-lg focus:outline-none lg:flex ${isOpen ? '-left-6 top-6' : '-left-2 top-6'}`}
           title={isOpen ? "Sembunyikan Sidebar" : "Tampilkan Sidebar"}
         >
           <svg

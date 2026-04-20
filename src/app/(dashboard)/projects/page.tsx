@@ -868,7 +868,11 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
             aria-label="Tutup modal"
             className="absolute inset-0 bg-slate-950/45"
           />
-          <section className="modal-card panel relative z-10 max-h-[calc(100vh-2rem)] w-full max-w-3xl overflow-y-auto p-5">
+          <section
+            className={`modal-card panel relative z-10 max-h-[calc(100vh-2rem)] w-full overflow-y-auto p-5 ${
+              activeModal === "detail-search" ? "max-w-6xl" : "max-w-3xl"
+            }`}
+          >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-lg font-semibold text-slate-900">
                 {activeModal === "detail-search"

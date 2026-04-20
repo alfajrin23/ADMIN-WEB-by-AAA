@@ -16,6 +16,10 @@ type ProjectAutocompleteProps = {
   initialProjectId?: string;
   autoFocus?: boolean;
   inputRef?: RefObject<HTMLInputElement | null>;
+  onProjectIdChange?: (projectId: string) => void;
+  hiddenInputName?: string | null;
+  placeholder?: string;
+  required?: boolean;
 };
 
 type PreparedProjectOption = {
@@ -110,6 +114,10 @@ export function ProjectAutocomplete({
   initialProjectId,
   autoFocus = false,
   inputRef,
+  onProjectIdChange,
+  hiddenInputName = "project_id",
+  placeholder = "Ketik nama / kode / klien project...",
+  required = true,
 }: ProjectAutocompleteProps) {
   const listId = useId();
 
@@ -213,6 +221,10 @@ export function ProjectAutocomplete({
     [projects, selectedId],
   );
 
+  useEffect(() => {
+    onProjectIdChange?.(selectedId);
+  }, [onProjectIdChange, selectedId]);
+
   const isAmbiguousName = useMemo(() => {
     if (!normalizedQuery || !duplicateNames.has(normalizedQuery)) {
       return false;
@@ -295,17 +307,17 @@ export function ProjectAutocomplete({
             });
           }
         }}
-        placeholder="Ketik nama / kode / klien project..."
+        placeholder={placeholder}
         autoComplete="off"
         autoFocus={autoFocus}
-        required
+        required={required}
       />
       <datalist id={listId}>
         {options.map((option) => (
           <option key={option.id} value={option.displayName} />
         ))}
       </datalist>
-      <input type="hidden" name="project_id" value={selectedId} />
+      {hiddenInputName ? <input type="hidden" name={hiddenInputName} value={selectedId} /> : null}
       {selectedProject ? (
         <p className="text-[11px] font-medium text-emerald-700">
           Project terpilih: {selectedProject.name} ({buildProjectContext(selectedProject)})

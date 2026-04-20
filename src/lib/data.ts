@@ -2814,38 +2814,66 @@ export const getSystemUpdates = cache(
       .order("release_date", { ascending: false })
       .order("created_at", { ascending: false });
 
-    if (error || !data || data.length === 0) {
-      if (error) {
-        console.error("[getSystemUpdates] memuat pembaruan gagal:", error.message);
-      }
-      
-      // AI Fallback Injection: Mengisi data pembaruan otomatis ke dalam layer kode
-      // Sehingga bila database Supabase kosong atau terblokir, pengguna tetap melihat catatan ini.
+    if (error) {
+      console.error("[getSystemUpdates] memuat pembaruan gagal:", error.message);
+      // Fallback jika tabel belum ada atau RLS memblokir akses
+      // Ini memastikan dropdown notifikasi tetap berfungsi meski DB belum dikonfigurasi
       return [
         {
-          id: "sys-upd-1",
+          id: "sys-upd-fallback-4",
+          type: "update",
+          version: "v1.4.0",
+          features: [
+            "Mode Continue pada Input Biaya: input banyak entry berurutan, simpan sekaligus ke database.",
+            "Tombol Hapus per baris di modal Cari Rincian biaya.",
+            "Perbaikan logika Info Sistem agar fallback hanya aktif saat error, bukan saat data kosong.",
+            "Edit bulan/tahun massal (Bulk Edit Month/Year) pada modal Cari Rincian.",
+            "Debounce 500ms pada semua input pencarian untuk performa optimal.",
+          ],
+          releaseDate: "2026-04-20",
+          createdAt: "2026-04-20T06:00:00.000Z",
+        },
+        {
+          id: "sys-upd-fallback-3",
           type: "update",
           version: "v1.3.0",
           features: [
-            "Memperbaiki Z-Index Box Dropdown Notifikasi agar tampil paling depan (tidak tertutup display ringkasan).",
+            "Memperbaiki Z-Index Dropdown Notifikasi agar tampil paling depan.",
             "Menambahkan fitur Sembunyikan/Tampilkan Sidebar Dinamis (Tombol Panah).",
-            "Suntikan data update otomatis (AI Auto-injection fallback) pada level server."
+            "Suntikan data update otomatis (AI fallback) pada level server.",
           ],
-          releaseDate: new Date().toISOString(),
-          createdAt: new Date().toISOString(),
+          releaseDate: "2026-04-17",
+          createdAt: "2026-04-17T06:00:00.000Z",
         },
         {
-          id: "sys-upd-2",
+          id: "sys-upd-fallback-2",
           type: "update",
           version: "v1.2.0",
           features: [
-            "Fitur Dropdown Box UI ala Media Sosial Facebook mendarat.",
-            "Perapihan estetika halaman dan arsitektur database Supabase."
+            "Fitur Dropdown Notifikasi ala Media Sosial mendarat.",
+            "Perapihan estetika halaman dan arsitektur database Supabase.",
           ],
-          releaseDate: new Date(Date.now() - 86400000).toISOString(),
-          createdAt: new Date(Date.now() - 86400000).toISOString(),
-        }
+          releaseDate: "2026-04-16",
+          createdAt: "2026-04-16T06:00:00.000Z",
+        },
+        {
+          id: "sys-upd-fallback-1",
+          type: "update",
+          version: "v1.0.0",
+          features: [
+            "Rilis pertama Admin Web Rekap Proyek.",
+            "Fitur manajemen biaya, absensi, roles & permission.",
+            "Login, register, dan sistem autentikasi berbasis session.",
+          ],
+          releaseDate: "2026-04-02",
+          createdAt: "2026-04-02T00:00:00.000Z",
+        },
       ];
+    }
+
+    if (!data || data.length === 0) {
+      // Tabel ada tapi belum diisi — kembalikan array kosong (jangan fallback)
+      return [];
     }
 
     return data.map((row) => ({

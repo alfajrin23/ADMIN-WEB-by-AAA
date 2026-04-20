@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
-import { deleteManyExpensesAction } from "@/app/actions/expense.action";
+import { deleteManyExpensesAction, deleteExpenseAction } from "@/app/actions/expense.action";
 import { updateManyExpensesAction } from "@/app/actions/expense.action";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { CloseIcon, EditIcon, EyeIcon, SaveIcon, TrashIcon } from "@/components/icons";
@@ -105,6 +105,69 @@ function createRekapHref(projectId: string, projectSearchText?: string) {
   return `/projects?${query.toString()}`;
 }
 
+type ExpenseResultActionsProps = {
+  item: ProjectExpenseSearchResult;
+  canEdit: boolean;
+  bulkEditReturnTo: string;
+  projectSearchText?: string;
+  onEdit: (expenseId: string) => void;
+};
+
+function ExpenseResultActions({
+  item,
+  canEdit,
+  bulkEditReturnTo,
+  projectSearchText,
+  onEdit,
+}: ExpenseResultActionsProps) {
+  return (
+    <div className="flex min-w-0 flex-col gap-2">
+      <Link
+        href={createRekapHref(item.projectId, projectSearchText)}
+        className="button-secondary button-xs w-full justify-start"
+      >
+        <span className="btn-icon bg-blue-100 text-blue-700">
+          <EyeIcon />
+        </span>
+        Lihat Rekap
+      </Link>
+      {canEdit ? (
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => onEdit(item.expenseId)}
+            className="button-soft button-xs w-full justify-center"
+          >
+            <span className="btn-icon bg-emerald-100 text-emerald-700">
+              <EditIcon />
+            </span>
+            Edit
+          </button>
+          <form action={deleteExpenseAction} className="w-full">
+            <input type="hidden" name="expense_id" value={item.expenseId} />
+            <input type="hidden" name="return_to" value={bulkEditReturnTo} />
+            <ConfirmActionButton
+              className="button-danger button-xs w-full justify-center"
+              modalTitle="Konfirmasi Hapus"
+              modalDescription={`Yakin ingin menghapus rincian biaya "${item.description ?? item.category}" pada project "${item.projectName}"? Aksi ini tidak bisa dibatalkan.`}
+              confirmLabel="Ya, Hapus"
+            >
+              <span className="btn-icon bg-rose-100 text-rose-600">
+                <TrashIcon />
+              </span>
+              Hapus
+            </ConfirmActionButton>
+          </form>
+        </div>
+      ) : (
+        <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-center text-[11px] font-semibold text-slate-500">
+          Viewer
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function ExpenseDetailSearchResults({
   results,
   projectSearchText,
@@ -198,6 +261,14 @@ export function ExpenseDetailSearchResults({
   }, [filterCategory, filterDate, filterProjectId, filterQuery, results]);
   const filteredExpenseIds = useMemo(
     () => Array.from(new Set(filteredResults.map((item) => item.expenseId))),
+    [filteredResults],
+  );
+  const filteredProjectCount = useMemo(
+    () => new Set(filteredResults.map((item) => item.projectId)).size,
+    [filteredResults],
+  );
+  const filteredTotalAmount = useMemo(
+    () => filteredResults.reduce((sum, item) => sum + item.amount, 0),
     [filteredResults],
   );
   const isBulkActionDisabled = filteredExpenseIds.length === 0;
@@ -323,7 +394,7 @@ export function ExpenseDetailSearchResults({
           <section className="modal-card panel relative z-10 max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto p-5">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-base font-bold text-slate-900">Edit All — {filteredExpenseIds.length} Rincian</h3>
+                <h3 className="text-base font-bold text-slate-900">Edit All - {filteredExpenseIds.length} Rincian</h3>
                 <p className="mt-1 text-xs text-slate-500">
                   Centang field yang ingin diubah. Field yang tidak dicentang tidak akan diubah.
                 </p>
@@ -472,7 +543,8 @@ export function ExpenseDetailSearchResults({
 
               {applyExpenseDate && (applyExpenseYear || applyExpenseMonth) ? (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
-                  Jika opsi Ubah tanggal dicentang bersamaan dengan Ubah bulan/tahun, maka "Ubah tanggal" yang akan digunakan.
+                  Jika opsi Ubah tanggal dicentang bersamaan dengan Ubah bulan/tahun, maka
+                  {' '}&quot;Ubah tanggal&quot; yang akan digunakan.
                 </div>
               ) : null}
 
@@ -560,80 +632,157 @@ export function ExpenseDetailSearchResults({
         </div>
       ) : null}
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200">
-        <table className="w-full min-w-[760px] border-collapse text-sm">
-          <thead className="bg-slate-50">
-            <tr className="text-left text-slate-500">
-              <th className="w-[120px] border border-slate-200 px-3 py-2 font-medium">Tanggal</th>
-              <th className="w-[180px] border border-slate-200 px-3 py-2 font-medium">Project</th>
-              <th className="w-[160px] border border-slate-200 px-3 py-2 font-medium">Nama Pengaju</th>
-              <th className="border border-slate-200 px-3 py-2 font-medium">Keterangan</th>
-              <th className="w-[140px] border border-slate-200 px-3 py-2 text-right font-medium">Nominal</th>
-              <th className="w-[180px] border border-slate-200 px-3 py-2 text-right font-medium">Aksi</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredResults.map((item) => (
-              <tr key={item.expenseId}>
-                <td className="border border-slate-200 px-3 py-2 align-top">{formatDate(item.expenseDate)}</td>
-                <td className="border border-slate-200 px-3 py-2 align-top font-medium text-slate-900">
+      <div className="grid gap-2 sm:grid-cols-3">
+        <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+            Rincian Tampil
+          </p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">{filteredResults.length} data</p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+            Project Terlibat
+          </p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">{filteredProjectCount} project</p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+            Total Nominal
+          </p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(filteredTotalAmount)}</p>
+        </div>
+      </div>
+
+      <div className="space-y-3 lg:hidden">
+        {filteredResults.map((item) => (
+          <article
+            key={item.expenseId}
+            className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition-colors duration-200 hover:border-indigo-100 hover:bg-indigo-50/30"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                  {formatDate(item.expenseDate)}
+                </p>
+                <p className="mt-1.5 break-words text-sm font-semibold text-slate-900">
                   {item.projectName}
-                </td>
-                <td className="border border-slate-200 px-3 py-2 align-top">{item.requesterName ?? "-"}</td>
-                <td className="border border-slate-200 px-3 py-2 align-top">
-                  <p>{item.description ?? "-"}</p>
-                  <p className="mt-1">
-                    <span
-                      className={`inline-flex rounded-full px-2 py-1 text-[10px] font-semibold ${getCostCategoryStyle(item.category)}`}
-                    >
-                      {getCostCategoryLabel(item.category)}
-                    </span>
-                  </p>
-                  <p className="text-xs text-slate-500">{item.usageInfo ?? "-"}</p>
-                </td>
-                <td
-                  className={`border border-slate-200 px-3 py-2 text-right font-semibold ${
-                    item.amount < 0 ? "text-rose-700" : "text-emerald-700"
-                  }`}
-                >
-                  {formatCurrency(item.amount)}
-                </td>
-                <td className="border border-slate-200 px-3 py-2 text-right align-top">
-                  <div className="flex items-center justify-end gap-2">
-                    {canEdit ? (
-                      <button
-                        type="button"
-                        onClick={() => setEditingExpenseId(item.expenseId)}
-                        className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:text-emerald-900"
+                </p>
+                <p className="mt-1 break-words text-[11px] text-slate-500">
+                  Pengaju: {item.requesterName ?? "-"}
+                </p>
+              </div>
+              <p
+                className={`shrink-0 text-right text-sm font-semibold ${
+                  item.amount < 0 ? "text-rose-700" : "text-emerald-700"
+                }`}
+              >
+                {formatCurrency(item.amount)}
+              </p>
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span
+                className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ${getCostCategoryStyle(item.category)}`}
+              >
+                {getCostCategoryLabel(item.category)}
+              </span>
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600">
+                Vendor: {item.recipientName ?? "-"}
+              </span>
+            </div>
+
+            <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2">
+              <p className="break-words text-sm text-slate-700">{item.description ?? "-"}</p>
+              <p className="mt-1 break-words text-[11px] text-slate-500">
+                {item.usageInfo ?? "Tanpa info penggunaan"}
+              </p>
+            </div>
+
+            <div className="mt-4">
+              <ExpenseResultActions
+                item={item}
+                canEdit={canEdit}
+                bulkEditReturnTo={bulkEditReturnTo}
+                projectSearchText={projectSearchText}
+                onEdit={setEditingExpenseId}
+              />
+            </div>
+          </article>
+        ))}
+        {filteredResults.length === 0 ? (
+          <p className="rounded-2xl border border-slate-200 px-3 py-4 text-center text-sm text-slate-500">
+            Tidak ada data yang cocok dengan filter hasil.
+          </p>
+        ) : null}
+      </div>
+
+      <div className="table-card hidden lg:block">
+        <div className="data-table-shell">
+          <table className="data-table data-table--sticky data-table--compact min-w-[1180px] table-fixed text-[12px] leading-5">
+            <thead>
+              <tr className="bg-slate-50 text-left text-slate-600">
+                <th className="w-[120px]">Tanggal</th>
+                <th className="w-[220px]">Project</th>
+                <th className="w-[170px]">Nama Pengaju</th>
+                <th className="w-[360px]">Keterangan</th>
+                <th className="w-[140px] text-right">Nominal</th>
+                <th className="w-[190px]">Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredResults.map((item) => (
+                <tr key={item.expenseId} className="group transition-colors duration-200 hover:bg-indigo-50/50">
+                  <td className="align-top whitespace-nowrap text-[11px] group-hover:text-indigo-900">
+                    {formatDate(item.expenseDate)}
+                  </td>
+                  <td className="align-top">
+                    <p className="break-words font-semibold text-slate-900">{item.projectName}</p>
+                    <p className="mt-1 break-words text-[11px] text-slate-500">
+                      Vendor: {item.recipientName ?? "-"}
+                    </p>
+                  </td>
+                  <td className="align-top break-words">{item.requesterName ?? "-"}</td>
+                  <td className="align-top">
+                    <p className="break-words text-slate-800">{item.description ?? "-"}</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-1 text-[10px] font-semibold ${getCostCategoryStyle(item.category)}`}
                       >
-                        <span className="btn-icon bg-emerald-100 text-emerald-700">
-                          <EditIcon />
-                        </span>
-                        Edit
-                      </button>
-                    ) : null}
-                    <Link
-                      href={createRekapHref(item.projectId, projectSearchText)}
-                      className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:text-blue-900"
-                    >
-                      <span className="btn-icon bg-blue-100 text-blue-700">
-                        <EyeIcon />
+                        {getCostCategoryLabel(item.category)}
                       </span>
-                      Lihat Rekap
-                    </Link>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {filteredResults.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="border border-slate-200 px-3 py-4 text-center text-slate-500">
-                  Tidak ada data yang cocok dengan filter hasil.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
+                    </div>
+                    <p className="mt-2 break-words text-[11px] text-slate-500">
+                      {item.usageInfo ?? "Tanpa info penggunaan"}
+                    </p>
+                  </td>
+                  <td
+                    className={`align-top text-right text-[11px] font-semibold ${
+                      item.amount < 0 ? "text-rose-700" : "text-emerald-700"
+                    }`}
+                  >
+                    {formatCurrency(item.amount)}
+                  </td>
+                  <td className="align-top">
+                    <ExpenseResultActions
+                      item={item}
+                      canEdit={canEdit}
+                      bulkEditReturnTo={bulkEditReturnTo}
+                      projectSearchText={projectSearchText}
+                      onEdit={setEditingExpenseId}
+                    />
+                  </td>
+                </tr>
+              ))}
+              {filteredResults.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-center text-slate-500">
+                    Tidak ada data yang cocok dengan filter hasil.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {editingExpenseId ? (

@@ -81,6 +81,10 @@ export async function createExpenseAction(formData: FormData) {
     await createScraperExpenseEntries(actor, formData, successReturnTo, errorReturnTo);
     return;
   }
+  if (getString(formData, "expense_input_mode") === "continue") {
+    await createContinueExpenseEntries(actor, formData, successReturnTo, errorReturnTo);
+    return;
+  }
 
   const projectIds = getExpenseTargetProjectIds(formData);
   const requesterName = getString(formData, "requester_name");
@@ -620,6 +624,176 @@ export async function deleteExpenseAction(formData: FormData) {
   });
   if (returnTo) {
     redirect(returnTo);
+  }
+}
+
+type ContinueEntryJson = {
+  id: string;
+  projectId: string;
+  projectName: string;
+  category: string;
+  expenseDate: string;
+  requesterName: string;
+  description: string;
+  amount: string;
+};
+
+async function createContinueExpenseEntries(
+  actor: Awaited<ReturnType<typeof requireEditorActionUser>>,
+  formData: FormData,
+  successReturnTo: string | null,
+  errorReturnTo: string | null,
+) {
+  const rowsJsonRaw = getString(formData, "continue_rows_json");
+  let entries: ContinueEntryJson[];
+  try {
+    entries = JSON.parse(rowsJsonRaw);
+  } catch {
+    if (errorReturnTo) {
+      redirect(withReturnMessage(errorReturnTo, "error", "Data continue tidak valid, coba ulangi."));
+    }
+    return;
+  }
+
+  if (!Array.isArray(entries) || entries.length === 0) {
+    if (errorReturnTo) {
+      redirect(withReturnMessage(errorReturnTo, "error", "Tidak ada entry biaya untuk disimpan."));
+    }
+    return;
+  }
+
+  // Validate every entry
+  for (const entry of entries) {
+    const amount = Number(String(entry.amount ?? "").replace(/\D/g, ""));
+    if (!entry.projectId || !entry.requesterName || !entry.description || !entry.category) {
+      if (errorReturnTo) {
+        redirect(withReturnMessage(errorReturnTo, "error", "Ada entry yang tidak lengkap, cek kembali."));
+      }
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      if (errorReturnTo) {
+        redirect(withReturnMessage(errorReturnTo, "error", "Ada entry dengan nominal tidak valid."));
+      }
+      return;
+    }
+  }
+
+  const submissionToken = getExpenseSubmissionToken(formData);
+
+  if (activeDataSource === "excel") {
+    for (const entry of entries) {
+      const amount = Number(String(entry.amount).replace(/\D/g, ""));
+      insertExcelExpense({
+        project_id: entry.projectId,
+        category: entry.category as Parameters<typeof insertExcelExpense>[0]["category"],
+        specialist_type: null,
+        requester_name: entry.requesterName,
+        description: entry.description,
+        recipient_name: null,
+        quantity: 0,
+        unit_label: null,
+        usage_info: null,
+        unit_price: 0,
+        amount,
+        expense_date: entry.expenseDate || new Date().toISOString().slice(0, 10),
+      });
+    }
+  } else if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) return;
+
+    const rows = entries.map((entry) => {
+      const amount = Number(String(entry.amount).replace(/\D/g, ""));
+      return {
+        id: createExpenseMutationId({
+          mode: "standard",
+          submissionToken: `${submissionToken}:continue:${entry.id}`,
+          projectId: entry.projectId,
+        }),
+        project_id: entry.projectId,
+        category: entry.category,
+        specialist_type: null,
+        requester_name: entry.requesterName,
+        description: entry.description,
+        recipient_name: null,
+        quantity: null,
+        unit_label: null,
+        usage_info: null,
+        unit_price: null,
+        amount,
+        expense_date: entry.expenseDate || new Date().toISOString().slice(0, 10),
+      };
+    });
+
+    const { error } = await supabase.from("project_expenses").upsert(rows, { onConflict: "id" });
+    if (error) {
+      if (errorReturnTo) {
+        redirect(withReturnMessage(errorReturnTo, "error", "Gagal menyimpan biaya continue. Silakan coba lagi."));
+      }
+      return;
+    }
+  } else if (activeDataSource === "firebase") {
+    const firestore = getFirestoreServerClient();
+    if (!firestore) return;
+
+    await runFirebaseWriteSafely(async () => {
+      const batch = firestore.batch();
+      for (const entry of entries) {
+        const amount = Number(String(entry.amount).replace(/\D/g, ""));
+        const id = createExpenseMutationId({
+          mode: "standard",
+          submissionToken: `${submissionToken}:continue:${entry.id}`,
+          projectId: entry.projectId,
+        });
+        batch.set(
+          firestore.collection("project_expenses").doc(id),
+          {
+            id,
+            project_id: entry.projectId,
+            category: entry.category,
+            specialist_type: null,
+            requester_name: entry.requesterName,
+            description: entry.description,
+            recipient_name: null,
+            quantity: null,
+            unit_label: null,
+            usage_info: null,
+            unit_price: null,
+            amount,
+            expense_date: entry.expenseDate || new Date().toISOString().slice(0, 10),
+            created_at: createTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+      await batch.commit();
+    });
+  } else {
+    return;
+  }
+
+  revalidateProjectPages();
+  revalidateExpenseCache();
+  revalidatePath("/logs");
+  queueActivityLog({
+    actor,
+    actionType: "create",
+    module: "expense",
+    description: `Menambah ${entries.length} data biaya sekaligus (Mode Continue).`,
+    payload: {
+      entry_count: entries.length,
+      project_ids: [...new Set(entries.map((e) => e.projectId))],
+    },
+  });
+  if (successReturnTo) {
+    redirect(
+      withReturnMessage(
+        successReturnTo,
+        "success",
+        `${entries.length} biaya berhasil disimpan (Mode Continue).`,
+      ),
+    );
   }
 }
 

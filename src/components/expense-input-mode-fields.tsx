@@ -51,6 +51,17 @@ type ScraperRow = {
   amountRaw: string;
 };
 
+type ContinueEntry = {
+  id: string;
+  projectId: string;
+  projectName: string;
+  category: string;
+  expenseDate: string;
+  requesterName: string;
+  description: string;
+  amountRaw: string;
+};
+
 type ExpenseInputModeFieldsProps = {
   projects: ProjectOption[];
   initialProjectId?: string;
@@ -67,8 +78,9 @@ type ExpenseInputModeFieldsProps = {
 const STANDARD_MODE = "standard";
 const HOK_MODE = "hok_kmp_cianjur";
 const SCRAPER_MODE = "scraper";
+const CONTINUE_MODE = "continue";
 const EXPENSE_PROJECT_REFOCUS_KEY = "expense-modal-refocus-project";
-type ExpenseInputMode = typeof STANDARD_MODE | typeof HOK_MODE | typeof SCRAPER_MODE;
+type ExpenseInputMode = typeof STANDARD_MODE | typeof HOK_MODE | typeof SCRAPER_MODE | typeof CONTINUE_MODE;
 
 function normalizeText(value: string | null | undefined) {
   return (value ?? "").trim().toLowerCase();
@@ -148,11 +160,13 @@ function ExpenseSubmitButton({
   mode,
   selectedHokRowCount,
   selectedScraperRowCount,
+  continueEntryCount,
 }: {
   disabled: boolean;
   mode: ExpenseInputMode;
   selectedHokRowCount: number;
   selectedScraperRowCount: number;
+  continueEntryCount: number;
 }) {
   const { pending } = useFormStatus();
   const isDisabled = disabled || pending;
@@ -173,7 +187,9 @@ function ExpenseSubmitButton({
           ? `Simpan HOK ${selectedHokRowCount > 0 ? `(${selectedHokRowCount} project)` : ""}`
           : mode === SCRAPER_MODE
             ? `Simpan Scraper ${selectedScraperRowCount > 0 ? `(${selectedScraperRowCount} project)` : ""}`
-          : "Simpan Biaya"}
+            : mode === CONTINUE_MODE
+              ? `Simpan Semua${continueEntryCount > 0 ? ` (${continueEntryCount} entry)` : ""}`
+              : "Simpan Biaya"}
     </button>
   );
 }
@@ -201,6 +217,17 @@ export function ExpenseInputModeFields({
     createInitialScraperRows(initialProjectId),
   );
   const [scraperError, setScraperError] = useState("");
+
+  // Continue Mode state
+  const continueAmountInputRef = useRef<HTMLInputElement>(null);
+  const [continueEntries, setContinueEntries] = useState<ContinueEntry[]>([]);
+  const [continueProjectId, setContinueProjectId] = useState(initialProjectId ?? "");
+  const [continueCategory, setContinueCategory] = useState(defaultExpenseCategory);
+  const [continueDate, setContinueDate] = useState(today);
+  const [continueRequester, setContinueRequester] = useState("");
+  const [continueDescription, setContinueDescription] = useState("");
+  const [continueAmountRaw, setContinueAmountRaw] = useState("");
+  const [continueError, setContinueError] = useState("");
 
   useEffect(() => {
     setHokRows(createInitialHokRows(hokProjectPresets));
@@ -295,6 +322,20 @@ export function ExpenseInputModeFields({
       if (mode === STANDARD_MODE) {
         setHokError("");
         setScraperError("");
+        setContinueError("");
+        window.sessionStorage.setItem(EXPENSE_PROJECT_REFOCUS_KEY, "1");
+        return;
+      }
+
+      if (mode === CONTINUE_MODE) {
+        if (continueEntries.length === 0) {
+          event.preventDefault();
+          setContinueError("Tambahkan minimal satu entry biaya sebelum menyimpan.");
+          return;
+        }
+        setHokError("");
+        setScraperError("");
+        setContinueError("");
         window.sessionStorage.setItem(EXPENSE_PROJECT_REFOCUS_KEY, "1");
         return;
       }
@@ -304,6 +345,7 @@ export function ExpenseInputModeFields({
       if (!validationMessage) {
         setHokError("");
         setScraperError("");
+        setContinueError("");
         window.sessionStorage.setItem(EXPENSE_PROJECT_REFOCUS_KEY, "1");
         return;
       }
@@ -320,7 +362,7 @@ export function ExpenseInputModeFields({
 
     form.addEventListener("submit", handleSubmit);
     return () => form.removeEventListener("submit", handleSubmit);
-  }, [mode, validateHokRows, validateScraperRows]);
+  }, [continueEntries.length, mode, validateHokRows, validateScraperRows]);
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -460,11 +502,70 @@ export function ExpenseInputModeFields({
     );
   };
 
+  const handleContinueAdd = useCallback(() => {
+    const projectId = continueProjectId.trim();
+    const requesterName = continueRequester.trim();
+    const description = continueDescription.trim();
+    const amount = Number(normalizeDigits(continueAmountRaw));
+    if (!projectId) { setContinueError("Pilih project terlebih dahulu."); return; }
+    if (!requesterName) { setContinueError("Nama pengajuan wajib diisi."); return; }
+    if (!description) { setContinueError("Keterangan wajib diisi."); return; }
+    if (!Number.isFinite(amount) || amount <= 0) { setContinueError("Nominal harus lebih dari 0."); return; }
+
+    const projectName = projects.find((p) => p.id === projectId)?.name ?? projectId;
+    const entry: ContinueEntry = {
+      id:
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `ce-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      projectId,
+      projectName,
+      category: continueCategory,
+      expenseDate: continueDate,
+      requesterName,
+      description,
+      amountRaw: normalizeDigits(continueAmountRaw),
+    };
+    setContinueEntries((prev) => [...prev, entry]);
+    setContinueAmountRaw("");
+    setContinueError("");
+    setTimeout(() => continueAmountInputRef.current?.focus(), 50);
+  }, [continueProjectId, continueCategory, continueDate, continueRequester, continueDescription, continueAmountRaw, projects]);
+
+  const removeContinueEntry = (entryId: string) => {
+    setContinueEntries((prev) => prev.filter((e) => e.id !== entryId));
+  };
+
+  const continuePayload = useMemo(
+    () =>
+      JSON.stringify(
+        continueEntries.map((entry) => ({
+          id: entry.id,
+          projectId: entry.projectId,
+          projectName: entry.projectName,
+          category: entry.category,
+          expenseDate: entry.expenseDate,
+          requesterName: entry.requesterName,
+          description: entry.description,
+          amount: entry.amountRaw,
+        })),
+      ),
+    [continueEntries],
+  );
+  const isContinueSubmitDisabled = mode === CONTINUE_MODE && continueEntries.length === 0;
+  const continueTotalAmount = useMemo(
+    () => continueEntries.reduce((sum, e) => sum + Number(e.amountRaw), 0),
+    [continueEntries],
+  );
+
   return (
     <div ref={rootRef} className="space-y-3">
       <EnterToNextField formId={formId} />
       <input type="hidden" name="expense_submission_token" value={submissionToken} />
       <input type="hidden" name="expense_input_mode" value={mode} />
+      {mode === CONTINUE_MODE && (
+        <input type="hidden" name="continue_rows_json" value={continuePayload} />
+      )}
 
       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
         <p className="text-xs font-semibold text-slate-700">Mode input biaya</p>
@@ -506,6 +607,18 @@ export function ExpenseInputModeFields({
           >
             Mode Input Scraper
           </button>
+          <button
+            type="button"
+            data-ui-button="true"
+            onClick={() => setMode(CONTINUE_MODE)}
+            className={`inline-flex items-center rounded-xl border px-3 py-2 text-xs font-semibold ${
+              mode === CONTINUE_MODE
+                ? "border-violet-700 bg-violet-700 text-white"
+                : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
+            }`}
+          >
+            Mode Continue
+          </button>
         </div>
         {hokProjectPresets.length > 0 ? (
           <p className="mt-2 text-[11px] text-slate-500">
@@ -522,10 +635,16 @@ export function ExpenseInputModeFields({
           <strong> kategori</strong>, dan <strong>keterangan</strong> yang sama, lalu project dan
           nominal diisi manual per baris.
         </p>
+        <p className="mt-2 text-[11px] text-violet-700">
+          <strong>Mode Continue:</strong> isi form berulang, data dikumpulkan dulu. Tekan{" "}
+          <kbd className="rounded border border-violet-300 bg-violet-100 px-1 font-mono text-[10px]">Enter</kbd>{" "}
+          di nominal untuk tambah entry. Simpan semua sekaligus di akhir.
+        </p>
       </div>
 
       {mode === STANDARD_MODE ? (
         <>
+
           <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">
             Field wajib
           </div>
@@ -686,6 +805,169 @@ export function ExpenseInputModeFields({
             <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
               Mode transaksi untuk form ini otomatis <strong>Tambah</strong>.
             </p>
+          </div>
+        </>
+      ) : mode === CONTINUE_MODE ? (
+        <>
+          <div className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700">
+            Mode Continue aktif. Isi field di bawah, tekan{" "}
+            <kbd className="rounded border border-violet-300 bg-violet-100 px-1 font-mono text-[10px]">Enter</kbd>{" "}
+            di nominal atau klik <strong>Tambah Entry</strong>. Setelah semua selesai, klik{" "}
+            <strong>Simpan Semua</strong>.
+          </div>
+
+          {/* Form input continue */}
+          <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">Project</label>
+              <ProjectAutocomplete
+                projects={projects}
+                initialProjectId={initialProjectId}
+                onProjectIdChange={setContinueProjectId}
+                hiddenInputName={null}
+                required={false}
+              />
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-500">Kategori</label>
+                <select
+                  value={continueCategory}
+                  onChange={(e) => setContinueCategory(e.currentTarget.value)}
+                >
+                  {expenseCategories.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-500">Tanggal</label>
+                <input
+                  type="date"
+                  value={continueDate}
+                  onChange={(e) => setContinueDate(e.currentTarget.value)}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-500">Nama pengajuan</label>
+                <RequesterProjectAutocompleteInput
+                  name="continue_requester_name_preview"
+                  placeholder="Contoh: Mandor Lapangan"
+                  suggestions={requesterHistorySuggestions}
+                  projectClientNameById={projectClientNameById}
+                  currentProjectId={continueProjectId}
+                  value={continueRequester}
+                  onValueChange={setContinueRequester}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-500">Keterangan</label>
+                <ProjectScopedAutocompleteInput
+                  name="continue_description_preview"
+                  placeholder="Contoh: Material / Operasional"
+                  suggestionsByProject={descriptionSuggestionsForProjects}
+                  projectClientNameById={projectClientNameById}
+                  currentProjectId={continueProjectId}
+                  value={continueDescription}
+                  onValueChange={setContinueDescription}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">Nominal biaya total</label>
+              <div className="flex gap-2">
+                <div className="flex flex-1 overflow-hidden rounded-xl border border-slate-200 bg-white focus-within:border-violet-700 focus-within:shadow-[0_0_0_3px_rgba(109,40,217,0.14)]">
+                  <span className="inline-flex items-center border-r border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-600">
+                    Rp
+                  </span>
+                  <input
+                    ref={continueAmountInputRef}
+                    type="text"
+                    inputMode="numeric"
+                    value={continueAmountRaw ? formatThousands(continueAmountRaw) : ""}
+                    onChange={(e) => setContinueAmountRaw(normalizeDigits(e.currentTarget.value))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleContinueAdd();
+                      }
+                    }}
+                    placeholder="Contoh: 1.000.000"
+                    className="!rounded-none !border-0 !shadow-none focus:!border-0 focus:!shadow-none w-full"
+                  />
+                </div>
+                <button
+                  type="button"
+                  data-ui-button="true"
+                  onClick={handleContinueAdd}
+                  className="inline-flex items-center justify-center rounded-xl border border-violet-300 bg-violet-50 px-4 py-2 text-xs font-semibold text-violet-700 hover:bg-violet-100 whitespace-nowrap"
+                >
+                  + Tambah Entry
+                </button>
+              </div>
+            </div>
+
+            {continueError && (
+              <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                {continueError}
+              </p>
+            )}
+          </div>
+
+          {/* Daftar entry yang sudah ditambahkan */}
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-slate-700">
+                Daftar Entry ({continueEntries.length})
+              </p>
+              {continueEntries.length > 0 && (
+                <p className="text-xs font-semibold text-violet-700">
+                  Total: Rp {formatThousands(String(continueTotalAmount))}
+                </p>
+              )}
+            </div>
+            {continueEntries.length === 0 ? (
+              <p className="text-[11px] text-slate-400 text-center py-4">
+                Belum ada entry. Isi form di atas lalu tekan Tambah Entry.
+              </p>
+            ) : (
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                {continueEntries.map((entry, index) => (
+                  <div
+                    key={entry.id}
+                    className="flex items-start gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2"
+                  >
+                    <span className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-violet-100 text-[10px] font-bold text-violet-700">
+                      {index + 1}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold text-slate-800 truncate">{entry.projectName}</p>
+                      <p className="text-[11px] text-slate-500">
+                        {entry.requesterName} - {entry.description} - {entry.expenseDate}
+                      </p>
+                    </div>
+                    <p className="text-xs font-bold text-emerald-700 whitespace-nowrap">
+                      Rp {formatThousands(entry.amountRaw)}
+                    </p>
+                    <button
+                      type="button"
+                      data-ui-button="true"
+                      onClick={() => removeContinueEntry(entry.id)}
+                      className="text-[10px] font-semibold text-rose-500 hover:text-rose-700 whitespace-nowrap mt-0.5"
+                    >
+                      Hapus
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </>
       ) : mode === SCRAPER_MODE ? (
@@ -975,10 +1257,11 @@ export function ExpenseInputModeFields({
       )}
 
       <ExpenseSubmitButton
-        disabled={isHokSubmitDisabled || isScraperSubmitDisabled}
+        disabled={isHokSubmitDisabled || isScraperSubmitDisabled || isContinueSubmitDisabled}
         mode={mode}
         selectedHokRowCount={selectedHokRows.length}
         selectedScraperRowCount={completedScraperRows.length}
+        continueEntryCount={continueEntries.length}
       />
     </div>
   );

@@ -9,6 +9,9 @@ type ProjectScopedAutocompleteInputProps = {
   required?: boolean;
   projectFieldName?: string;
   projectClientNameById?: Record<string, string | null>;
+  currentProjectId?: string;
+  value?: string;
+  onValueChange?: (value: string) => void;
 };
 
 function normalizeText(value: string | null | undefined) {
@@ -81,23 +84,41 @@ export function ProjectScopedAutocompleteInput({
   required,
   projectFieldName = "project_id",
   projectClientNameById,
+  currentProjectId,
+  value,
+  onValueChange,
 }: ProjectScopedAutocompleteInputProps) {
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
-  const [value, setValue] = useState("");
-  const [projectId, setProjectId] = useState("");
+  const [internalValue, setInternalValue] = useState(value ?? "");
+  const [detectedProjectId, setDetectedProjectId] = useState(currentProjectId?.trim() ?? "");
+  const activeValue = value ?? internalValue;
+  const activeProjectId = currentProjectId?.trim() ?? detectedProjectId;
+
+  const updateValue = useCallback(
+    (nextValue: string) => {
+      if (value === undefined) {
+        setInternalValue(nextValue);
+      }
+      onValueChange?.(nextValue);
+    },
+    [onValueChange, value],
+  );
 
   const resolveCurrentProjectId = useCallback(() => {
+    if (typeof currentProjectId === "string") {
+      return currentProjectId.trim();
+    }
     const form = inputRef.current?.form;
     if (!(form instanceof HTMLFormElement)) {
       return "";
     }
     return getNamedFieldValue(form, projectFieldName).trim();
-  }, [projectFieldName]);
+  }, [currentProjectId, projectFieldName]);
 
   const syncCurrentProjectId = useCallback(() => {
     const currentProjectId = resolveCurrentProjectId();
-    setProjectId(currentProjectId);
+    setDetectedProjectId(currentProjectId);
     return currentProjectId;
   }, [resolveCurrentProjectId]);
 
@@ -122,15 +143,15 @@ export function ProjectScopedAutocompleteInput({
   }, [syncCurrentProjectId]);
 
   const visibleSuggestions = useMemo(() => {
-    return suggestionsByProject[projectId] ?? [];
-  }, [projectId, suggestionsByProject]);
+    return suggestionsByProject[activeProjectId] ?? [];
+  }, [activeProjectId, suggestionsByProject]);
 
   const currentClientScopeName = useMemo(() => {
-    if (!projectId) {
+    if (!activeProjectId) {
       return "";
     }
-    return resolveClientScopeName(projectClientNameById?.[projectId] ?? null);
-  }, [projectClientNameById, projectId]);
+    return resolveClientScopeName(projectClientNameById?.[activeProjectId] ?? null);
+  }, [activeProjectId, projectClientNameById]);
 
   const applyBestMatch = useCallback(
     (inputValue: string, activeSuggestions: string[]) => {
@@ -170,8 +191,8 @@ export function ProjectScopedAutocompleteInput({
       <input
         ref={inputRef}
         name={name}
-        value={value}
-        onChange={(event) => setValue(event.currentTarget.value)}
+        value={activeValue}
+        onChange={(event) => updateValue(event.currentTarget.value)}
         onFocus={() => {
           syncCurrentProjectId();
         }}
@@ -188,7 +209,7 @@ export function ProjectScopedAutocompleteInput({
           const activeSuggestions = suggestionsByProject[currentProjectId] ?? [];
           const bestMatch = applyBestMatch(event.currentTarget.value, activeSuggestions);
           if (bestMatch && bestMatch !== event.currentTarget.value) {
-            setValue(bestMatch);
+            updateValue(bestMatch);
           }
 
           requestAnimationFrame(() => {
@@ -202,10 +223,10 @@ export function ProjectScopedAutocompleteInput({
       />
       <datalist id={listId}>
         {visibleSuggestions.map((item) => (
-          <option key={`${projectId}-${item}`} value={item} />
+          <option key={`${activeProjectId}-${item}`} value={item} />
         ))}
       </datalist>
-      {projectId ? (
+      {activeProjectId ? (
         visibleSuggestions.length > 0 ? (
           <p className="text-[11px] text-slate-500">
             Saran keterangan mengikuti histori klien {currentClientScopeName}.

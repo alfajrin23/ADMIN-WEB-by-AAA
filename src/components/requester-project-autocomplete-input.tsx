@@ -17,6 +17,9 @@ type RequesterProjectAutocompleteInputProps = {
   required?: boolean;
   projectFieldName?: string;
   projectClientNameById?: Record<string, string | null>;
+  currentProjectId?: string;
+  value?: string;
+  onValueChange?: (value: string) => void;
 };
 
 function normalizeText(value: string | null | undefined) {
@@ -104,23 +107,41 @@ export function RequesterProjectAutocompleteInput({
   required,
   projectFieldName = "project_id",
   projectClientNameById,
+  currentProjectId,
+  value,
+  onValueChange,
 }: RequesterProjectAutocompleteInputProps) {
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
-  const [value, setValue] = useState("");
-  const [projectId, setProjectId] = useState("");
+  const [internalValue, setInternalValue] = useState(value ?? "");
+  const [detectedProjectId, setDetectedProjectId] = useState(currentProjectId?.trim() ?? "");
+  const activeValue = value ?? internalValue;
+  const activeProjectId = currentProjectId?.trim() ?? detectedProjectId;
+
+  const updateValue = useCallback(
+    (nextValue: string) => {
+      if (value === undefined) {
+        setInternalValue(nextValue);
+      }
+      onValueChange?.(nextValue);
+    },
+    [onValueChange, value],
+  );
 
   const resolveCurrentProjectId = useCallback(() => {
+    if (typeof currentProjectId === "string") {
+      return currentProjectId.trim();
+    }
     const form = inputRef.current?.form;
     if (!(form instanceof HTMLFormElement)) {
       return "";
     }
     return getNamedFieldValue(form, projectFieldName).trim();
-  }, [projectFieldName]);
+  }, [currentProjectId, projectFieldName]);
 
   const syncCurrentProjectId = useCallback(() => {
     const currentProjectId = resolveCurrentProjectId();
-    setProjectId(currentProjectId);
+    setDetectedProjectId(currentProjectId);
     return currentProjectId;
   }, [resolveCurrentProjectId]);
 
@@ -144,7 +165,7 @@ export function RequesterProjectAutocompleteInput({
     };
   }, [syncCurrentProjectId]);
 
-  const normalizedValue = normalizeText(value);
+  const normalizedValue = normalizeText(activeValue);
 
   const dedupedSuggestions = useMemo(() => {
     const unique = new Map<string, RequesterProjectSuggestion>();
@@ -167,18 +188,18 @@ export function RequesterProjectAutocompleteInput({
   }, [suggestions]);
 
   const currentClientScopeName = useMemo(() => {
-    if (!projectId) {
+    if (!activeProjectId) {
       return "";
     }
-    return resolveClientScopeName(projectClientNameById?.[projectId] ?? null);
-  }, [projectClientNameById, projectId]);
+    return resolveClientScopeName(projectClientNameById?.[activeProjectId] ?? null);
+  }, [activeProjectId, projectClientNameById]);
 
   const currentClientScopeKey = useMemo(() => {
-    if (!projectId) {
+    if (!activeProjectId) {
       return "";
     }
-    return resolveClientScopeKey(projectClientNameById?.[projectId] ?? null);
-  }, [projectClientNameById, projectId]);
+    return resolveClientScopeKey(projectClientNameById?.[activeProjectId] ?? null);
+  }, [activeProjectId, projectClientNameById]);
 
   const scopedSuggestions = useMemo(() => {
     if (!currentClientScopeKey) {
@@ -283,9 +304,9 @@ export function RequesterProjectAutocompleteInput({
       <input
         ref={inputRef}
         name={name}
-        value={value}
+        value={activeValue}
         onChange={(event) => {
-          setValue(event.currentTarget.value);
+          updateValue(event.currentTarget.value);
         }}
         onFocus={() => {
           syncCurrentProjectId();
@@ -301,7 +322,7 @@ export function RequesterProjectAutocompleteInput({
 
           const bestMatch = applyBestRequesterMatch(event.currentTarget.value);
           if (bestMatch && bestMatch !== event.currentTarget.value) {
-            setValue(bestMatch);
+            updateValue(bestMatch);
           }
 
           requestAnimationFrame(() => {
@@ -337,7 +358,7 @@ export function RequesterProjectAutocompleteInput({
               <span
                 key={`${option.projectId}|${option.requesterName}`}
                 className={`inline-flex items-center rounded-lg border px-2 py-1 text-[11px] font-semibold ${
-                  projectId === option.projectId
+                  activeProjectId === option.projectId
                     ? "border-emerald-300 bg-emerald-100 text-emerald-700"
                     : "border-amber-300 bg-white text-amber-700"
                 }`}
@@ -367,11 +388,11 @@ export function RequesterProjectAutocompleteInput({
             ))}
           </div>
         </div>
-      ) : projectId && requesterNameSuggestions.length === 0 ? (
+      ) : activeProjectId && requesterNameSuggestions.length === 0 ? (
         <p className="text-[11px] text-slate-500">
           Belum ada histori nama pengajuan untuk klien {currentClientScopeName}.
         </p>
-      ) : projectId ? (
+      ) : activeProjectId ? (
         <p className="text-[11px] text-slate-500">
           Saran nama pengajuan mengikuti histori klien {currentClientScopeName}.
         </p>

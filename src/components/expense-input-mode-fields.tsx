@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent } from "react";
 import { useFormStatus } from "react-dom";
 import { EnterToNextField } from "@/components/enter-to-next-field";
 import { ProjectAutocomplete } from "@/components/project-autocomplete";
@@ -8,7 +8,8 @@ import { ProjectChecklistSearch } from "@/components/project-checklist-search";
 import { ProjectScopedAutocompleteInput } from "@/components/project-scoped-autocomplete-input";
 import { RequesterProjectAutocompleteInput } from "@/components/requester-project-autocomplete-input";
 import { RupiahInput } from "@/components/rupiah-input";
-import { SaveIcon } from "@/components/icons";
+import { ClipboardIcon, ExcelIcon, SaveIcon } from "@/components/icons";
+import { parseHokClipboardText, parseHokImportRows, type HokImportResult } from "@/lib/hok-import";
 import { SPECIALIST_COST_PRESETS } from "@/lib/constants";
 
 type ProjectOption = {
@@ -41,8 +42,15 @@ type HokProjectPreset = {
 };
 
 type HokProjectRow = HokProjectPreset & {
+  defaultRequesterName: string;
   amountRaw: string;
   selected: boolean;
+};
+
+type HokImportFeedback = {
+  tone: "success" | "warning" | "error";
+  title: string;
+  details: string[];
 };
 
 type ScraperRow = {
@@ -80,6 +88,7 @@ const HOK_MODE = "hok_kmp_cianjur";
 const SCRAPER_MODE = "scraper";
 const CONTINUE_MODE = "continue";
 const EXPENSE_PROJECT_REFOCUS_KEY = "expense-modal-refocus-project";
+const HOK_EXCEL_ACCEPT = ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 type ExpenseInputMode = typeof STANDARD_MODE | typeof HOK_MODE | typeof SCRAPER_MODE | typeof CONTINUE_MODE;
 
 function normalizeText(value: string | null | undefined) {
@@ -101,6 +110,7 @@ function formatThousands(value: string) {
 function createInitialHokRows(rows: HokProjectPreset[]): HokProjectRow[] {
   return rows.map((row) => ({
     ...row,
+    defaultRequesterName: row.requesterName,
     amountRaw: "",
     selected: row.defaultSelected,
   }));
@@ -153,6 +163,69 @@ function createExpenseSubmissionToken() {
     return crypto.randomUUID();
   }
   return `expense-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function formatHokImportIssuePreview(
+  rows: Array<{ rowNumber: number; sourceProjectName: string }>,
+  emptyLabel: string,
+) {
+  return rows
+    .slice(0, 3)
+    .map((row) => `baris ${row.rowNumber} (${row.sourceProjectName || emptyLabel})`)
+    .join(", ");
+}
+
+function buildHokImportFeedback(result: HokImportResult, sourceLabel: string): HokImportFeedback {
+  if (result.parsedRowCount === 0) {
+    return {
+      tone: "error",
+      title: `Tidak ada data HOK yang terbaca dari ${sourceLabel}.`,
+      details: ["Pastikan sheet atau hasil paste berisi tabel project dan nominal."],
+    };
+  }
+
+  const details: string[] = [];
+  if (result.matchedRows.length > 0) {
+    details.push(`${result.matchedRows.length} project cocok dan dipilih otomatis.`);
+  }
+  if (result.unmatchedRows.length > 0) {
+    details.push(
+      `${result.unmatchedRows.length} project tidak dikenali, misalnya ${formatHokImportIssuePreview(
+        result.unmatchedRows,
+        "tanpa nama project",
+      )}.`,
+    );
+  }
+  if (result.invalidRows.length > 0) {
+    details.push(
+      `${result.invalidRows.length} baris diabaikan karena project atau nominal belum lengkap.`,
+    );
+  }
+  if (result.duplicateRows.length > 0) {
+    details.push(
+      `${result.duplicateRows.length} duplikasi project ditemukan. Nominal pada baris terakhir yang dipakai.`,
+    );
+  }
+
+  if (result.matchedRows.length === 0) {
+    return {
+      tone: "error",
+      title: `Tidak ada project HOK yang cocok dari ${sourceLabel}.`,
+      details:
+        details.length > 0
+          ? details
+          : ["Periksa nama project pada file atau hasil paste agar sesuai dengan daftar project HOK."],
+    };
+  }
+
+  return {
+    tone:
+      result.unmatchedRows.length > 0 || result.invalidRows.length > 0 || result.duplicateRows.length > 0
+        ? "warning"
+        : "success",
+    title: `Import HOK dari ${sourceLabel} selesai.`,
+    details,
+  };
 }
 
 function ExpenseSubmitButton({
@@ -208,11 +281,16 @@ export function ExpenseInputModeFields({
 }: ExpenseInputModeFieldsProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
+  const hokExcelInputRef = useRef<HTMLInputElement>(null);
   const [submissionToken] = useState(createExpenseSubmissionToken);
   const [mode, setMode] = useState<ExpenseInputMode>(STANDARD_MODE);
   const [hokQuery, setHokQuery] = useState("");
   const [hokRows, setHokRows] = useState<HokProjectRow[]>(() => createInitialHokRows(hokProjectPresets));
   const [hokError, setHokError] = useState("");
+  const [hokPasteText, setHokPasteText] = useState("");
+  const [hokImportFeedback, setHokImportFeedback] = useState<HokImportFeedback | null>(null);
+  const [isHokFileImporting, setIsHokFileImporting] = useState(false);
+  const [isReadingHokClipboard, setIsReadingHokClipboard] = useState(false);
   const [scraperRows, setScraperRows] = useState<ScraperRow[]>(() =>
     createInitialScraperRows(initialProjectId),
   );
@@ -231,6 +309,7 @@ export function ExpenseInputModeFields({
 
   useEffect(() => {
     setHokRows(createInitialHokRows(hokProjectPresets));
+    setHokImportFeedback(null);
   }, [hokProjectPresets]);
 
   useEffect(() => {
@@ -265,6 +344,11 @@ export function ExpenseInputModeFields({
     const selectedRows = hokRows.filter((row) => row.selected);
     if (selectedRows.length === 0) {
       return "Pilih minimal satu project HOK yang ingin disimpan.";
+    }
+
+    const missingRequesterRows = selectedRows.filter((row) => row.requesterName.trim().length === 0);
+    if (missingRequesterRows.length > 0) {
+      return `Nama pengajuan wajib diisi untuk ${missingRequesterRows.length} project terpilih.`;
     }
 
     const incompleteRows = selectedRows.filter((row) => {
@@ -409,19 +493,31 @@ export function ExpenseInputModeFields({
     }
 
     return hokRows.filter((row) =>
-      normalizeText([row.projectName, row.requesterName, row.clientName].join(" ")).includes(
+      normalizeText([row.projectName, row.requesterName, row.defaultRequesterName, row.clientName].join(" ")).includes(
         normalizedHokQuery,
       ),
     );
   }, [hokRows, normalizedHokQuery]);
 
   const selectedHokRows = useMemo(() => hokRows.filter((row) => row.selected), [hokRows]);
+  const hokRowsMissingRequester = useMemo(
+    () => selectedHokRows.filter((row) => row.requesterName.trim().length === 0),
+    [selectedHokRows],
+  );
   const hokRowsMissingAmount = useMemo(
     () =>
       selectedHokRows.filter((row) => {
         const amount = Number(normalizeDigits(row.amountRaw));
         return !Number.isFinite(amount) || amount <= 0;
       }),
+    [selectedHokRows],
+  );
+  const selectedHokTotalAmount = useMemo(
+    () =>
+      selectedHokRows.reduce((sum, row) => {
+        const amount = Number(normalizeDigits(row.amountRaw));
+        return sum + (Number.isFinite(amount) ? amount : 0);
+      }, 0),
     [selectedHokRows],
   );
   const hokPayload = useMemo(
@@ -438,7 +534,12 @@ export function ExpenseInputModeFields({
   );
   const isHokSubmitDisabled =
     mode === HOK_MODE &&
-    (selectedHokRows.length === 0 || hokRowsMissingAmount.length > 0 || hokProjectPresets.length === 0);
+    (
+      selectedHokRows.length === 0 ||
+      hokRowsMissingRequester.length > 0 ||
+      hokRowsMissingAmount.length > 0 ||
+      hokProjectPresets.length === 0
+    );
   const activeScraperRows = useMemo(
     () =>
       scraperRows.filter(
@@ -483,7 +584,10 @@ export function ExpenseInputModeFields({
     mode === SCRAPER_MODE &&
     (completedScraperRows.length === 0 || scraperRowsInvalid.length > 0 || scraperHasDuplicateProjects);
 
-  const updateHokRow = (projectId: string, patch: Partial<Pick<HokProjectRow, "selected" | "amountRaw">>) => {
+  const updateHokRow = (
+    projectId: string,
+    patch: Partial<Pick<HokProjectRow, "selected" | "amountRaw" | "requesterName">>,
+  ) => {
     setHokRows((prev) =>
       prev.map((row) => (row.projectId === projectId ? { ...row, ...patch } : row)),
     );
@@ -519,6 +623,143 @@ export function ExpenseInputModeFields({
       ),
     );
   };
+
+  const applyHokImportResult = useCallback((result: HokImportResult, sourceLabel: string) => {
+    const feedback = buildHokImportFeedback(result, sourceLabel);
+    if (result.matchedRows.length > 0) {
+      const matchedRowByProjectId = new Map(result.matchedRows.map((row) => [row.projectId, row] as const));
+      setHokRows((prev) =>
+        prev.map((row) => {
+          const matchedRow = matchedRowByProjectId.get(row.projectId);
+          if (!matchedRow) {
+            return row;
+          }
+          return {
+            ...row,
+            selected: true,
+            amountRaw: matchedRow.amountRaw,
+            requesterName: matchedRow.requesterName.trim() || row.requesterName,
+          };
+        }),
+      );
+      setHokError("");
+    }
+    setHokImportFeedback(feedback);
+  }, []);
+
+  const applyHokClipboardImport = useCallback(
+    (text: string, sourceLabel: string) => {
+      if (hokProjectPresets.length === 0) {
+        setHokImportFeedback({
+          tone: "error",
+          title: "Mode HOK belum punya project yang bisa dipakai.",
+          details: ["Tambahkan project klien KMP Cianjur terlebih dahulu."],
+        });
+        return;
+      }
+
+      if (!text.trim()) {
+        setHokImportFeedback({
+          tone: "error",
+          title: `Data ${sourceLabel} masih kosong.`,
+          details: ["Paste data Excel dulu, lalu jalankan proses impor HOK."],
+        });
+        return;
+      }
+
+      const result = parseHokClipboardText(text, hokProjectPresets);
+      applyHokImportResult(result, sourceLabel);
+    },
+    [applyHokImportResult, hokProjectPresets],
+  );
+
+  const handleHokPasteAreaPaste = useCallback(
+    (event: ClipboardEvent<HTMLTextAreaElement>) => {
+      const pastedText = event.clipboardData.getData("text");
+      if (!pastedText.trim()) {
+        return;
+      }
+      event.preventDefault();
+      setHokPasteText(pastedText);
+      applyHokClipboardImport(pastedText, "paste Excel");
+    },
+    [applyHokClipboardImport],
+  );
+
+  const handleReadHokClipboard = useCallback(async () => {
+    if (!navigator.clipboard?.readText) {
+      setHokImportFeedback({
+        tone: "error",
+        title: "Clipboard browser tidak tersedia.",
+        details: ["Gunakan Ctrl+V pada area paste jika tombol clipboard tidak bisa dipakai."],
+      });
+      return;
+    }
+
+    setIsReadingHokClipboard(true);
+    try {
+      const clipboardText = await navigator.clipboard.readText();
+      setHokPasteText(clipboardText);
+      applyHokClipboardImport(clipboardText, "clipboard");
+    } catch {
+      setHokImportFeedback({
+        tone: "error",
+        title: "Gagal membaca clipboard.",
+        details: ["Izin clipboard mungkin ditolak. Gunakan Ctrl+V pada area paste."],
+      });
+    } finally {
+      setIsReadingHokClipboard(false);
+    }
+  }, [applyHokClipboardImport]);
+
+  const handleHokExcelFileChange = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.currentTarget.files?.[0];
+      if (!file) {
+        return;
+      }
+
+      setIsHokFileImporting(true);
+      try {
+        const [XLSX, fileBuffer] = await Promise.all([import("xlsx/xlsx.mjs"), file.arrayBuffer()]);
+        const workbook = XLSX.read(fileBuffer, {
+          type: "array",
+          cellDates: false,
+          raw: false,
+        });
+        const firstSheetName = workbook.SheetNames[0];
+        if (!firstSheetName) {
+          setHokImportFeedback({
+            tone: "error",
+            title: `File ${file.name} tidak memiliki sheet yang bisa dibaca.`,
+            details: ["Pastikan file .xlsx berisi minimal satu sheet tabel HOK."],
+          });
+          return;
+        }
+
+        const worksheet = workbook.Sheets[firstSheetName];
+        const rows = XLSX.utils.sheet_to_json<Array<unknown>>(worksheet, {
+          header: 1,
+          defval: "",
+          raw: false,
+        });
+        const result = parseHokImportRows(rows, hokProjectPresets);
+        applyHokImportResult(result, file.name);
+      } catch (error) {
+        const message = error instanceof Error && error.message.trim() ? error.message.trim() : "File tidak valid.";
+        setHokImportFeedback({
+          tone: "error",
+          title: `Gagal membaca file ${file.name}.`,
+          details: [message],
+        });
+      } finally {
+        event.currentTarget.value = "";
+        setIsHokFileImporting(false);
+      }
+    },
+    [applyHokImportResult, hokProjectPresets],
+  );
+
 
   const handleContinueAdd = useCallback(() => {
     const projectId = continueProjectId.trim();
@@ -1144,9 +1385,9 @@ export function ExpenseInputModeFields({
         <>
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
             Mode HOK aktif. Tanggal sama untuk semua project, kategori otomatis Upah / Kasbon Tukang,
-            dan keterangan otomatis HOK.
+            keterangan tetap HOK, dan nama pengajuan bisa diedit per project.
           </div>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 lg:grid-cols-[repeat(3,minmax(0,1fr))]">
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">Tanggal HOK</label>
               <input type="date" name="expense_date" defaultValue={today} required />
@@ -1166,11 +1407,114 @@ export function ExpenseInputModeFields({
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold text-slate-700">Import cepat dari Excel</p>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Dukungan format paling umum: <strong>Project | Nama Pengajuan | Nominal</strong> atau{" "}
+                  <strong>Project | Nominal</strong>. Jika kolom nama pengajuan tidak ada, sistem
+                  akan memakai nilai yang sudah tersimpan di daftar HOK.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <input
+                  ref={hokExcelInputRef}
+                  type="file"
+                  accept={HOK_EXCEL_ACCEPT}
+                  className="sr-only"
+                  onChange={handleHokExcelFileChange}
+                />
+                <button
+                  type="button"
+                  data-ui-button="true"
+                  className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => hokExcelInputRef.current?.click()}
+                  disabled={isHokFileImporting}
+                >
+                  <span className="btn-icon bg-emerald-100 text-emerald-700">
+                    <ExcelIcon />
+                  </span>
+                  {isHokFileImporting ? "Membaca File..." : "Import File Excel"}
+                </button>
+                <button
+                  type="button"
+                  data-ui-button="true"
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={handleReadHokClipboard}
+                  disabled={isReadingHokClipboard}
+                >
+                  <span className="btn-icon bg-slate-100 text-slate-700">
+                    <ClipboardIcon />
+                  </span>
+                  {isReadingHokClipboard ? "Membaca Clipboard..." : "Baca Clipboard"}
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-500">
+                  Paste data copy dari Excel
+                </label>
+                <textarea
+                  value={hokPasteText}
+                  onChange={(event) => setHokPasteText(event.currentTarget.value)}
+                  onPaste={handleHokPasteAreaPaste}
+                  rows={5}
+                  placeholder={"Paste di sini, misalnya:\nProject Alpha\tMandor A\t1500000"}
+                  className="min-h-[132px] w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-emerald-700 focus:shadow-[0_0_0_3px_rgba(5,150,105,0.14)]"
+                />
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    data-ui-button="true"
+                    className="button-soft button-xs"
+                    onClick={() => applyHokClipboardImport(hokPasteText, "paste manual")}
+                  >
+                    Proses Data Paste
+                  </button>
+                  <button
+                    type="button"
+                    data-ui-button="true"
+                    className="button-soft button-xs"
+                    onClick={() => setHokPasteText("")}
+                  >
+                    Bersihkan Paste
+                  </button>
+                </div>
+              </div>
+
+            </div>
+
+            {hokImportFeedback ? (
+              <div
+                className={`mt-3 rounded-xl border px-3 py-2 text-xs ${
+                  hokImportFeedback.tone === "success"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : hokImportFeedback.tone === "warning"
+                      ? "border-amber-200 bg-amber-50 text-amber-800"
+                      : "border-rose-200 bg-rose-50 text-rose-700"
+                }`}
+              >
+                <p className="font-semibold">{hokImportFeedback.title}</p>
+                {hokImportFeedback.details.length > 0 ? (
+                  <div className="mt-1 space-y-1">
+                    {hokImportFeedback.details.map((detail) => (
+                      <p key={detail}>{detail}</p>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <p className="text-xs font-semibold text-slate-700">Daftar project HOK KMP Cianjur</p>
                 <p className="text-[11px] text-slate-500">
-                  Centang project yang ikut HOK, lalu isi nominal total masing-masing project.
+                  Centang project yang ikut HOK, edit nama pengajuan bila perlu, lalu isi nominal
+                  total masing-masing project.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -1209,9 +1553,24 @@ export function ExpenseInputModeFields({
               </p>
             </div>
 
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <p className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600">
+                {hokRowsMissingRequester.length} nama pengajuan kosong
+              </p>
+              <p className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600">
+                {visibleHokRows.length} project tampil
+              </p>
+              <p className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600">
+                Total terpilih: Rp {formatThousands(String(selectedHokTotalAmount))}
+              </p>
+              <p className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600">
+                Default client: KMP Cianjur
+              </p>
+            </div>
+
             <div className="mt-3 max-h-[26rem] overflow-y-auto rounded-xl border border-slate-200 bg-white">
-              <div className="grid min-w-[760px] grid-cols-[auto_minmax(220px,1.3fr)_minmax(220px,1fr)_180px] gap-3 border-b border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                <span>Pilih</span>
+              <div className="grid grid-cols-[24px_minmax(120px,1.2fr)_minmax(120px,1fr)_180px] gap-3 border-b border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                <span></span>
                 <span>Project</span>
                 <span>Nama Pengajuan</span>
                 <span>Nominal HOK</span>
@@ -1225,7 +1584,7 @@ export function ExpenseInputModeFields({
                     return (
                       <div
                         key={row.projectId}
-                        className={`grid min-w-[760px] grid-cols-[auto_minmax(220px,1.3fr)_minmax(220px,1fr)_180px] items-start gap-3 px-3 py-3 ${
+                        className={`grid grid-cols-[24px_minmax(120px,1.2fr)_minmax(120px,1fr)_180px] items-start gap-3 px-3 py-3 ${
                           row.selected ? "bg-white" : "bg-slate-50/70"
                         }`}
                       >
@@ -1244,10 +1603,18 @@ export function ExpenseInputModeFields({
                             {row.clientName ?? "Tanpa klien"}
                           </p>
                         </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-slate-800">{row.requesterName}</p>
+                        <div>
+                           <input
+                            type="text"
+                            value={row.requesterName}
+                            onChange={(event) =>
+                              updateHokRow(row.projectId, { requesterName: event.currentTarget.value })
+                            }
+                            placeholder="Isi nama pengajuan"
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none transition focus:border-emerald-700 focus:shadow-[0_0_0_3px_rgba(5,150,105,0.14)]"
+                          />
                           <p className="mt-1 text-[11px] text-slate-500">
-                            {getRequesterSourceLabel(row.requesterSource)}
+                            Default: {row.defaultRequesterName} | {getRequesterSourceLabel(row.requesterSource)}
                           </p>
                         </div>
                         <div>

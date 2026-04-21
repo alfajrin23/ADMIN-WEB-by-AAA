@@ -1026,7 +1026,7 @@ export async function createHokExpenseEntries(
     return;
   }
 
-  const rows = parsedRows
+  const parsedCandidateRows = parsedRows
     .map((item) => {
       if (!item || typeof item !== "object") {
         return null;
@@ -1045,7 +1045,7 @@ export async function createHokExpenseEntries(
           ? (item as { requesterName: string }).requesterName.trim()
           : "";
       const amount = parsePositiveAmount((item as { amount?: unknown }).amount);
-      if (!projectId || !projectName || !requesterName || amount <= 0) {
+      if (!projectId || !projectName) {
         return null;
       }
 
@@ -1058,18 +1058,48 @@ export async function createHokExpenseEntries(
     })
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
 
-  if (rows.length === 0) {
+  if (parsedCandidateRows.length === 0) {
     if (errorReturnTo) {
       redirect(
         withReturnMessage(
           errorReturnTo,
           "error",
-          "Nominal HOK wajib diisi untuk setiap project yang dipilih.",
+          "Data project HOK tidak lengkap. Pastikan nama pengajuan dan nominal terisi.",
         ),
       );
     }
     return;
   }
+
+  const missingRequesterCount = parsedCandidateRows.filter((row) => !row.requesterName).length;
+  if (missingRequesterCount > 0) {
+    if (errorReturnTo) {
+      redirect(
+        withReturnMessage(
+          errorReturnTo,
+          "error",
+          `Nama pengajuan wajib diisi untuk ${missingRequesterCount} project HOK.`,
+        ),
+      );
+    }
+    return;
+  }
+
+  const missingAmountCount = parsedCandidateRows.filter((row) => row.amount <= 0).length;
+  if (missingAmountCount > 0) {
+    if (errorReturnTo) {
+      redirect(
+        withReturnMessage(
+          errorReturnTo,
+          "error",
+          `Nominal HOK wajib diisi untuk ${missingAmountCount} project yang dipilih.`,
+        ),
+      );
+    }
+    return;
+  }
+
+  const rows = parsedCandidateRows;
 
   const expenseDate = getString(formData, "expense_date") || new Date().toISOString().slice(0, 10);
   const basePayload = {

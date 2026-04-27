@@ -598,7 +598,7 @@ export function ExpenseInputModeFields({
 
   const updateHokRow = (
     projectId: string,
-    patch: Partial<Pick<HokProjectRow, "selected" | "amountRaw" | "requesterName">>,
+    patch: Partial<Pick<HokProjectRow, "selected" | "amountRaw" | "requesterName" | "isRequesterEditable">>,
   ) => {
     setHokRows((prev) =>
       prev.map((row) => (row.projectId === projectId ? { ...row, ...patch } : row)),

@@ -17,6 +17,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.95.3",
     "firebase-admin": "^13.6.0",
+    "googleapis": "^171.4.0",
     "next": "16.1.6",
     "pdf-lib": "^1.17.1",
     "react": "19.2.3",

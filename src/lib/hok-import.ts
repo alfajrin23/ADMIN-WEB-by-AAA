@@ -158,6 +158,34 @@ function detectHeaderColumns(row: string[]) {
   };
 }
 
+function diceCoefficient(str1: string, str2: string): number {
+  const s1 = str1.replace(/\s+/g, "");
+  const s2 = str2.replace(/\s+/g, "");
+  if (s1 === s2) return 1;
+  if (s1.length < 2 || s2.length < 2) return s1 === s2 ? 1 : 0;
+  
+  let bigrams1 = [];
+  for (let i = 0; i < s1.length - 1; i++) {
+    bigrams1.push(s1.slice(i, i + 2));
+  }
+  let bigrams2 = [];
+  for (let i = 0; i < s2.length - 1; i++) {
+    bigrams2.push(s2.slice(i, i + 2));
+  }
+
+  let intersection = 0;
+  let bg2Copy = [...bigrams2];
+  for (let i = 0; i < bigrams1.length; i++) {
+    const index = bg2Copy.indexOf(bigrams1[i]);
+    if (index > -1) {
+      intersection++;
+      bg2Copy.splice(index, 1);
+    }
+  }
+
+  return (2.0 * intersection) / (bigrams1.length + bigrams2.length);
+}
+
 function matchPresetByProjectName(value: string, presets: HokImportPreset[]) {
   const normalizedValue = normalizeLookupText(value);
   const normalizedKey = normalizedValue.replace(/\s+/g, "");
@@ -223,6 +251,31 @@ function matchPresetByProjectName(value: string, presets: HokImportPreset[]) {
     });
     if (substringCandidates.length === 1) {
       return substringCandidates[0];
+    }
+  }
+
+  // 4. Fuzzy match using Dice Coefficient
+  if (normalizedKey.length >= 4) {
+    let bestFuzzyMatch: HokImportPreset | null = null;
+    let maxFuzzyScore = 0;
+    
+    for (const preset of presets) {
+      const presetProjectKey = normalizeLookupKey(preset.projectName);
+      const presetClientKey = normalizeLookupKey(preset.clientName ?? "");
+      
+      const score1 = diceCoefficient(normalizedKey, presetProjectKey);
+      const score2 = presetClientKey ? diceCoefficient(normalizedKey, presetProjectKey + presetClientKey) : 0;
+      const score = Math.max(score1, score2);
+      
+      if (score > maxFuzzyScore) {
+        maxFuzzyScore = score;
+        bestFuzzyMatch = preset;
+      }
+    }
+    
+    // Configurable threshold: 0.6 is usually good for typos.
+    if (maxFuzzyScore >= 0.6) {
+      return bestFuzzyMatch;
     }
   }
 

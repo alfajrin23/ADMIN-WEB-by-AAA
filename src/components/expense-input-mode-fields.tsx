@@ -45,12 +45,18 @@ type HokProjectRow = HokProjectPreset & {
   defaultRequesterName: string;
   amountRaw: string;
   selected: boolean;
+  isRequesterEditable?: boolean;
 };
 
 type HokImportFeedback = {
   tone: "success" | "warning" | "error";
   title: string;
   details: string[];
+  issues?: {
+    unmatchedRows: HokImportResult["unmatchedRows"];
+    invalidRows: HokImportResult["invalidRows"];
+    duplicateRows: HokImportResult["duplicateRows"];
+  };
 };
 
 type ScraperRow = {
@@ -113,6 +119,7 @@ function createInitialHokRows(rows: HokProjectPreset[]): HokProjectRow[] {
     defaultRequesterName: row.requesterName,
     amountRaw: "",
     selected: row.defaultSelected,
+    isRequesterEditable: false,
   }));
 }
 
@@ -225,6 +232,11 @@ function buildHokImportFeedback(result: HokImportResult, sourceLabel: string): H
         : "success",
     title: `Import HOK dari ${sourceLabel} selesai.`,
     details,
+    issues: {
+      unmatchedRows: result.unmatchedRows,
+      invalidRows: result.invalidRows,
+      duplicateRows: result.duplicateRows,
+    },
   };
 }
 
@@ -638,7 +650,10 @@ export function ExpenseInputModeFields({
             ...row,
             selected: true,
             amountRaw: matchedRow.amountRaw,
-            requesterName: matchedRow.requesterName.trim() || row.requesterName,
+            requesterName: result.headerDetected && matchedRow.requesterName.trim() 
+                             ? matchedRow.requesterName.trim() 
+                             : row.requesterName,
+            isRequesterEditable: false,
           };
         }),
       );
@@ -1504,6 +1519,54 @@ export function ExpenseInputModeFields({
                     ))}
                   </div>
                 ) : null}
+
+                {(hokImportFeedback.issues?.unmatchedRows && hokImportFeedback.issues.unmatchedRows.length > 0) ? (
+                  <details className="mt-2 group">
+                    <summary className="cursor-pointer font-semibold opacity-80 hover:opacity-100 flex items-center gap-1">
+                      <svg className="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                      Daftar Project Tidak Dikenali ({hokImportFeedback.issues.unmatchedRows.length})
+                    </summary>
+                    <ul className="mt-1 ml-6 list-disc space-y-0.5 opacity-90 max-h-40 overflow-y-auto pr-2">
+                      {hokImportFeedback.issues.unmatchedRows.map((r, idx) => (
+                        <li key={idx}>Baris {r.rowNumber}: "{r.sourceProjectName || "Tanpa Nama"}"</li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
+
+                {(hokImportFeedback.issues?.invalidRows && hokImportFeedback.issues.invalidRows.length > 0) ? (
+                  <details className="mt-2 group">
+                    <summary className="cursor-pointer font-semibold opacity-80 hover:opacity-100 flex items-center gap-1">
+                      <svg className="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                      Daftar Baris Tidak Valid ({hokImportFeedback.issues.invalidRows.length})
+                    </summary>
+                    <ul className="mt-1 ml-6 list-disc space-y-0.5 opacity-90 max-h-40 overflow-y-auto pr-2">
+                      {hokImportFeedback.issues.invalidRows.map((r, idx) => (
+                        <li key={idx}>Baris {r.rowNumber}: "{r.sourceProjectName || "Tanpa Nama"}" - {r.reason === "missing_project" ? "Project kosong" : "Nominal kosong/tidak valid"}</li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
+
+                {(hokImportFeedback.issues?.duplicateRows && hokImportFeedback.issues.duplicateRows.length > 0) ? (
+                  <details className="mt-2 group">
+                    <summary className="cursor-pointer font-semibold opacity-80 hover:opacity-100 flex items-center gap-1">
+                      <svg className="w-4 h-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                      Daftar Duplikasi Project ({hokImportFeedback.issues.duplicateRows.length})
+                    </summary>
+                    <ul className="mt-1 ml-6 list-disc space-y-0.5 opacity-90 max-h-40 overflow-y-auto pr-2">
+                      {hokImportFeedback.issues.duplicateRows.map((r, idx) => (
+                        <li key={idx}>Baris {r.rowNumber}: "{r.sourceProjectName}" (Project ditimpa nominal baru)</li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -1604,15 +1667,50 @@ export function ExpenseInputModeFields({
                           </p>
                         </div>
                         <div>
-                           <input
-                            type="text"
-                            value={row.requesterName}
-                            onChange={(event) =>
-                              updateHokRow(row.projectId, { requesterName: event.currentTarget.value })
-                            }
-                            placeholder="Isi nama pengajuan"
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none transition focus:border-emerald-700 focus:shadow-[0_0_0_3px_rgba(5,150,105,0.14)]"
-                          />
+                          {!row.isRequesterEditable ? (
+                            <div className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 min-h-[34px]">
+                              <span className="text-xs font-semibold text-slate-800 truncate mr-2" title={row.requesterName || row.defaultRequesterName || "Nama pengajuan kosong"}>
+                                {row.requesterName || row.defaultRequesterName || "-"}
+                              </span>
+                              <button
+                                type="button"
+                                data-ui-button="true"
+                                onClick={() => updateHokRow(row.projectId, { isRequesterEditable: true })}
+                                className="flex-shrink-0 text-slate-400 hover:text-emerald-700 transition"
+                                title="Edit nama pengajuan"
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                                  <path d="M2.695 14.763l-1.262 3.152a.5.5 0 00.65.65l3.152-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
+                                </svg>
+                              </button>
+                            </div>
+                          ) : (
+                            <input
+                              type="text"
+                              value={row.requesterName}
+                              onChange={(event) =>
+                                updateHokRow(row.projectId, { requesterName: event.currentTarget.value })
+                              }
+                              onBlur={() => {
+                                updateHokRow(row.projectId, { 
+                                  requesterName: row.requesterName.trim() || row.defaultRequesterName,
+                                  isRequesterEditable: false 
+                                });
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  updateHokRow(row.projectId, { 
+                                    requesterName: row.requesterName.trim() || row.defaultRequesterName,
+                                    isRequesterEditable: false 
+                                  });
+                                }
+                              }}
+                              autoFocus
+                              placeholder="Isi nama pengajuan"
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none transition focus:border-emerald-700 focus:shadow-[0_0_0_3px_rgba(5,150,105,0.14)]"
+                            />
+                          )}
                           <p className="mt-1 text-[11px] text-slate-500">
                             Default: {row.defaultRequesterName} | {getRequesterSourceLabel(row.requesterSource)}
                           </p>

@@ -1,6 +1,6 @@
 "use client";
 
-import { type RefObject, useEffect, useId, useMemo, useRef, useState } from "react";
+import { type Ref, useEffect, useId, useMemo, useRef, useState } from "react";
 
 export const PROJECT_AUTOCOMPLETE_SELECT_EVENT = "project-autocomplete:select";
 
@@ -15,12 +15,14 @@ type ProjectAutocompleteProps = {
   projects: ProjectOption[];
   initialProjectId?: string;
   autoFocus?: boolean;
-  inputRef?: RefObject<HTMLInputElement | null>;
+  inputRef?: Ref<HTMLInputElement>;
   onProjectIdChange?: (projectId: string) => void;
   hiddenInputName?: string | null;
   placeholder?: string;
   required?: boolean;
   resetSignal?: number | string;
+  enterTargetFieldName?: string | null;
+  showStatusText?: boolean;
 };
 
 type PreparedProjectOption = {
@@ -120,6 +122,8 @@ export function ProjectAutocomplete({
   placeholder = "Ketik nama / kode / klien project...",
   required = true,
   resetSignal,
+  enterTargetFieldName = "category",
+  showStatusText = true,
 }: ProjectAutocompleteProps) {
   const listId = useId();
 
@@ -315,7 +319,7 @@ export function ProjectAutocomplete({
               return;
             }
             requestAnimationFrame(() => {
-              if (focusFormFieldByName(currentInput.form, "category")) {
+              if (enterTargetFieldName && focusFormFieldByName(currentInput.form, enterTargetFieldName)) {
                 return;
               }
               focusNextField(currentInput);
@@ -333,7 +337,7 @@ export function ProjectAutocomplete({
         ))}
       </datalist>
       {hiddenInputName ? <input type="hidden" name={hiddenInputName} value={selectedId} /> : null}
-      {selectedProject ? (
+      {!showStatusText ? null : selectedProject ? (
         <p className="text-[11px] font-medium text-emerald-700">
           Project terpilih: {selectedProject.name} ({buildProjectContext(selectedProject)})
         </p>

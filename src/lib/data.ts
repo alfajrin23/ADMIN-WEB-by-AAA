@@ -448,7 +448,8 @@ async function getAllSupabaseRowsResult(
 const SUPABASE_CACHE_REVALIDATE_SECONDS = 60;
 const SUPABASE_PROJECT_SELECT =
   "id, name, code, client_name, start_date, status, created_at";
-const SUPABASE_EXPENSE_METADATA_SELECT = "project_id, requester_name, description, usage_info, category";
+const SUPABASE_EXPENSE_METADATA_SELECT =
+  "project_id, requester_name, description, usage_info, recipient_name, category";
 const SUPABASE_EXPENSE_FULL_SELECT =
   "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at";
 
@@ -559,16 +560,10 @@ const getCachedSupabaseAllExpenseRows = cache(
     getAllSupabaseRows("project_expenses", SUPABASE_EXPENSE_FULL_SELECT),
 );
 
-const getCachedSupabaseAllAttendanceRows = unstable_cache(
-  async (): Promise<Record<string, unknown>[]> => {
-    const rows = await getFreshSupabaseAllAttendanceRows();
-    return rows;
-  },
-  ["supabase-all-attendance"],
-  {
-    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
-    tags: [CACHE_TAGS.attendance],
-  },
+// Attendance collections can also exceed Next.js's 2 MB unstable_cache limit.
+// Keep them request-memoized instead of persisting the whole payload in the data cache.
+const getCachedSupabaseAllAttendanceRows = cache(
+  async (): Promise<Record<string, unknown>[]> => getFreshSupabaseAllAttendanceRows(),
 );
 
 async function getFreshSupabaseAllAttendanceRows() {
@@ -1471,6 +1466,164 @@ function buildKmpCianjurHokProjectPresets(projects: Project[], expenses: Expense
   });
 }
 
+type MaterialChecklistRule = {
+  key: string;
+  label: string;
+  keywords: string[];
+};
+
+type KmpCianjurMissingMaterialProjectReport = {
+  projectId: string;
+  projectName: string;
+  clientName: string | null;
+  detectedMaterials: string[];
+  missingMaterials: string[];
+  detectedCount: number;
+  missingCount: number;
+};
+
+type KmpCianjurMissingMaterialReport = {
+  checklistLabels: string[];
+  projects: KmpCianjurMissingMaterialProjectReport[];
+  totalProjects: number;
+  completeProjectCount: number;
+  incompleteProjectCount: number;
+};
+
+const KMP_CIANJUR_MATERIAL_CHECKLIST: MaterialChecklistRule[] = [
+  {
+    key: "folding_gate",
+    label: "Folding Gate",
+    keywords: ["folding gate", "polding gate"],
+  },
+  {
+    key: "aluminium",
+    label: "Aluminium",
+    keywords: ["aluminium", "alumunium"],
+  },
+  {
+    key: "logo",
+    label: "Logo",
+    keywords: ["logo"],
+  },
+  {
+    key: "angkur",
+    label: "Angkur",
+    keywords: ["angkur"],
+  },
+  {
+    key: "besi",
+    label: "Besi",
+    keywords: ["besi"],
+  },
+  {
+    key: "cnp",
+    label: "CNP",
+    keywords: ["cnp", "kanal cnp"],
+  },
+  {
+    key: "atap_spandek",
+    label: "Atap / Spandek",
+    keywords: ["atap", "spandek"],
+  },
+  {
+    key: "floor_hardener",
+    label: "Floor Hardener",
+    keywords: ["floor hardener", "hardener"],
+  },
+  {
+    key: "material_me",
+    label: "Material ME",
+    keywords: ["mat me", "material me", "mekanikal elektrikal", "m/e", "mekanikal", "elektrikal"],
+  },
+  {
+    key: "beton",
+    label: "Beton",
+    keywords: ["beton", "ready mix", "readymix"],
+  },
+];
+
+function normalizeLooseText(value: string | null | undefined) {
+  return (value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function buildExpenseMaterialHaystack(expense: ExpenseEntry) {
+  return normalizeLooseText(
+    [expense.description, expense.usageInfo, expense.recipientName, expense.projectName].join(" "),
+  );
+}
+
+function buildKmpCianjurMissingMaterialReport(
+  projects: Project[],
+  expenses: ExpenseEntry[],
+): KmpCianjurMissingMaterialReport {
+  const kmpProjects = projects
+    .filter((project) => isKmpCianjurClientName(project.clientName))
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name, "id-ID"));
+
+  const expenseHaystacksByProjectId = new Map<string, string[]>();
+  for (const expense of expenses) {
+    if (!isVisibleExpense(expense) || !expense.projectId) {
+      continue;
+    }
+    const haystack = buildExpenseMaterialHaystack(expense);
+    if (!haystack) {
+      continue;
+    }
+    const current = expenseHaystacksByProjectId.get(expense.projectId) ?? [];
+    current.push(haystack);
+    expenseHaystacksByProjectId.set(expense.projectId, current);
+  }
+
+  const checklistWithTokens = KMP_CIANJUR_MATERIAL_CHECKLIST.map((item) => ({
+    ...item,
+    keywords: item.keywords.map((keyword) => normalizeLooseText(keyword)).filter((keyword) => keyword.length > 0),
+  }));
+
+  const projectReports = kmpProjects.map((project) => {
+    const haystacks = expenseHaystacksByProjectId.get(project.id) ?? [];
+    const detectedMaterials: string[] = [];
+    const missingMaterials: string[] = [];
+
+    for (const item of checklistWithTokens) {
+      const detected = haystacks.some((haystack) =>
+        item.keywords.some((keyword) => haystack.includes(keyword)),
+      );
+      if (detected) {
+        detectedMaterials.push(item.label);
+      } else {
+        missingMaterials.push(item.label);
+      }
+    }
+
+    return {
+      projectId: project.id,
+      projectName: project.name,
+      clientName: project.clientName,
+      detectedMaterials,
+      missingMaterials,
+      detectedCount: detectedMaterials.length,
+      missingCount: missingMaterials.length,
+    };
+  });
+
+  const completeProjectCount = projectReports.filter((project) => project.missingCount === 0).length;
+
+  return {
+    checklistLabels: checklistWithTokens.map((item) => item.label),
+    projects: projectReports,
+    totalProjects: projectReports.length,
+    completeProjectCount,
+    incompleteProjectCount: Math.max(projectReports.length - completeProjectCount, 0),
+  };
+}
+
 type KmpCianjurHokProjectPreset = {
   projectId: string;
   projectName: string;
@@ -1539,6 +1692,70 @@ export async function getKmpCianjurHokProjectPresets(): Promise<
   }
 
   return buildKmpCianjurHokProjectPresets(sampleProjects, sampleExpenses);
+}
+
+const getSupabaseKmpCianjurMissingMaterialReportCached = unstable_cache(
+  async (): Promise<KmpCianjurMissingMaterialReport> => {
+    const [projects, metadata] = await Promise.all([
+      getCachedSupabaseProjects(),
+      getCachedSupabaseExpenseMetadata(),
+    ]);
+    const projectNameMap = Object.fromEntries(
+      projects.map((project) => [project.id, project.name] as const),
+    );
+    const expenses = metadata.expenseRows.map((row) => ({
+      projectId: String(row.project_id ?? ""),
+      projectName: projectNameMap[String(row.project_id ?? "")],
+      category: toCategorySlug(String(row.category ?? "")) || "operasional",
+      specialistType: null,
+      requesterName: typeof row.requester_name === "string" ? row.requester_name : null,
+      description: typeof row.description === "string" ? row.description : null,
+      recipientName: typeof row.recipient_name === "string" ? row.recipient_name : null,
+      quantity: 0,
+      unitLabel: null,
+      usageInfo: typeof row.usage_info === "string" ? row.usage_info : null,
+      unitPrice: 0,
+      amount: 0,
+      expenseDate: "",
+      createdAt: "",
+      id: "",
+    } as ExpenseEntry));
+    return buildKmpCianjurMissingMaterialReport(projects, expenses);
+  },
+  ["supabase-kmp-missing-material-report-v1"],
+  {
+    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
+    tags: [CACHE_TAGS.projects, CACHE_TAGS.expenses],
+  },
+);
+
+export async function getKmpCianjurMissingMaterialReport(): Promise<KmpCianjurMissingMaterialReport> {
+  if (activeDataSource === "excel") {
+    const db = readExcelDatabase();
+    const projects = db.projects.map((row) => mapProject(row));
+    const projectNameMap = Object.fromEntries(db.projects.map((project) => [project.id, project.name]));
+    const expenses = db.project_expenses.map((row) => mapExpense(row, projectNameMap[row.project_id]));
+    return buildKmpCianjurMissingMaterialReport(projects, expenses);
+  }
+
+  if (activeDataSource === "supabase") {
+    return getSupabaseKmpCianjurMissingMaterialReportCached();
+  }
+
+  if (activeDataSource === "firebase") {
+    const [projectRows, expenseRows] = await Promise.all([
+      getFirebaseCollectionRows("projects"),
+      getFirebaseCollectionRows("project_expenses"),
+    ]);
+    const projectNameMap = Object.fromEntries(
+      projectRows.map((row) => [String(row.id ?? ""), String(row.name ?? "Project")]),
+    );
+    const projects = projectRows.map((row) => mapProject(row));
+    const expenses = expenseRows.map((row) => mapExpense(row, projectNameMap[String(row.project_id ?? "")]));
+    return buildKmpCianjurMissingMaterialReport(projects, expenses);
+  }
+
+  return buildKmpCianjurMissingMaterialReport(sampleProjects, sampleExpenses);
 }
 
 export async function getExpenseCategories(): Promise<ExpenseCategoryOption[]> {
@@ -1664,14 +1881,11 @@ function buildSupabaseExpenseDerivedData(
   };
 }
 
-const getCachedSupabaseExpenseDerivedData = unstable_cache(
+// Requester/description suggestion maps can grow very large.
+// Avoid unstable_cache here to prevent 2 MB cache write failures.
+const getCachedSupabaseExpenseDerivedData = cache(
   async (): Promise<CachedSupabaseExpenseDerivedData> =>
     buildSupabaseExpenseDerivedData(await getCachedSupabaseExpenseMetadata()),
-  ["supabase-expense-derived-data"],
-  {
-    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
-    tags: [CACHE_TAGS.expenses, CACHE_TAGS.expenseCategories],
-  },
 );
 
 export async function getRequesterSuggestionsByProject(): Promise<Record<string, string[]>> {
@@ -1887,16 +2101,17 @@ export async function getAttendanceById(attendanceId: string): Promise<Attendanc
   return sampleAttendance.find((item) => item.id === attendanceId) ?? null;
 }
 
-const getCachedSupabaseProjectDetail = unstable_cache(
+// A single project's expense history can also grow past 2 MB.
+// Keep full recap payloads request-memoized instead of writing them into unstable_cache.
+const getCachedSupabaseProjectDetail = cache(
   async (projectId: string): Promise<ProjectDetail | null> => {
     if (!projectId) {
       return null;
     }
 
-    const [projectRow, expenseRows, categoryOptions] = await Promise.all([
+    const [projectRow, expenseRows] = await Promise.all([
       getCachedSupabaseProjectRowById(projectId),
       getCachedSupabaseProjectExpenseRows(projectId),
-      getExpenseCategories(),
     ]);
 
     if (!projectRow) {
@@ -1907,7 +2122,7 @@ const getCachedSupabaseProjectDetail = unstable_cache(
       return {
         project: mapProject(projectRow),
         expenses: [],
-        categoryTotals: buildCategoryTotals([], categoryOptions),
+        categoryTotals: buildCategoryTotals([]),
       };
     }
 
@@ -1919,13 +2134,8 @@ const getCachedSupabaseProjectDetail = unstable_cache(
     return {
       project: mapProject(projectRow),
       expenses,
-      categoryTotals: buildCategoryTotals(expenses, categoryOptions),
+      categoryTotals: buildCategoryTotals(expenses),
     };
-  },
-  ["supabase-project-detail"],
-  {
-    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
-    tags: [CACHE_TAGS.projects, CACHE_TAGS.expenses, CACHE_TAGS.expenseCategories],
   },
 );
 
@@ -1947,12 +2157,11 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
       .map((row) => mapExpense(row, project.name))
       .filter((row) => isVisibleExpense(row))
       .sort((a, b) => a.expenseDate.localeCompare(b.expenseDate));
-    const categoryOptions = mergeExpenseCategoryOptions(db.project_expenses.map((row) => row.category));
 
     return {
       project,
       expenses,
-      categoryTotals: buildCategoryTotals(expenses, categoryOptions),
+      categoryTotals: buildCategoryTotals(expenses),
     };
   }
 
@@ -1973,12 +2182,11 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
       .map((row) => mapExpense(row, project.name))
       .filter((row) => isVisibleExpense(row))
       .sort((a, b) => a.expenseDate.localeCompare(b.expenseDate));
-    const categoryOptions = await getExpenseCategories();
 
     return {
       project,
       expenses,
-      categoryTotals: buildCategoryTotals(expenses, categoryOptions),
+      categoryTotals: buildCategoryTotals(expenses),
     };
   }
 
@@ -1992,11 +2200,10 @@ export async function getProjectDetail(projectId: string): Promise<ProjectDetail
     .slice()
     .filter((item) => isVisibleExpense(item))
     .sort((a, b) => a.expenseDate.localeCompare(b.expenseDate));
-  const categoryOptions = mergeExpenseCategoryOptions(sampleExpenses.map((item) => item.category));
   return {
     project,
     expenses,
-    categoryTotals: buildCategoryTotals(expenses, categoryOptions),
+    categoryTotals: buildCategoryTotals(expenses),
   };
 }
 
@@ -2728,11 +2935,10 @@ function buildDashboardDataFromCollections(input: {
 // Tidak di-wrap dengan unstable_cache karena sub-queries sudah di-cache.
 // Expenses + attendance combined > 2MB → melebihi batas cache Next.js.
 async function getSupabaseDashboardData(): Promise<DashboardData> {
-  const [projects, expenseRows, attendanceRows, categoryOptions] = await Promise.all([
+  const [projects, expenseRows, attendanceRows] = await Promise.all([
     getCachedSupabaseProjects(),
     getCachedSupabaseAllExpenseRows(),
     getCachedSupabaseAllAttendanceRows(),
-    getExpenseCategories(),
   ]);
 
   const projectNameMap = Object.fromEntries(
@@ -2745,7 +2951,6 @@ async function getSupabaseDashboardData(): Promise<DashboardData> {
     projects,
     expenses,
     attendance,
-    categoryOptions,
   });
 }
 

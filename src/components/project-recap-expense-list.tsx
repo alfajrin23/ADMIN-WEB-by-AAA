@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import { deleteExpenseAction } from "@/app/actions/expense.action";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { EditIcon, TrashIcon } from "@/components/icons";
@@ -108,6 +108,7 @@ export function ProjectRecapExpenseList({
 }: ProjectRecapExpenseListProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
+  const deferredSearchQuery = useDeferredValue(searchQuery);
 
   const sortedExpenses = useMemo(
     () =>
@@ -126,7 +127,7 @@ export function ProjectRecapExpenseList({
   );
 
   const filteredExpenses = useMemo(() => {
-    const normalizedQuery = normalizeSearchText(searchQuery);
+    const normalizedQuery = normalizeSearchText(deferredSearchQuery);
     const queryDigits = getDigits(normalizedQuery);
     const queryTerms = normalizedQuery.split(" ").filter((item) => item.length > 0);
     const compactQuery = toCompactSearchToken(normalizedQuery);
@@ -156,7 +157,7 @@ export function ProjectRecapExpenseList({
       const amountDigits = getDigits(String(Math.round(Math.abs(item.amount))));
       return amountDigits.includes(queryDigits);
     });
-  }, [categoryFilter, searchQuery, sortedExpenses]);
+  }, [categoryFilter, deferredSearchQuery, sortedExpenses]);
 
   const filteredCategoryTotals = useMemo(() => {
     const totalsByCategory = new Map<string, number>();

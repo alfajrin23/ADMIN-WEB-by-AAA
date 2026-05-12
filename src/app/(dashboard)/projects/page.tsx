@@ -8,6 +8,7 @@ import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { ExpenseInputModeFields } from "@/components/expense-input-mode-fields";
 import { ExpenseDetailSearchForm } from "@/components/expense-detail-search-form";
 import { ExpenseDetailSearchResults } from "@/components/expense-detail-search-results";
+import { KmpMaterialMonitorPanel } from "@/components/kmp-material-monitor-panel";
 import { ProjectRecapExpenseList } from "@/components/project-recap-expense-list";
 import {
   CashInIcon,
@@ -37,6 +38,7 @@ import {
 import {
   getDescriptionSuggestionsByProject,
   getExpenseCategories,
+  getKmpCianjurMissingMaterialReport,
   getKmpCianjurHokProjectPresets,
   getProjectDetail,
   getProjects,
@@ -53,7 +55,12 @@ import {
 } from "@/lib/auth";
 import { activeDataSource, getStorageLabel } from "@/lib/storage";
 
-type ModalType = "project-new" | "expense-new" | "excel-import" | "detail-search";
+type ModalType =
+  | "project-new"
+  | "expense-new"
+  | "excel-import"
+  | "detail-search"
+  | "kmp-material-check";
 type ProjectView = "list" | "rekap";
 
 type ProjectPageProps = {
@@ -154,7 +161,8 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
     modalParam === "project-new" ||
     modalParam === "expense-new" ||
     modalParam === "excel-import" ||
-    modalParam === "detail-search"
+    modalParam === "detail-search" ||
+    modalParam === "kmp-material-check"
       ? modalParam
       : null;
   const viewParam = typeof params.view === "string" ? params.view : "";
@@ -187,12 +195,19 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
     projects.some((item) => item.id === requestedProjectId);
   const currentProjectQueryId = hasRequestedProjectId ? requestedProjectId : undefined;
   const selectedProjectId = currentProjectQueryId ?? projects[0]?.id;
-  const shouldLoadExpenseCategories =
-    activeView === "rekap" || activeModal === "expense-new" || activeModal === "detail-search";
+  const shouldLoadExpenseCategories = activeModal === "expense-new" || activeModal === "detail-search";
   const shouldLoadExpenseSuggestions = activeModal === "expense-new";
+  const shouldLoadKmpMaterialReport = activeModal === "kmp-material-check";
   const emptyProjectSuggestions: Record<string, string[]> = {};
   const emptyExpenseSearchResults: Awaited<ReturnType<typeof searchExpenseDetails>> = [];
   const emptyHokProjectPresets: Awaited<ReturnType<typeof getKmpCianjurHokProjectPresets>> = [];
+  const emptyKmpMaterialReport: Awaited<ReturnType<typeof getKmpCianjurMissingMaterialReport>> = {
+    checklistLabels: [],
+    projects: [],
+    totalProjects: 0,
+    completeProjectCount: 0,
+    incompleteProjectCount: 0,
+  };
   const [
     expenseCategories,
     requesterSuggestionsByProject,
@@ -200,6 +215,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
     selectedProject,
     detailSearchResults,
     hokProjectPresets,
+    kmpMaterialReport,
   ] = await Promise.all([
     shouldLoadExpenseCategories ? getExpenseCategories() : Promise.resolve(mergeExpenseCategoryOptions()),
     shouldLoadExpenseSuggestions
@@ -219,7 +235,22 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
     activeModal === "expense-new"
       ? getKmpCianjurHokProjectPresets()
       : Promise.resolve(emptyHokProjectPresets),
+    shouldLoadKmpMaterialReport
+      ? getKmpCianjurMissingMaterialReport()
+      : Promise.resolve(emptyKmpMaterialReport),
   ]);
+  const recapExpenseCategories =
+    activeView === "rekap" && selectedProject
+      ? mergeExpenseCategoryOptions(selectedProject.expenses.map((item) => item.category))
+      : expenseCategories;
+  const kmpMaterialMonitorProjects = kmpMaterialReport.projects.map((project) => ({
+    ...project,
+    recapHref: createProjectsHref({
+      projectId: project.projectId,
+      searchText,
+      view: "rekap",
+    }),
+  }));
   const today = new Date().toISOString().slice(0, 10);
   const defaultExpenseCategory = expenseCategories[0]?.value ?? COST_CATEGORIES[0].value;
   const scopedReportProjectIds =
@@ -232,6 +263,10 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
       : "Filter laporan aktif: Semua project";
 
   const searchKeyword = normalizeSearchText(searchText);
+  const kmpProjects = projects.filter((project) =>
+    resolveClientScopeKey(project.clientName).includes("kmp cianjur"),
+  );
+  const kmpProjectCount = kmpProjects.length;
   const filteredProjects = searchKeyword
     ? projects.filter((project) => {
         const haystack = [
@@ -337,6 +372,11 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
     modal: "detail-search",
     searchText,
     view: activeView,
+  });
+  const openKmpMaterialReportHref = createProjectsHref({
+    modal: "kmp-material-check",
+    searchText,
+    view: "list",
   });
   const listViewHref = createProjectsHref({
     projectId: currentProjectQueryId,
@@ -545,6 +585,20 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
             </span>
             Rekap Biaya
           </Link>
+          {kmpProjectCount > 0 ? (
+            <Link
+              href={openKmpMaterialReportHref}
+              prefetch
+              scroll={false}
+              data-ui-button="true"
+              className="button-soft button-sm"
+            >
+              <span className="btn-icon bg-amber-100 text-amber-700">
+                <SearchIcon />
+              </span>
+              Cek Material KMP
+            </Link>
+          ) : null}
         </div>
       </section>
 
@@ -850,7 +904,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
               <ProjectRecapExpenseList
                 projectId={selectedProject.project.id}
                 expenses={selectedProject.expenses}
-                expenseCategories={expenseCategories}
+                expenseCategories={recapExpenseCategories}
                 canEdit={canEdit}
                 searchText={searchText}
               />
@@ -870,13 +924,19 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
           />
           <section
             className={`modal-card panel relative z-10 max-h-[calc(100vh-2rem)] w-full overflow-y-auto p-5 ${
-              activeModal === "detail-search" ? "max-w-6xl" : "max-w-3xl"
+              activeModal === "detail-search"
+                ? "max-w-6xl"
+                : activeModal === "kmp-material-check"
+                  ? "max-w-5xl"
+                  : "max-w-3xl"
             }`}
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-lg font-semibold text-slate-900">
                 {activeModal === "detail-search"
                   ? "Cari Rincian Semua Project"
+                  : activeModal === "kmp-material-check"
+                    ? "Monitoring Material KMP Cianjur"
                   : activeModal === "project-new"
                   ? "Tambah Project Baru"
                   : activeModal === "expense-new"
@@ -935,6 +995,20 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                   </div>
                 )}
               </div>
+            ) : activeModal === "kmp-material-check" ? (
+              kmpMaterialReport.projects.length === 0 ? (
+                <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-4 text-sm text-amber-700">
+                  Belum ada project klien KMP Cianjur yang bisa dimonitor.
+                </p>
+              ) : (
+                <KmpMaterialMonitorPanel
+                  checklistLabels={kmpMaterialReport.checklistLabels}
+                  totalProjects={kmpMaterialReport.totalProjects}
+                  completeProjectCount={kmpMaterialReport.completeProjectCount}
+                  incompleteProjectCount={kmpMaterialReport.incompleteProjectCount}
+                  projects={kmpMaterialMonitorProjects}
+                />
+              )
             ) : activeModal === "project-new" ? (
               <form action={createProjectAction} className="mt-4 space-y-3">
                 <input type="hidden" name="return_to" value={closeModalHref} />

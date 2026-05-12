@@ -1,6 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ClipboardEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { useFormStatus } from "react-dom";
 import { EnterToNextField } from "@/components/enter-to-next-field";
 import { ProjectAutocomplete } from "@/components/project-autocomplete";
@@ -136,17 +145,6 @@ function createScraperRow(projectId = ""): ScraperRow {
 
 function createInitialScraperRows(initialProjectId?: string) {
   return [createScraperRow(initialProjectId ?? "")];
-}
-
-function buildProjectOptionLabel(project: ProjectOption) {
-  const segments = [project.name];
-  if (project.code?.trim()) {
-    segments.push(project.code.trim());
-  }
-  if (project.clientName?.trim()) {
-    segments.push(project.clientName.trim());
-  }
-  return segments.join(" | ");
 }
 
 function getRequesterSourceLabel(value: HokProjectPreset["requesterSource"]) {
@@ -294,6 +292,11 @@ export function ExpenseInputModeFields({
   const rootRef = useRef<HTMLDivElement>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const hokExcelInputRef = useRef<HTMLInputElement>(null);
+  const scraperRequesterInputRef = useRef<HTMLInputElement>(null);
+  const scraperDescriptionInputRef = useRef<HTMLInputElement>(null);
+  const scraperProjectInputRefs = useRef(new Map<string, HTMLInputElement | null>());
+  const scraperAmountInputRefs = useRef(new Map<string, HTMLInputElement | null>());
+  const pendingScraperFocusRef = useRef<{ rowId: string; field: "project" | "amount" } | null>(null);
   const [submissionToken] = useState(createExpenseSubmissionToken);
   const [mode, setMode] = useState<ExpenseInputMode>(STANDARD_MODE);
   const [hokQuery, setHokQuery] = useState("");
@@ -342,6 +345,69 @@ export function ExpenseInputModeFields({
     target.select();
   }, []);
 
+  const focusScraperRequesterInput = useCallback(() => {
+    const target = scraperRequesterInputRef.current;
+    if (!(target instanceof HTMLInputElement)) {
+      return;
+    }
+    target.focus();
+    target.select();
+  }, []);
+
+  const focusScraperField = useCallback((rowId: string, field: "project" | "amount") => {
+    const target =
+      field === "project"
+        ? scraperProjectInputRefs.current.get(rowId)
+        : scraperAmountInputRefs.current.get(rowId);
+    if (!(target instanceof HTMLInputElement)) {
+      return false;
+    }
+    target.focus();
+    target.select();
+    return true;
+  }, []);
+
+  const registerScraperProjectInputRef = useCallback((rowId: string, node: HTMLInputElement | null) => {
+    if (node) {
+      scraperProjectInputRefs.current.set(rowId, node);
+      return;
+    }
+    scraperProjectInputRefs.current.delete(rowId);
+  }, []);
+
+  const registerScraperAmountInputRef = useCallback((rowId: string, node: HTMLInputElement | null) => {
+    if (node) {
+      scraperAmountInputRefs.current.set(rowId, node);
+      return;
+    }
+    scraperAmountInputRefs.current.delete(rowId);
+  }, []);
+
+  useEffect(() => {
+    if (mode !== SCRAPER_MODE) {
+      return;
+    }
+    const frameId = window.requestAnimationFrame(() => {
+      focusScraperRequesterInput();
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [focusScraperRequesterInput, mode]);
+
+  useEffect(() => {
+    const pendingFocus = pendingScraperFocusRef.current;
+    if (!pendingFocus) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      if (focusScraperField(pendingFocus.rowId, pendingFocus.field)) {
+        pendingScraperFocusRef.current = null;
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [focusScraperField, scraperRows]);
+
   const resetContinueDraft = useCallback(() => {
     setContinueProjectId("");
     setContinueCategory(defaultExpenseCategory);
@@ -388,18 +454,6 @@ export function ExpenseInputModeFields({
     });
     if (incompleteRows.length > 0) {
       return "Setiap baris scraper wajib berisi project dan nominal yang valid.";
-    }
-
-    const duplicateProjectIds = Array.from(
-      activeRows.reduce((duplicates, row, index) => {
-        if (activeRows.findIndex((item) => item.projectId === row.projectId) !== index) {
-          duplicates.add(row.projectId);
-        }
-        return duplicates;
-      }, new Set<string>()),
-    );
-    if (duplicateProjectIds.length > 0) {
-      return "Project scraper tidak boleh dipilih lebih dari satu kali.";
     }
 
     return "";
@@ -575,11 +629,6 @@ export function ExpenseInputModeFields({
       }),
     [activeScraperRows],
   );
-  const scraperHasDuplicateProjects = useMemo(() => {
-    return activeScraperRows.some(
-      (row, index) => activeScraperRows.findIndex((item) => item.projectId === row.projectId) !== index,
-    );
-  }, [activeScraperRows]);
   const scraperPayload = useMemo(
     () =>
       JSON.stringify(
@@ -593,8 +642,7 @@ export function ExpenseInputModeFields({
     [completedScraperRows, projects],
   );
   const isScraperSubmitDisabled =
-    mode === SCRAPER_MODE &&
-    (completedScraperRows.length === 0 || scraperRowsInvalid.length > 0 || scraperHasDuplicateProjects);
+    mode === SCRAPER_MODE && (completedScraperRows.length === 0 || scraperRowsInvalid.length > 0);
 
   const updateHokRow = (
     projectId: string,
@@ -609,9 +657,11 @@ export function ExpenseInputModeFields({
     setScraperRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, ...patch } : row)));
   };
 
-  const appendScraperRow = () => {
-    setScraperRows((prev) => [...prev, createScraperRow()]);
-  };
+  const appendScraperRow = useCallback((focusField: "project" | "amount" = "project") => {
+    const nextRow = createScraperRow();
+    pendingScraperFocusRef.current = { rowId: nextRow.id, field: focusField };
+    setScraperRows((prev) => [...prev, nextRow]);
+  }, []);
 
   const removeScraperRow = (rowId: string) => {
     setScraperRows((prev) => {
@@ -621,6 +671,86 @@ export function ExpenseInputModeFields({
       return prev.filter((row) => row.id !== rowId);
     });
   };
+
+  const focusNextScraperProjectRow = useCallback(
+    (currentRowId: string) => {
+      const currentIndex = scraperRows.findIndex((row) => row.id === currentRowId);
+      const nextRow = currentIndex >= 0 ? scraperRows[currentIndex + 1] : null;
+      if (nextRow) {
+        if (!focusScraperField(nextRow.id, "project")) {
+          pendingScraperFocusRef.current = { rowId: nextRow.id, field: "project" };
+        }
+        return;
+      }
+      appendScraperRow("project");
+    },
+    [appendScraperRow, focusScraperField, scraperRows],
+  );
+
+  const handleScraperRequesterEnter = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      window.requestAnimationFrame(() => {
+        scraperDescriptionInputRef.current?.focus();
+        scraperDescriptionInputRef.current?.select();
+      });
+    },
+    [],
+  );
+
+  const handleScraperDescriptionEnter = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+
+      const firstRow = scraperRows[0];
+      if (!firstRow) {
+        appendScraperRow("project");
+        return;
+      }
+
+      window.requestAnimationFrame(() => {
+        if (!focusScraperField(firstRow.id, "project")) {
+          pendingScraperFocusRef.current = { rowId: firstRow.id, field: "project" };
+        }
+      });
+    },
+    [appendScraperRow, focusScraperField, scraperRows],
+  );
+
+  const handleScraperAmountEnter = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>, row: ScraperRow) => {
+      if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+
+      const amount = Number(normalizeDigits(row.amountRaw));
+      if (!row.projectId.trim() || !Number.isFinite(amount) || amount <= 0) {
+        setScraperError("Lengkapi project dan nominal yang valid sebelum pindah ke baris berikutnya.");
+        if (!row.projectId.trim()) {
+          window.requestAnimationFrame(() => {
+            focusScraperField(row.id, "project");
+          });
+        }
+        return;
+      }
+
+      setScraperError("");
+      window.requestAnimationFrame(() => {
+        focusNextScraperProjectRow(row.id);
+      });
+    },
+    [focusNextScraperProjectRow, focusScraperField],
+  );
 
   const toggleAllVisibleHokRows = (selected: boolean) => {
     const visibleIds = new Set(visibleHokRows.map((row) => row.projectId));
@@ -919,7 +1049,7 @@ export function ExpenseInputModeFields({
         <p className="mt-2 text-[11px] text-slate-500">
           Mode scraper memakai <strong>nama pengajuan</strong>, <strong>tanggal</strong>,
           <strong> kategori</strong>, dan <strong>keterangan</strong> yang sama, lalu project dan
-          nominal diisi manual per baris.
+          nominal diisi manual per baris. Project yang sama boleh diinput lebih dari sekali.
         </p>
         <p className="mt-2 text-[11px] text-violet-700">
           <strong>Mode Continue:</strong> isi form berulang, data dikumpulkan dulu. Tekan{" "}
@@ -948,6 +1078,7 @@ export function ExpenseInputModeFields({
               </summary>
               <p className="mt-2 text-[11px] text-slate-500">
                 Data akan disimpan ke project utama di atas, plus project tambahan yang Anda centang.
+                Anda bisa filter berdasarkan klien lalu pilih semua project yang sedang tampil.
               </p>
               <ProjectChecklistSearch projects={projects} inputName="project_ids" />
             </details>
@@ -1284,11 +1415,23 @@ export function ExpenseInputModeFields({
               <label className="mb-1 block text-xs font-medium text-slate-500">
                 Nama pengajuan
               </label>
-              <input name="requester_name" placeholder="Contoh: Admin Scraper" required />
+              <input
+                ref={scraperRequesterInputRef}
+                name="requester_name"
+                placeholder="Contoh: Admin Scraper"
+                required
+                onKeyDown={handleScraperRequesterEnter}
+              />
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">Keterangan</label>
-              <input name="description" placeholder="Contoh: Hasil input scraper" required />
+              <input
+                ref={scraperDescriptionInputRef}
+                name="description"
+                placeholder="Contoh: Hasil input scraper"
+                required
+                onKeyDown={handleScraperDescriptionEnter}
+              />
             </div>
           </div>
 
@@ -1297,14 +1440,15 @@ export function ExpenseInputModeFields({
               <div>
                 <p className="text-xs font-semibold text-slate-700">Daftar project mode scraper</p>
                 <p className="text-[11px] text-slate-500">
-                  Isi project dan nominal per baris. Satu project hanya boleh muncul sekali.
+                  Tekan Enter dari project untuk pindah ke nominal. Enter di nominal akan
+                  menambah baris berikutnya dan fokus ke project baru.
                 </p>
               </div>
               <button
                 type="button"
                 data-ui-button="true"
                 className="button-soft button-xs"
-                onClick={appendScraperRow}
+                onClick={() => appendScraperRow("project")}
               >
                 Tambah Baris
               </button>
@@ -1322,19 +1466,26 @@ export function ExpenseInputModeFields({
                       <label className="mb-1 block text-xs font-medium text-slate-500">
                         Project #{index + 1}
                       </label>
-                      <select
-                        value={row.projectId}
-                        onChange={(event) =>
-                          updateScraperRow(row.id, { projectId: event.currentTarget.value })
-                        }
-                      >
-                        <option value="">Pilih project</option>
-                        {projects.map((project) => (
-                          <option key={project.id} value={project.id}>
-                            {buildProjectOptionLabel(project)}
-                          </option>
-                        ))}
-                      </select>
+                      <ProjectAutocomplete
+                        projects={projects}
+                        initialProjectId={row.projectId}
+                        inputRef={(node) => registerScraperProjectInputRef(row.id, node)}
+                        onProjectIdChange={(projectId) => updateScraperRow(row.id, { projectId })}
+                        hiddenInputName={null}
+                        placeholder="Ketik nama / kode / klien project..."
+                        required={false}
+                        enterTargetFieldName={null}
+                        showStatusText={false}
+                      />
+                      {row.projectId ? (
+                        <p className="mt-1 text-[11px] font-medium text-emerald-700">
+                          {projects.find((project) => project.id === row.projectId)?.clientName ?? "Tanpa klien"}
+                        </p>
+                      ) : (
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          Pilih project lalu tekan Enter untuk lanjut ke nominal.
+                        </p>
+                      )}
                     </div>
                     <div>
                       <label className="mb-1 block text-xs font-medium text-slate-500">Nominal</label>
@@ -1343,6 +1494,7 @@ export function ExpenseInputModeFields({
                           Rp
                         </span>
                         <input
+                          ref={(node) => registerScraperAmountInputRef(row.id, node)}
                           type="text"
                           inputMode="numeric"
                           value={amountDisplay}
@@ -1351,6 +1503,7 @@ export function ExpenseInputModeFields({
                               amountRaw: normalizeDigits(event.currentTarget.value),
                             })
                           }
+                          onKeyDown={(event) => handleScraperAmountEnter(event, row)}
                           placeholder="Masukkan nominal"
                           className="w-full !rounded-none !border-0 !shadow-none focus:!border-0 focus:!shadow-none"
                         />
@@ -1382,11 +1535,6 @@ export function ExpenseInputModeFields({
                 Total baris: {scraperRows.length}
               </p>
             </div>
-            {scraperHasDuplicateProjects ? (
-              <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
-                Ada project yang dipilih lebih dari satu kali. Sisakan satu baris per project.
-              </p>
-            ) : null}
           </div>
 
           <input type="hidden" name="scraper_rows_json" value={scraperPayload} />
@@ -1530,7 +1678,7 @@ export function ExpenseInputModeFields({
                     </summary>
                     <ul className="mt-1 ml-6 list-disc space-y-0.5 opacity-90 max-h-40 overflow-y-auto pr-2">
                       {hokImportFeedback.issues.unmatchedRows.map((r, idx) => (
-                        <li key={idx}>Baris {r.rowNumber}: "{r.sourceProjectName || "Tanpa Nama"}"</li>
+                        <li key={idx}>Baris {r.rowNumber}: &quot;{r.sourceProjectName || "Tanpa Nama"}&quot;</li>
                       ))}
                     </ul>
                   </details>
@@ -1546,7 +1694,7 @@ export function ExpenseInputModeFields({
                     </summary>
                     <ul className="mt-1 ml-6 list-disc space-y-0.5 opacity-90 max-h-40 overflow-y-auto pr-2">
                       {hokImportFeedback.issues.invalidRows.map((r, idx) => (
-                        <li key={idx}>Baris {r.rowNumber}: "{r.sourceProjectName || "Tanpa Nama"}" - {r.reason === "missing_project" ? "Project kosong" : "Nominal kosong/tidak valid"}</li>
+                        <li key={idx}>Baris {r.rowNumber}: &quot;{r.sourceProjectName || "Tanpa Nama"}&quot; - {r.reason === "missing_project" ? "Project kosong" : "Nominal kosong/tidak valid"}</li>
                       ))}
                     </ul>
                   </details>
@@ -1562,7 +1710,7 @@ export function ExpenseInputModeFields({
                     </summary>
                     <ul className="mt-1 ml-6 list-disc space-y-0.5 opacity-90 max-h-40 overflow-y-auto pr-2">
                       {hokImportFeedback.issues.duplicateRows.map((r, idx) => (
-                        <li key={idx}>Baris {r.rowNumber}: "{r.sourceProjectName}" (Project ditimpa nominal baru)</li>
+                        <li key={idx}>Baris {r.rowNumber}: &quot;{r.sourceProjectName}&quot; (Project ditimpa nominal baru)</li>
                       ))}
                     </ul>
                   </details>

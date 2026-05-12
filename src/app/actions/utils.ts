@@ -1309,27 +1309,6 @@ export async function createScraperExpenseEntries(
     return;
   }
 
-  const duplicateProjectIds = Array.from(
-    rows.reduce((duplicates, row, index) => {
-      if (rows.findIndex((item) => item.projectId === row.projectId) !== index) {
-        duplicates.add(row.projectId);
-      }
-      return duplicates;
-    }, new Set<string>()),
-  );
-  if (duplicateProjectIds.length > 0) {
-    if (errorReturnTo) {
-      redirect(
-        withReturnMessage(
-          errorReturnTo,
-          "error",
-          "Project pada mode scraper tidak boleh dipilih lebih dari satu kali dalam sekali simpan.",
-        ),
-      );
-    }
-    return;
-  }
-
   const submissionToken = getExpenseSubmissionToken(formData);
   const shouldSyncCategory = shouldSyncExpenseCategory(formData);
   const basePayload = {

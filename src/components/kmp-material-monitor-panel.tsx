@@ -23,7 +23,7 @@ type KmpMaterialMonitorPanelProps = {
   projects: KmpMaterialMonitorProject[];
 };
 
-type StatusFilter = "all" | "incomplete" | "complete";
+type StatusFilter = "all" | "incomplete" | "complete" | "most-detected";
 
 function normalizeText(value: string) {
   return value.trim().toLowerCase();
@@ -67,6 +67,15 @@ export function KmpMaterialMonitorPanel({
       })
       .slice()
       .sort((a, b) => {
+        if (statusFilter === "most-detected") {
+          if (b.detectedCount !== a.detectedCount) {
+            return b.detectedCount - a.detectedCount;
+          }
+          if (a.missingCount !== b.missingCount) {
+            return a.missingCount - b.missingCount;
+          }
+          return a.projectName.localeCompare(b.projectName, "id-ID");
+        }
         if (b.missingCount !== a.missingCount) {
           return b.missingCount - a.missingCount;
         }
@@ -154,6 +163,7 @@ export function KmpMaterialMonitorPanel({
             <div className="flex flex-wrap gap-2">
               {[
                 { key: "incomplete", label: "Perlu Dicek" },
+                { key: "most-detected", label: "Terdeteksi Terbanyak" },
                 { key: "all", label: "Semua" },
                 { key: "complete", label: "Lengkap" },
               ].map((item) => (
@@ -166,6 +176,8 @@ export function KmpMaterialMonitorPanel({
                     statusFilter === item.key
                       ? item.key === "complete"
                         ? "border-emerald-700 bg-emerald-700 text-white"
+                        : item.key === "most-detected"
+                          ? "border-blue-700 bg-blue-700 text-white"
                         : item.key === "all"
                           ? "border-slate-900 bg-slate-900 text-white"
                           : "border-amber-700 bg-amber-700 text-white"

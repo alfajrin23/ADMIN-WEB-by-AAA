@@ -1541,6 +1541,21 @@ const KMP_CIANJUR_MATERIAL_CHECKLIST: MaterialChecklistRule[] = [
     label: "Beton",
     keywords: ["beton", "ready mix", "readymix"],
   },
+  {
+    key: "pln_kdkmp",
+    label: "PLN KDKMP",
+    keywords: ["pln kdkmp", "kdkmp"],
+  },
+  {
+    key: "kramik",
+    label: "KRAMIK",
+    keywords: ["kramik", "keramik"],
+  },
+  {
+    key: "nidi_slo",
+    label: "NIDI SLO",
+    keywords: ["nidi slo", "nidi", "sertifikat laik operasi"],
+  },
 ];
 
 function normalizeLooseText(value: string | null | undefined) {

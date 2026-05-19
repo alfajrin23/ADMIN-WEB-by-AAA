@@ -356,6 +356,7 @@ export function ExpenseInputModeFields({
   const scraperAmountInputRefs = useRef(new Map<string, HTMLInputElement | null>());
   const pendingScraperFocusRef = useRef<{ rowId: string; field: "project" | "amount" } | null>(null);
   const lastProcessedContinueDraftClearRef = useRef("");
+  const continueDraftClearInProgressRef = useRef(false);
   const [submissionToken] = useState(createExpenseSubmissionToken);
   const [mode, setMode] = useState<ExpenseInputMode>(STANDARD_MODE);
   const [hokQuery, setHokQuery] = useState("");
@@ -383,6 +384,7 @@ export function ExpenseInputModeFields({
   const [continueDraftReady, setContinueDraftReady] = useState(false);
   const [continueDraftSavedAt, setContinueDraftSavedAt] = useState<string | null>(null);
   const [continueDraftNotice, setContinueDraftNotice] = useState("");
+  const [continueDraftClearVersion, setContinueDraftClearVersion] = useState(0);
 
   const expenseCategoryValues = useMemo(
     () => new Set(expenseCategories.map((item) => item.value)),
@@ -485,6 +487,19 @@ export function ExpenseInputModeFields({
     setContinueProjectResetSignal((prev) => prev + 1);
   }, [defaultExpenseCategory, today]);
 
+  const resetContinueDraftAfterSave = useCallback(() => {
+    continueDraftClearInProgressRef.current = true;
+    window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
+    window.sessionStorage.removeItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY);
+    setContinueEntries([]);
+    resetContinueDraft();
+    setContinueError("");
+    setContinueDraftSavedAt(null);
+    setContinueDraftNotice("");
+    setContinueDraftReady(true);
+    setContinueDraftClearVersion((prev) => prev + 1);
+  }, [resetContinueDraft]);
+
   const successMessage = searchParams.get("success")?.trim() ?? "";
   const errorMessage = searchParams.get("error")?.trim() ?? "";
   const continueDraftClearToken = searchParams.get("expense_continue_draft_clear")?.trim() ?? "";
@@ -506,14 +521,7 @@ export function ExpenseInputModeFields({
       if (continueDraftClearToken) {
         lastProcessedContinueDraftClearRef.current = continueDraftClearToken;
       }
-      window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
-      window.sessionStorage.removeItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY);
-      setContinueEntries([]);
-      resetContinueDraft();
-      setContinueError("");
-      setContinueDraftSavedAt(null);
-      setContinueDraftNotice("");
-      setContinueDraftReady(true);
+      resetContinueDraftAfterSave();
       return;
     }
 
@@ -623,7 +631,7 @@ export function ExpenseInputModeFields({
     errorMessage,
     expenseCategoryValues,
     projects,
-    resetContinueDraft,
+    resetContinueDraftAfterSave,
     successMessage,
     today,
   ]);
@@ -640,6 +648,15 @@ export function ExpenseInputModeFields({
       description: continueDescription,
       amountRaw: continueAmountRaw,
     });
+
+    if (continueDraftClearInProgressRef.current) {
+      window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
+      setContinueDraftSavedAt(null);
+      if (!hasDraftContent) {
+        continueDraftClearInProgressRef.current = false;
+      }
+      return;
+    }
 
     if (!hasDraftContent) {
       window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
@@ -676,20 +693,16 @@ export function ExpenseInputModeFields({
     continueDate,
     continueDescription,
     continueDraftReady,
+    continueDraftClearVersion,
     continueEntries,
     continueProjectId,
     continueRequester,
   ]);
 
   const clearContinueDraft = useCallback(() => {
-    window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
-    window.sessionStorage.removeItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY);
-    setContinueEntries([]);
-    resetContinueDraft();
-    setContinueError("");
-    setContinueDraftSavedAt(null);
+    resetContinueDraftAfterSave();
     setContinueDraftNotice("Draft mode continue dihapus.");
-  }, [resetContinueDraft]);
+  }, [resetContinueDraftAfterSave]);
 
   const validateHokRows = useCallback(() => {
     const selectedRows = hokRows.filter((row) => row.selected);

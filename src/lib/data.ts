@@ -449,7 +449,7 @@ const SUPABASE_CACHE_REVALIDATE_SECONDS = 60;
 const SUPABASE_PROJECT_SELECT =
   "id, name, code, client_name, start_date, status, created_at";
 const SUPABASE_EXPENSE_METADATA_SELECT =
-  "project_id, requester_name, description, usage_info, recipient_name, category";
+  "project_id, requester_name, description, usage_info, recipient_name, category, amount";
 const SUPABASE_EXPENSE_FULL_SELECT =
   "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at";
 
@@ -1470,6 +1470,7 @@ type MaterialChecklistRule = {
   key: string;
   label: string;
   keywords: string[];
+  amountTargets?: number[];
 };
 
 type KmpCianjurMissingMaterialProjectReport = {
@@ -1490,73 +1491,120 @@ type KmpCianjurMissingMaterialReport = {
   incompleteProjectCount: number;
 };
 
+const KMP_CIANJUR_MATERIAL_AMOUNT_TOLERANCE = 0.2;
+
 const KMP_CIANJUR_MATERIAL_CHECKLIST: MaterialChecklistRule[] = [
   {
-    key: "folding_gate",
-    label: "Folding Gate",
-    keywords: ["folding gate", "polding gate"],
-  },
-  {
-    key: "aluminium",
-    label: "Aluminium",
-    keywords: ["aluminium", "alumunium"],
-  },
-  {
-    key: "logo",
-    label: "Logo",
-    keywords: ["logo"],
-  },
-  {
-    key: "angkur",
-    label: "Angkur",
-    keywords: ["angkur"],
+    key: "semen",
+    label: "Semen",
+    keywords: ["semen", "cement"],
+    amountTargets: [9300000, 10500000],
   },
   {
     key: "besi",
     label: "Besi",
     keywords: ["besi"],
+    amountTargets: [39569320],
+  },
+  {
+    key: "alumunium",
+    label: "Alumunium",
+    keywords: ["aluminium", "alumunium", "aluminum"],
+    amountTargets: [25000000],
+  },
+  {
+    key: "atap",
+    label: "Atap",
+    keywords: ["atap", "spandek"],
+    amountTargets: [113577500],
   },
   {
     key: "cnp",
     label: "CNP",
     keywords: ["cnp", "kanal cnp"],
+    amountTargets: [7894933],
   },
   {
-    key: "atap_spandek",
-    label: "Atap / Spandek",
-    keywords: ["atap", "spandek"],
+    key: "folding_gate",
+    label: "Folding Gate",
+    keywords: ["folding gate", "polding gate"],
+    amountTargets: [29641185],
   },
   {
-    key: "floor_hardener",
-    label: "Floor Hardener",
-    keywords: ["floor hardener", "hardener"],
+    key: "logo_akrilik",
+    label: "Logo Akrilik",
+    keywords: ["logo", "akrilik", "acrylic"],
+    amountTargets: [6500000],
   },
   {
-    key: "material_me",
-    label: "Material ME",
-    keywords: ["mat me", "material me", "mekanikal elektrikal", "m/e", "mekanikal", "elektrikal"],
+    key: "mep",
+    label: "MEP",
+    keywords: ["mep", "mat me", "material me", "mekanikal elektrikal", "m/e", "mekanikal", "elektrikal"],
+    amountTargets: [13855500],
   },
   {
-    key: "beton",
-    label: "Beton",
-    keywords: ["beton", "ready mix", "readymix"],
+    key: "hollo",
+    label: "Hollo",
+    keywords: ["hollo", "hollow", "holo"],
+    amountTargets: [69440000],
+  },
+  {
+    key: "wiremesh",
+    label: "Wiremesh",
+    keywords: ["wiremesh", "wire mesh"],
+    amountTargets: [10500000],
   },
   {
     key: "pln_kdkmp",
     label: "PLN KDKMP",
     keywords: ["pln kdkmp", "kdkmp"],
+    amountTargets: [16030000],
   },
   {
-    key: "kramik",
-    label: "KRAMIK",
-    keywords: ["kramik", "keramik"],
+    key: "zincromate",
+    label: "Zincromate",
+    keywords: ["zincromate", "zinkromate", "zinc chromate"],
+    amountTargets: [2100000],
   },
   {
-    key: "nidi_slo",
-    label: "NIDI SLO",
-    keywords: ["nidi slo", "nidi", "sertifikat laik operasi"],
+    key: "thiner",
+    label: "Thiner",
+    keywords: ["thiner", "thinner", "tiner"],
+    amountTargets: [1170000],
+  },
+  {
+    key: "beton",
+    label: "Beton",
+    keywords: ["beton", "ready mix", "readymix"],
+    amountTargets: [60000000],
   },
 ];
+
+const KMP_CIANJUR_NON_MATERIAL_SIGNAL_PATTERNS = [
+  /\bhok\b/,
+  /\bupah\b/,
+  /\bkasbon\b/,
+  /\btukang\b/,
+  /\bmandor\b/,
+  /\bpekerja\b/,
+  /\bstaff\b/,
+  /\bspesialis\b/,
+  /\btenaga\b/,
+  /\bharian\b/,
+  /\bborongan\b/,
+];
+
+const KMP_CIANJUR_GENERIC_MATERIAL_TOKENS = new Set([
+  "material",
+  "matrial",
+  "mat",
+  "bahan",
+  "belanja",
+  "pembelian",
+  "biaya",
+  "cost",
+  "kas",
+]);
 
 function normalizeLooseText(value: string | null | undefined) {
   return (value ?? "")
@@ -1569,8 +1617,108 @@ function normalizeLooseText(value: string | null | undefined) {
 
 function buildExpenseMaterialHaystack(expense: ExpenseEntry) {
   return normalizeLooseText(
-    [expense.description, expense.usageInfo, expense.recipientName, expense.projectName].join(" "),
+    [expense.description, expense.usageInfo, expense.recipientName, expense.unitLabel].join(" "),
   );
+}
+
+function buildExpenseMaterialScopeText(expense: ExpenseEntry) {
+  return normalizeLooseText(
+    [
+      expense.category,
+      expense.description,
+      expense.usageInfo,
+      expense.recipientName,
+      expense.unitLabel,
+    ].join(" "),
+  );
+}
+
+function hasNonMaterialSignal(value: string) {
+  return KMP_CIANJUR_NON_MATERIAL_SIGNAL_PATTERNS.some((pattern) => pattern.test(value));
+}
+
+function isGenericMaterialHaystack(value: string) {
+  if (!value) {
+    return true;
+  }
+
+  const specificTokens = value
+    .split(/\s+/)
+    .filter((token) => token.length > 0 && !KMP_CIANJUR_GENERIC_MATERIAL_TOKENS.has(token));
+  return specificTokens.length === 0;
+}
+
+function isMaterialChecklistExpense(expense: ExpenseEntry) {
+  const category = toCategorySlug(expense.category);
+  if (isHiddenCostCategory(category) || (category !== "material" && !category.includes("material"))) {
+    return false;
+  }
+  return !hasNonMaterialSignal(buildExpenseMaterialScopeText(expense));
+}
+
+function getAmountDistanceFromMaterialTarget(amount: number, target: number) {
+  if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(target) || target <= 0) {
+    return null;
+  }
+  const minimum = target * (1 - KMP_CIANJUR_MATERIAL_AMOUNT_TOLERANCE);
+  const maximum = target * (1 + KMP_CIANJUR_MATERIAL_AMOUNT_TOLERANCE);
+  if (amount < minimum || amount > maximum) {
+    return null;
+  }
+  return Math.abs(amount - target) / target;
+}
+
+function getMaterialRuleAmountDistance(item: MaterialChecklistRule, amount: number) {
+  const distances = (item.amountTargets ?? [])
+    .map((target) => getAmountDistanceFromMaterialTarget(amount, target))
+    .filter((distance): distance is number => distance !== null);
+  if (distances.length === 0) {
+    return null;
+  }
+  return Math.min(...distances);
+}
+
+function isClosestMaterialAmountRule(
+  item: MaterialChecklistRule,
+  expense: ExpenseEntry,
+  allRules: MaterialChecklistRule[],
+) {
+  const itemDistance = getMaterialRuleAmountDistance(item, expense.amount);
+  if (itemDistance === null) {
+    return false;
+  }
+
+  const closestDistance = Math.min(
+    ...allRules
+      .map((rule) => getMaterialRuleAmountDistance(rule, expense.amount))
+      .filter((distance): distance is number => distance !== null),
+  );
+  return itemDistance <= closestDistance + Number.EPSILON;
+}
+
+function isMaterialRuleDetectedByExpense(
+  item: MaterialChecklistRule,
+  expense: ExpenseEntry,
+  haystack: string,
+  allRules: MaterialChecklistRule[],
+) {
+  const hasKeywordMatch = item.keywords.some((keyword) => haystack.includes(keyword));
+  if (hasKeywordMatch) {
+    return true;
+  }
+
+  const hasDifferentMaterialKeyword = allRules.some((rule) =>
+    rule.key !== item.key && rule.keywords.some((keyword) => haystack.includes(keyword)),
+  );
+  if (hasDifferentMaterialKeyword) {
+    return false;
+  }
+
+  if (!isGenericMaterialHaystack(haystack)) {
+    return false;
+  }
+
+  return isClosestMaterialAmountRule(item, expense, allRules);
 }
 
 function buildKmpCianjurMissingMaterialReport(
@@ -1583,14 +1731,15 @@ function buildKmpCianjurMissingMaterialReport(
     .sort((a, b) => a.name.localeCompare(b.name, "id-ID"));
 
   const expenseHaystacksByProjectId = new Map<string, string[]>();
+  const materialExpensesByProjectId = new Map<string, ExpenseEntry[]>();
   for (const expense of expenses) {
-    if (!isVisibleExpense(expense) || !expense.projectId) {
+    if (!expense.projectId || !isMaterialChecklistExpense(expense)) {
       continue;
     }
     const haystack = buildExpenseMaterialHaystack(expense);
-    if (!haystack) {
-      continue;
-    }
+    const currentExpenses = materialExpensesByProjectId.get(expense.projectId) ?? [];
+    currentExpenses.push(expense);
+    materialExpensesByProjectId.set(expense.projectId, currentExpenses);
     const current = expenseHaystacksByProjectId.get(expense.projectId) ?? [];
     current.push(haystack);
     expenseHaystacksByProjectId.set(expense.projectId, current);
@@ -1603,12 +1752,13 @@ function buildKmpCianjurMissingMaterialReport(
 
   const projectReports = kmpProjects.map((project) => {
     const haystacks = expenseHaystacksByProjectId.get(project.id) ?? [];
+    const materialExpenses = materialExpensesByProjectId.get(project.id) ?? [];
     const detectedMaterials: string[] = [];
     const missingMaterials: string[] = [];
 
     for (const item of checklistWithTokens) {
-      const detected = haystacks.some((haystack) =>
-        item.keywords.some((keyword) => haystack.includes(keyword)),
+      const detected = materialExpenses.some((expense, index) =>
+        isMaterialRuleDetectedByExpense(item, expense, haystacks[index] ?? "", checklistWithTokens),
       );
       if (detected) {
         detectedMaterials.push(item.label);
@@ -1730,14 +1880,14 @@ const getSupabaseKmpCianjurMissingMaterialReportCached = unstable_cache(
       unitLabel: null,
       usageInfo: typeof row.usage_info === "string" ? row.usage_info : null,
       unitPrice: 0,
-      amount: 0,
+      amount: Number(row.amount ?? 0),
       expenseDate: "",
       createdAt: "",
       id: "",
     } as ExpenseEntry));
     return buildKmpCianjurMissingMaterialReport(projects, expenses);
   },
-  ["supabase-kmp-missing-material-report-v1"],
+  ["supabase-kmp-missing-material-report-v3"],
   {
     revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
     tags: [CACHE_TAGS.projects, CACHE_TAGS.expenses],

@@ -12,7 +12,7 @@ import {
 } from "react";
 import { useFormStatus } from "react-dom";
 import { EnterToNextField } from "@/components/enter-to-next-field";
-import { ProjectAutocomplete } from "@/components/project-autocomplete";
+import { ProjectAutocomplete, PROJECT_AUTOCOMPLETE_SELECT_EVENT } from "@/components/project-autocomplete";
 import { ProjectChecklistSearch } from "@/components/project-checklist-search";
 import { ProjectScopedAutocompleteInput } from "@/components/project-scoped-autocomplete-input";
 import { RequesterProjectAutocompleteInput } from "@/components/requester-project-autocomplete-input";
@@ -103,6 +103,8 @@ const HOK_MODE = "hok_kmp_cianjur";
 const SCRAPER_MODE = "scraper";
 const CONTINUE_MODE = "continue";
 const EXPENSE_PROJECT_REFOCUS_KEY = "expense-modal-refocus-project";
+const EXPENSE_CONTINUE_DRAFT_STORAGE_KEY = "admin-web:expense-continue-draft:v1";
+const EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY = "expense-modal-continue-draft-pending-clear";
 const HOK_EXCEL_ACCEPT = ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 type ExpenseInputMode = typeof STANDARD_MODE | typeof HOK_MODE | typeof SCRAPER_MODE | typeof CONTINUE_MODE;
 
@@ -168,6 +170,60 @@ function createExpenseSubmissionToken() {
     return crypto.randomUUID();
   }
   return `expense-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function createContinueEntryId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `ce-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getRecordString(record: Record<string, unknown>, key: string) {
+  const value = record[key];
+  return typeof value === "string" ? value : "";
+}
+
+function resolveDraftDate(value: string, fallback: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback;
+}
+
+function resolveDraftCategory(value: string, categoryValues: Set<string>, fallback: string) {
+  return categoryValues.has(value) ? value : fallback;
+}
+
+function hasContinueDraftContent(input: {
+  entries: ContinueEntry[];
+  projectId: string;
+  requesterName: string;
+  description: string;
+  amountRaw: string;
+}) {
+  return (
+    input.entries.length > 0 ||
+    input.projectId.trim().length > 0 ||
+    input.requesterName.trim().length > 0 ||
+    input.description.trim().length > 0 ||
+    normalizeDigits(input.amountRaw).length > 0
+  );
+}
+
+function formatContinueDraftSavedAt(value: string | null) {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return new Intl.DateTimeFormat("id-ID", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(date);
 }
 
 function formatHokImportIssuePreview(
@@ -321,6 +377,14 @@ export function ExpenseInputModeFields({
   const [continueAmountRaw, setContinueAmountRaw] = useState("");
   const [continueError, setContinueError] = useState("");
   const [continueProjectResetSignal, setContinueProjectResetSignal] = useState(0);
+  const [continueDraftReady, setContinueDraftReady] = useState(false);
+  const [continueDraftSavedAt, setContinueDraftSavedAt] = useState<string | null>(null);
+  const [continueDraftNotice, setContinueDraftNotice] = useState("");
+
+  const expenseCategoryValues = useMemo(
+    () => new Set(expenseCategories.map((item) => item.value)),
+    [expenseCategories],
+  );
 
   useEffect(() => {
     setHokRows(createInitialHokRows(hokProjectPresets));
@@ -418,6 +482,188 @@ export function ExpenseInputModeFields({
     setContinueProjectResetSignal((prev) => prev + 1);
   }, [defaultExpenseCategory, today]);
 
+  useEffect(() => {
+    if (continueDraftReady) {
+      return;
+    }
+
+    const url = new URL(window.location.href);
+    const hasSuccess = Boolean(url.searchParams.get("success")?.trim());
+    const hasError = Boolean(url.searchParams.get("error")?.trim());
+    const shouldClearSubmittedDraft =
+      hasSuccess && window.sessionStorage.getItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY) === "1";
+
+    if (hasError) {
+      window.sessionStorage.removeItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY);
+    }
+
+    if (shouldClearSubmittedDraft) {
+      window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
+      window.sessionStorage.removeItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY);
+      setContinueDraftReady(true);
+      return;
+    }
+
+    const projectById = new Map(projects.map((project) => [project.id, project] as const));
+
+    try {
+      const rawDraft = window.localStorage.getItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
+      if (!rawDraft) {
+        setContinueDraftReady(true);
+        return;
+      }
+
+      const parsedDraft: unknown = JSON.parse(rawDraft);
+      if (!isRecord(parsedDraft)) {
+        window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
+        setContinueDraftReady(true);
+        return;
+      }
+
+      const current = isRecord(parsedDraft.current) ? parsedDraft.current : {};
+      const savedAt = getRecordString(parsedDraft, "savedAt") || null;
+      const restoredProjectId = getRecordString(current, "projectId").trim();
+      const nextProjectId = projectById.has(restoredProjectId) ? restoredProjectId : "";
+      const nextCategory = resolveDraftCategory(
+        getRecordString(current, "category"),
+        expenseCategoryValues,
+        defaultExpenseCategory,
+      );
+      const nextDate = resolveDraftDate(getRecordString(current, "expenseDate"), today);
+      const nextRequester = getRecordString(current, "requesterName");
+      const nextDescription = getRecordString(current, "description");
+      const nextAmountRaw = normalizeDigits(getRecordString(current, "amountRaw"));
+      const nextEntries = (Array.isArray(parsedDraft.entries) ? parsedDraft.entries : [])
+        .map((item): ContinueEntry | null => {
+          if (!isRecord(item)) {
+            return null;
+          }
+          const projectId = getRecordString(item, "projectId").trim();
+          const project = projectById.get(projectId);
+          const requesterName = getRecordString(item, "requesterName").trim();
+          const description = getRecordString(item, "description").trim();
+          const amountRaw = normalizeDigits(getRecordString(item, "amountRaw") || getRecordString(item, "amount"));
+          const amount = Number(amountRaw);
+          if (!project || !requesterName || !description || !Number.isFinite(amount) || amount <= 0) {
+            return null;
+          }
+
+          return {
+            id: getRecordString(item, "id") || createContinueEntryId(),
+            projectId,
+            projectName: project.name,
+            category: resolveDraftCategory(
+              getRecordString(item, "category"),
+              expenseCategoryValues,
+              defaultExpenseCategory,
+            ),
+            expenseDate: resolveDraftDate(getRecordString(item, "expenseDate"), today),
+            requesterName,
+            description,
+            amountRaw,
+          };
+        })
+        .filter((entry): entry is ContinueEntry => Boolean(entry));
+
+      if (
+        hasContinueDraftContent({
+          entries: nextEntries,
+          projectId: nextProjectId,
+          requesterName: nextRequester,
+          description: nextDescription,
+          amountRaw: nextAmountRaw,
+        })
+      ) {
+        setMode(CONTINUE_MODE);
+        setContinueEntries(nextEntries);
+        setContinueProjectId(nextProjectId);
+        setContinueCategory(nextCategory);
+        setContinueDate(nextDate);
+        setContinueRequester(nextRequester);
+        setContinueDescription(nextDescription);
+        setContinueAmountRaw(nextAmountRaw);
+        setContinueDraftSavedAt(savedAt);
+        setContinueDraftNotice("Draft mode continue dipulihkan dari perangkat ini.");
+        if (nextProjectId) {
+          window.requestAnimationFrame(() => {
+            window.dispatchEvent(
+              new CustomEvent(PROJECT_AUTOCOMPLETE_SELECT_EVENT, {
+                detail: { projectId: nextProjectId },
+              }),
+            );
+          });
+        }
+      }
+    } catch {
+      window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
+    } finally {
+      setContinueDraftReady(true);
+    }
+  }, [continueDraftReady, defaultExpenseCategory, expenseCategoryValues, projects, today]);
+
+  useEffect(() => {
+    if (!continueDraftReady) {
+      return;
+    }
+
+    const hasDraftContent = hasContinueDraftContent({
+      entries: continueEntries,
+      projectId: continueProjectId,
+      requesterName: continueRequester,
+      description: continueDescription,
+      amountRaw: continueAmountRaw,
+    });
+
+    if (!hasDraftContent) {
+      window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
+      setContinueDraftSavedAt(null);
+      return;
+    }
+
+    const savedAt = new Date().toISOString();
+    try {
+      window.localStorage.setItem(
+        EXPENSE_CONTINUE_DRAFT_STORAGE_KEY,
+        JSON.stringify({
+          version: 1,
+          savedAt,
+          current: {
+            projectId: continueProjectId,
+            category: continueCategory,
+            expenseDate: continueDate,
+            requesterName: continueRequester,
+            description: continueDescription,
+            amountRaw: normalizeDigits(continueAmountRaw),
+          },
+          entries: continueEntries,
+        }),
+      );
+      setContinueDraftSavedAt(savedAt);
+      setContinueDraftNotice("");
+    } catch {
+      setContinueDraftNotice("Draft belum bisa disimpan di browser ini.");
+    }
+  }, [
+    continueAmountRaw,
+    continueCategory,
+    continueDate,
+    continueDescription,
+    continueDraftReady,
+    continueEntries,
+    continueProjectId,
+    continueRequester,
+  ]);
+
+  const clearContinueDraft = useCallback(() => {
+    window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
+    window.sessionStorage.removeItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY);
+    setContinueEntries([]);
+    resetContinueDraft();
+    setContinueError("");
+    setContinueDraftSavedAt(null);
+    setContinueDraftNotice("Draft mode continue dihapus.");
+  }, [resetContinueDraft]);
+
   const validateHokRows = useCallback(() => {
     const selectedRows = hokRows.filter((row) => row.selected);
     if (selectedRows.length === 0) {
@@ -492,6 +738,7 @@ export function ExpenseInputModeFields({
         setHokError("");
         setScraperError("");
         setContinueError("");
+        window.sessionStorage.removeItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY);
         window.sessionStorage.setItem(EXPENSE_PROJECT_REFOCUS_KEY, "1");
         return;
       }
@@ -505,6 +752,7 @@ export function ExpenseInputModeFields({
         setHokError("");
         setScraperError("");
         setContinueError("");
+        window.sessionStorage.setItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY, "1");
         window.sessionStorage.setItem(EXPENSE_PROJECT_REFOCUS_KEY, "1");
         return;
       }
@@ -515,6 +763,7 @@ export function ExpenseInputModeFields({
         setHokError("");
         setScraperError("");
         setContinueError("");
+        window.sessionStorage.removeItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY);
         window.sessionStorage.setItem(EXPENSE_PROJECT_REFOCUS_KEY, "1");
         return;
       }
@@ -918,10 +1167,7 @@ export function ExpenseInputModeFields({
 
     const projectName = projects.find((p) => p.id === projectId)?.name ?? projectId;
     const entry: ContinueEntry = {
-      id:
-        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-          ? crypto.randomUUID()
-          : `ce-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      id: createContinueEntryId(),
       projectId,
       projectName,
       category: continueCategory,
@@ -973,6 +1219,14 @@ export function ExpenseInputModeFields({
     () => continueEntries.reduce((sum, e) => sum + Number(e.amountRaw), 0),
     [continueEntries],
   );
+  const hasActiveContinueDraft = hasContinueDraftContent({
+    entries: continueEntries,
+    projectId: continueProjectId,
+    requesterName: continueRequester,
+    description: continueDescription,
+    amountRaw: continueAmountRaw,
+  });
+  const continueDraftSavedAtLabel = formatContinueDraftSavedAt(continueDraftSavedAt);
 
   return (
     <div ref={rootRef} className="space-y-3">
@@ -1231,6 +1485,27 @@ export function ExpenseInputModeFields({
             <kbd className="rounded border border-violet-300 bg-violet-100 px-1 font-mono text-[10px]">Enter</kbd>{" "}
             di nominal atau klik <strong>Tambah Entry</strong>. Setelah semua selesai, klik{" "}
             <strong>Simpan Semua</strong>.
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <div>
+              <p className="text-xs font-semibold text-slate-700">Draft otomatis aktif</p>
+              <p className="text-[11px] text-slate-500">
+                Data mode continue disimpan sementara di browser ini
+                {continueDraftSavedAtLabel ? `, terakhir ${continueDraftSavedAtLabel}` : ""}.
+                {continueDraftNotice ? ` ${continueDraftNotice}` : ""}
+              </p>
+            </div>
+            {(hasActiveContinueDraft || continueDraftSavedAt) && (
+              <button
+                type="button"
+                data-ui-button="true"
+                onClick={clearContinueDraft}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+              >
+                Hapus Draft
+              </button>
+            )}
           </div>
 
           {/* Form input continue */}

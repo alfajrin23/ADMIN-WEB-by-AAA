@@ -96,10 +96,10 @@ export function KmpMaterialMonitorPanel({
               Monitoring Seluruh Project KMP
             </span>
             <h3 className="mt-3 text-xl font-black tracking-[-0.04em] text-slate-950">
-              Prioritaskan project yang masih belum punya input material besar
+              Prioritaskan project yang masih belum punya input kategori material
             </h3>
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              Gunakan panel ini untuk menyaring project yang belum lengkap, mencari nama material,
+              Gunakan panel ini untuk menyaring project yang belum lengkap, mencari material prioritas,
               lalu lompat langsung ke rekap biaya project terkait.
             </p>
           </div>

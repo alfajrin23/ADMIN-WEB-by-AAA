@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type ProjectOption = {
   id: string;
@@ -13,6 +13,8 @@ type ProjectChecklistSearchProps = {
   projects: ProjectOption[];
   inputName?: string;
   excludeProjectId?: string;
+  selectedProjectIds?: string[];
+  onSelectedProjectIdsChange?: (projectIds: string[]) => void;
 };
 
 function normalizeText(value: string) {
@@ -28,11 +30,27 @@ export function ProjectChecklistSearch({
   projects,
   inputName = "project_ids",
   excludeProjectId,
+  selectedProjectIds,
+  onSelectedProjectIdsChange,
 }: ProjectChecklistSearchProps) {
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [clientFilter, setClientFilter] = useState("");
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const deferredQuery = useDeferredValue(query);
+  const [internalSelectedIds, setInternalSelectedIds] = useState<string[]>([]);
+  const selectedIds = selectedProjectIds ?? internalSelectedIds;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query), 2000);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
+  const updateSelectedIds = (updater: (prev: string[]) => string[]) => {
+    const nextSelectedIds = updater(selectedIds);
+    if (selectedProjectIds === undefined) {
+      setInternalSelectedIds(nextSelectedIds);
+    }
+    onSelectedProjectIdsChange?.(nextSelectedIds);
+  };
 
   const availableProjects = useMemo(
     () =>
@@ -60,7 +78,7 @@ export function ProjectChecklistSearch({
     [availableProjects],
   );
 
-  const normalizedQuery = normalizeText(deferredQuery);
+  const normalizedQuery = normalizeText(debouncedQuery);
   const visibleProjects = useMemo(() => {
     return availableProjects.filter((project) => {
       const matchesClient =
@@ -79,7 +97,7 @@ export function ProjectChecklistSearch({
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
   const toggleSelection = (projectId: string, checked: boolean) => {
-    setSelectedIds((prev) => {
+    updateSelectedIds((prev) => {
       if (checked) {
         if (prev.includes(projectId)) {
           return prev;
@@ -92,7 +110,7 @@ export function ProjectChecklistSearch({
 
   const toggleVisibleProjects = (checked: boolean) => {
     const visibleIds = visibleProjects.map((project) => project.id);
-    setSelectedIds((prev) => {
+    updateSelectedIds((prev) => {
       const current = new Set(prev);
       if (checked) {
         for (const projectId of visibleIds) {

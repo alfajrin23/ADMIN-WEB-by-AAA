@@ -74,6 +74,9 @@ type ProjectPageProps = {
     detail_year?: string;
     success?: string;
     error?: string;
+    expense_action_token?: string;
+    expense_draft_clear?: string;
+    expense_continue_draft_clear?: string;
     view?: string;
   }>;
 };
@@ -176,6 +179,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
   );
   const hasDetailSearchCriteria = Boolean(detailSearchQuery || detailDateFrom || detailDateTo || detailYear);
   const success = typeof params.success === "string" ? params.success : "";
+  const expenseActionToken = typeof params.expense_action_token === "string" ? params.expense_action_token : "";
   let activeModal = requestedModal;
   let blockedModalMessage = "";
   if (!canEdit && (requestedModal === "project-new" || requestedModal === "expense-new")) {
@@ -1079,7 +1083,12 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
             ) : projects.length === 0 ? (
               <p className="mt-4 text-sm text-slate-500">Belum ada project. Buat project dulu.</p>
             ) : (
-              <form id="expense-modal-form" action={createExpenseAction} className="mt-4 space-y-3">
+              <form
+                key={`expense-modal-form-${expenseActionToken || success || error || "idle"}`}
+                id="expense-modal-form"
+                action={createExpenseAction}
+                className="mt-4 space-y-3"
+              >
                 <input type="hidden" name="return_to" value={expenseModalErrorReturnHref} />
                 <input type="hidden" name="error_return_to" value={expenseModalErrorReturnHref} />
                 <ExpenseInputModeFields

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useDeferredValue, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { deleteExpenseAction } from "@/app/actions/expense.action";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { EditIcon, TrashIcon } from "@/components/icons";
@@ -107,8 +107,13 @@ export function ProjectRecapExpenseList({
   searchText,
 }: ProjectRecapExpenseListProps) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
-  const deferredSearchQuery = useDeferredValue(searchQuery);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearchQuery(searchQuery), 2000);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
 
   const sortedExpenses = useMemo(
     () =>
@@ -127,7 +132,7 @@ export function ProjectRecapExpenseList({
   );
 
   const filteredExpenses = useMemo(() => {
-    const normalizedQuery = normalizeSearchText(deferredSearchQuery);
+    const normalizedQuery = normalizeSearchText(debouncedSearchQuery);
     const queryDigits = getDigits(normalizedQuery);
     const queryTerms = normalizedQuery.split(" ").filter((item) => item.length > 0);
     const compactQuery = toCompactSearchToken(normalizedQuery);
@@ -157,7 +162,7 @@ export function ProjectRecapExpenseList({
       const amountDigits = getDigits(String(Math.round(Math.abs(item.amount))));
       return amountDigits.includes(queryDigits);
     });
-  }, [categoryFilter, deferredSearchQuery, sortedExpenses]);
+  }, [categoryFilter, debouncedSearchQuery, sortedExpenses]);
 
   const filteredCategoryTotals = useMemo(() => {
     const totalsByCategory = new Map<string, number>();

@@ -5,6 +5,7 @@ import { getString, getStringList, getNumber, getStringValues, getNumberValues, 
 import { revalidatePath, revalidateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { queueActivityLog } from "@/lib/activity-logs";
+import { clearExpenseInputDraftForActor } from "@/lib/input-drafts";
 import {
   ATTENDANCE_DRAFT_PROJECT_CODE,
   ATTENDANCE_DRAFT_PROJECT_NAME,
@@ -211,12 +212,20 @@ export async function createExpenseAction(formData: FormData) {
       expense_date: basePayload.expense_date,
     },
   });
+  await clearExpenseInputDraftForActor(actor.id);
   if (successReturnTo) {
     const successMessage =
       projectIds.length > 1
         ? `Biaya berhasil disimpan ke ${projectIds.length} project.`
         : "Biaya berhasil disimpan.";
-    redirect(withReturnMessage(successReturnTo, "success", successMessage));
+    redirect(
+      withReturnParams(successReturnTo, (params) => {
+        params.delete("error");
+        params.set("success", successMessage);
+        params.set("expense_draft_clear", randomUUID());
+        params.set("expense_action_token", randomUUID());
+      }),
+    );
   }
 }
 export async function updateExpenseAction(formData: FormData) {
@@ -320,7 +329,7 @@ export async function updateExpenseAction(formData: FormData) {
     },
   });
   if (returnTo) {
-    redirect(returnTo);
+    redirect(withReturnMessage(returnTo, "success", "Data biaya berhasil diperbarui."));
   }
 }
 export async function updateManyExpensesAction(formData: FormData) {
@@ -522,7 +531,7 @@ export async function updateManyExpensesAction(formData: FormData) {
     },
   });
   if (returnTo) {
-    redirect(returnTo);
+    redirect(withReturnMessage(returnTo, "success", `${expenseIds.length} data biaya berhasil diperbarui.`));
   }
 }
 export async function deleteManyExpensesAction(formData: FormData) {
@@ -581,7 +590,7 @@ export async function deleteManyExpensesAction(formData: FormData) {
     },
   });
   if (returnTo) {
-    redirect(returnTo);
+    redirect(withReturnMessage(returnTo, "success", `${expenseIds.length} data biaya berhasil dihapus.`));
   }
 }
 export async function deleteExpenseAction(formData: FormData) {
@@ -623,7 +632,7 @@ export async function deleteExpenseAction(formData: FormData) {
     description: "Menghapus data biaya project.",
   });
   if (returnTo) {
-    redirect(returnTo);
+    redirect(withReturnMessage(returnTo, "success", "Data biaya berhasil dihapus."));
   }
 }
 
@@ -770,12 +779,16 @@ async function createContinueExpenseEntries(
       project_ids: [...new Set(entries.map((e) => e.projectId))],
     },
   });
+  await clearExpenseInputDraftForActor(actor.id);
   if (successReturnTo) {
+    const clearToken = randomUUID();
     redirect(
       withReturnParams(successReturnTo, (params) => {
         params.delete("error");
         params.set("success", `${entries.length} biaya berhasil disimpan (Mode Continue).`);
-        params.set("expense_continue_draft_clear", randomUUID());
+        params.set("expense_draft_clear", clearToken);
+        params.set("expense_continue_draft_clear", clearToken);
+        params.set("expense_action_token", randomUUID());
       }),
     );
   }

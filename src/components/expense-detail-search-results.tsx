@@ -285,7 +285,7 @@ export function ExpenseDetailSearchResults({
               const nextValue = event.currentTarget.value;
               setFilterInputValue(nextValue);
               if (filterDebounceRef.current) clearTimeout(filterDebounceRef.current);
-              filterDebounceRef.current = window.setTimeout(() => setFilterQuery(nextValue), 220);
+              filterDebounceRef.current = window.setTimeout(() => setFilterQuery(nextValue), 2000);
             }}
             placeholder="Cari tanggal, project, pengaju, keterangan, kategori, vendor, atau nominal"
             autoComplete="off"

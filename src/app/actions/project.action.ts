@@ -139,7 +139,7 @@ export async function createProjectAction(formData: FormData) {
     },
   });
   if (returnTo) {
-    redirect(returnTo);
+    redirect(withReturnMessage(returnTo, "success", `Project "${payload.name}" berhasil ditambahkan.`));
   }
 }
 export async function updateProjectAction(formData: FormData) {
@@ -223,7 +223,7 @@ export async function updateProjectAction(formData: FormData) {
     },
   });
   if (returnTo) {
-    redirect(returnTo);
+    redirect(withReturnMessage(returnTo, "success", `Project "${payload.name}" berhasil diperbarui.`));
   }
 }
 export async function updateManyProjectsAction(formData: FormData) {
@@ -311,7 +311,7 @@ export async function updateManyProjectsAction(formData: FormData) {
     },
   });
   if (returnTo) {
-    redirect(returnTo);
+    redirect(withReturnMessage(returnTo, "success", `${projectIds.length} project berhasil diperbarui.`));
   }
 }
 export async function deleteProjectAction(formData: FormData) {
@@ -361,7 +361,7 @@ export async function deleteProjectAction(formData: FormData) {
     description: "Menghapus project beserta data turunannya.",
   });
   if (returnTo) {
-    redirect(returnTo);
+    redirect(withReturnMessage(returnTo, "success", "Project berhasil dihapus."));
   }
 }
 export async function deleteSelectedProjectsAction(formData: FormData) {
@@ -419,6 +419,6 @@ export async function deleteSelectedProjectsAction(formData: FormData) {
     },
   });
   if (returnTo) {
-    redirect(returnTo);
+    redirect(withReturnMessage(returnTo, "success", `${projectIds.length} project berhasil dihapus.`));
   }
 }

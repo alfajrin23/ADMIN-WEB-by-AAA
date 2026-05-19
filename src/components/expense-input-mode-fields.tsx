@@ -12,6 +12,11 @@ import {
 } from "react";
 import { useSearchParams } from "next/navigation";
 import { useFormStatus } from "react-dom";
+import {
+  clearExpenseInputDraftAction,
+  getExpenseInputDraftAction,
+  saveExpenseInputDraftAction,
+} from "@/app/actions/expense-draft.action";
 import { EnterToNextField } from "@/components/enter-to-next-field";
 import { ProjectAutocomplete, PROJECT_AUTOCOMPLETE_SELECT_EVENT } from "@/components/project-autocomplete";
 import { ProjectChecklistSearch } from "@/components/project-checklist-search";
@@ -86,6 +91,63 @@ type ContinueEntry = {
   amountRaw: string;
 };
 
+type StandardDraftState = {
+  projectId: string;
+  additionalProjectIds: string[];
+  category: string;
+  categoryCustom: string;
+  expenseDate: string;
+  requesterName: string;
+  description: string;
+  amountRaw: string;
+  recipientName: string;
+  usageInfo: string;
+  specialistType: string;
+  specialistTypeCustom: string;
+  quantity: string;
+  unitLabel: string;
+  unitPriceRaw: string;
+};
+
+type ScraperDraftState = {
+  category: string;
+  expenseDate: string;
+  requesterName: string;
+  description: string;
+  rows: ScraperRow[];
+};
+
+type ContinueDraftState = {
+  entries: ContinueEntry[];
+  projectId: string;
+  category: string;
+  expenseDate: string;
+  requesterName: string;
+  description: string;
+  amountRaw: string;
+};
+
+type HokDraftState = {
+  expenseDate: string;
+  pasteText: string;
+  rows: Array<{
+    projectId: string;
+    requesterName: string;
+    amountRaw: string;
+    selected: boolean;
+  }>;
+};
+
+type ExpenseDraftPayload = {
+  version: 2;
+  mode: ExpenseInputMode;
+  savedAt: string;
+  standard: StandardDraftState;
+  scraper: ScraperDraftState;
+  continueMode: ContinueDraftState;
+  hok: HokDraftState;
+};
+
 type ExpenseInputModeFieldsProps = {
   projects: ProjectOption[];
   initialProjectId?: string;
@@ -104,8 +166,10 @@ const HOK_MODE = "hok_kmp_cianjur";
 const SCRAPER_MODE = "scraper";
 const CONTINUE_MODE = "continue";
 const EXPENSE_PROJECT_REFOCUS_KEY = "expense-modal-refocus-project";
+const EXPENSE_DRAFT_PENDING_CLEAR_KEY = "expense-modal-draft-pending-clear";
 const EXPENSE_CONTINUE_DRAFT_STORAGE_KEY = "admin-web:expense-continue-draft:v1";
 const EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY = "expense-modal-continue-draft-pending-clear";
+const EXPENSE_INPUT_DRAFT_DEBOUNCE_MS = 1000;
 const HOK_EXCEL_ACCEPT = ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 type ExpenseInputMode = typeof STANDARD_MODE | typeof HOK_MODE | typeof SCRAPER_MODE | typeof CONTINUE_MODE;
 
@@ -189,12 +253,71 @@ function getRecordString(record: Record<string, unknown>, key: string) {
   return typeof value === "string" ? value : "";
 }
 
+function getRecordStringList(record: Record<string, unknown>, key: string) {
+  const value = record[key];
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function resolveDraftMode(value: string): ExpenseInputMode {
+  return value === HOK_MODE || value === SCRAPER_MODE || value === CONTINUE_MODE ? value : STANDARD_MODE;
+}
+
 function resolveDraftDate(value: string, fallback: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback;
 }
 
 function resolveDraftCategory(value: string, categoryValues: Set<string>, fallback: string) {
   return categoryValues.has(value) ? value : fallback;
+}
+
+function hasStandardDraftContent(input: StandardDraftState, defaultCategory: string, today: string) {
+  return (
+    input.projectId.trim().length > 0 ||
+    input.additionalProjectIds.length > 0 ||
+    input.category !== defaultCategory ||
+    input.categoryCustom.trim().length > 0 ||
+    input.expenseDate !== today ||
+    input.requesterName.trim().length > 0 ||
+    input.description.trim().length > 0 ||
+    normalizeDigits(input.amountRaw).length > 0 ||
+    input.recipientName.trim().length > 0 ||
+    input.usageInfo.trim().length > 0 ||
+    input.specialistType.trim().length > 0 ||
+    input.specialistTypeCustom.trim().length > 0 ||
+    input.quantity.trim().length > 0 ||
+    input.unitLabel.trim().length > 0 ||
+    normalizeDigits(input.unitPriceRaw).length > 0
+  );
+}
+
+function hasScraperDraftContent(input: ScraperDraftState, defaultCategory: string, today: string) {
+  return (
+    input.category !== defaultCategory ||
+    input.expenseDate !== today ||
+    input.requesterName.trim().length > 0 ||
+    input.description.trim().length > 0 ||
+    input.rows.some((row) => row.projectId.trim().length > 0 || normalizeDigits(row.amountRaw).length > 0)
+  );
+}
+
+function hasHokDraftContent(input: HokDraftState, today: string) {
+  return (
+    input.expenseDate !== today ||
+    input.pasteText.trim().length > 0 ||
+    input.rows.some((row) => row.amountRaw.trim().length > 0 || row.requesterName.trim().length > 0)
+  );
+}
+
+function hasExpenseInputDraftContent(input: ExpenseDraftPayload, defaultCategory: string, today: string) {
+  return (
+    hasStandardDraftContent(input.standard, defaultCategory, today) ||
+    hasScraperDraftContent(input.scraper, defaultCategory, today) ||
+    hasHokDraftContent(input.hok, today) ||
+    hasContinueDraftContent(input.continueMode)
+  );
 }
 
 function hasContinueDraftContent(input: {
@@ -357,6 +480,7 @@ export function ExpenseInputModeFields({
   const pendingScraperFocusRef = useRef<{ rowId: string; field: "project" | "amount" } | null>(null);
   const lastProcessedContinueDraftClearRef = useRef("");
   const continueDraftClearInProgressRef = useRef(false);
+  const hasLoadedExpenseDraftRef = useRef(false);
   const [submissionToken] = useState(createExpenseSubmissionToken);
   const [mode, setMode] = useState<ExpenseInputMode>(STANDARD_MODE);
   const [hokQuery, setHokQuery] = useState("");
@@ -370,6 +494,26 @@ export function ExpenseInputModeFields({
     createInitialScraperRows(initialProjectId),
   );
   const [scraperError, setScraperError] = useState("");
+  const [standardProjectId, setStandardProjectId] = useState(initialProjectId ?? "");
+  const [standardAdditionalProjectIds, setStandardAdditionalProjectIds] = useState<string[]>([]);
+  const [standardCategory, setStandardCategory] = useState(defaultExpenseCategory);
+  const [standardCategoryCustom, setStandardCategoryCustom] = useState("");
+  const [standardDate, setStandardDate] = useState(today);
+  const [standardRequester, setStandardRequester] = useState("");
+  const [standardDescription, setStandardDescription] = useState("");
+  const [standardAmountRaw, setStandardAmountRaw] = useState("");
+  const [standardRecipientName, setStandardRecipientName] = useState("");
+  const [standardUsageInfo, setStandardUsageInfo] = useState("");
+  const [standardSpecialistType, setStandardSpecialistType] = useState("");
+  const [standardSpecialistTypeCustom, setStandardSpecialistTypeCustom] = useState("");
+  const [standardQuantity, setStandardQuantity] = useState("");
+  const [standardUnitLabel, setStandardUnitLabel] = useState("");
+  const [standardUnitPriceRaw, setStandardUnitPriceRaw] = useState("");
+  const [scraperCategory, setScraperCategory] = useState(defaultExpenseCategory);
+  const [scraperDate, setScraperDate] = useState(today);
+  const [scraperRequester, setScraperRequester] = useState("");
+  const [scraperDescription, setScraperDescription] = useState("");
+  const [hokDate, setHokDate] = useState(today);
 
   // Continue Mode state
   const [continueEntries, setContinueEntries] = useState<ContinueEntry[]>([]);
@@ -385,6 +529,9 @@ export function ExpenseInputModeFields({
   const [continueDraftSavedAt, setContinueDraftSavedAt] = useState<string | null>(null);
   const [continueDraftNotice, setContinueDraftNotice] = useState("");
   const [continueDraftClearVersion, setContinueDraftClearVersion] = useState(0);
+  const [expenseDraftReady, setExpenseDraftReady] = useState(false);
+  const [expenseDraftSavedAt, setExpenseDraftSavedAt] = useState<string | null>(null);
+  const [expenseDraftNotice, setExpenseDraftNotice] = useState("");
 
   const expenseCategoryValues = useMemo(
     () => new Set(expenseCategories.map((item) => item.value)),
@@ -491,35 +638,168 @@ export function ExpenseInputModeFields({
     continueDraftClearInProgressRef.current = true;
     window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
     window.sessionStorage.removeItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY);
+    window.sessionStorage.removeItem(EXPENSE_DRAFT_PENDING_CLEAR_KEY);
     setContinueEntries([]);
     resetContinueDraft();
     setContinueError("");
     setContinueDraftSavedAt(null);
+    setExpenseDraftSavedAt(null);
     setContinueDraftNotice("");
+    setExpenseDraftNotice("");
     setContinueDraftReady(true);
     setContinueDraftClearVersion((prev) => prev + 1);
   }, [resetContinueDraft]);
 
+  const applyExpenseDraftPayload = useCallback(
+    (payload: Record<string, unknown>, updatedAt: string | null) => {
+      const projectById = new Map(projects.map((project) => [project.id, project] as const));
+      const nextMode = resolveDraftMode(getRecordString(payload, "mode"));
+
+      const standardPayload = isRecord(payload.standard) ? payload.standard : {};
+      const standardProjectId = getRecordString(standardPayload, "projectId").trim();
+      setStandardProjectId(projectById.has(standardProjectId) ? standardProjectId : "");
+      setStandardAdditionalProjectIds(
+        getRecordStringList(standardPayload, "additionalProjectIds").filter((projectId) => projectById.has(projectId)),
+      );
+      setStandardCategory(resolveDraftCategory(getRecordString(standardPayload, "category"), expenseCategoryValues, defaultExpenseCategory));
+      setStandardCategoryCustom(getRecordString(standardPayload, "categoryCustom"));
+      setStandardDate(resolveDraftDate(getRecordString(standardPayload, "expenseDate"), today));
+      setStandardRequester(getRecordString(standardPayload, "requesterName"));
+      setStandardDescription(getRecordString(standardPayload, "description"));
+      setStandardAmountRaw(normalizeDigits(getRecordString(standardPayload, "amountRaw")));
+      setStandardRecipientName(getRecordString(standardPayload, "recipientName"));
+      setStandardUsageInfo(getRecordString(standardPayload, "usageInfo"));
+      setStandardSpecialistType(getRecordString(standardPayload, "specialistType"));
+      setStandardSpecialistTypeCustom(getRecordString(standardPayload, "specialistTypeCustom"));
+      setStandardQuantity(normalizeDigits(getRecordString(standardPayload, "quantity")));
+      setStandardUnitLabel(getRecordString(standardPayload, "unitLabel"));
+      setStandardUnitPriceRaw(normalizeDigits(getRecordString(standardPayload, "unitPriceRaw")));
+
+      const scraperPayload = isRecord(payload.scraper) ? payload.scraper : {};
+      setScraperCategory(resolveDraftCategory(getRecordString(scraperPayload, "category"), expenseCategoryValues, defaultExpenseCategory));
+      setScraperDate(resolveDraftDate(getRecordString(scraperPayload, "expenseDate"), today));
+      setScraperRequester(getRecordString(scraperPayload, "requesterName"));
+      setScraperDescription(getRecordString(scraperPayload, "description"));
+      const nextScraperRows = (Array.isArray(scraperPayload.rows) ? scraperPayload.rows : [])
+        .map((item): ScraperRow | null => {
+          if (!isRecord(item)) {
+            return null;
+          }
+          const projectId = getRecordString(item, "projectId").trim();
+          const amountRaw = normalizeDigits(getRecordString(item, "amountRaw") || getRecordString(item, "amount"));
+          if (!projectById.has(projectId) && !amountRaw) {
+            return null;
+          }
+          return {
+            id: getRecordString(item, "id") || createScraperRow().id,
+            projectId: projectById.has(projectId) ? projectId : "",
+            amountRaw,
+          };
+        })
+        .filter((row): row is ScraperRow => Boolean(row));
+      setScraperRows(nextScraperRows.length > 0 ? nextScraperRows : createInitialScraperRows(initialProjectId));
+
+      const continuePayload = isRecord(payload.continueMode) ? payload.continueMode : {};
+      const continueProjectId = getRecordString(continuePayload, "projectId").trim();
+      const nextContinueEntries = (Array.isArray(continuePayload.entries) ? continuePayload.entries : [])
+        .map((item): ContinueEntry | null => {
+          if (!isRecord(item)) {
+            return null;
+          }
+          const projectId = getRecordString(item, "projectId").trim();
+          const project = projectById.get(projectId);
+          const requesterName = getRecordString(item, "requesterName").trim();
+          const description = getRecordString(item, "description").trim();
+          const amountRaw = normalizeDigits(getRecordString(item, "amountRaw") || getRecordString(item, "amount"));
+          if (!project || !requesterName || !description || !amountRaw) {
+            return null;
+          }
+          return {
+            id: getRecordString(item, "id") || createContinueEntryId(),
+            projectId,
+            projectName: project.name,
+            category: resolveDraftCategory(getRecordString(item, "category"), expenseCategoryValues, defaultExpenseCategory),
+            expenseDate: resolveDraftDate(getRecordString(item, "expenseDate"), today),
+            requesterName,
+            description,
+            amountRaw,
+          };
+        })
+        .filter((entry): entry is ContinueEntry => Boolean(entry));
+      setContinueEntries(nextContinueEntries);
+      setContinueProjectId(projectById.has(continueProjectId) ? continueProjectId : "");
+      setContinueCategory(resolveDraftCategory(getRecordString(continuePayload, "category"), expenseCategoryValues, defaultExpenseCategory));
+      setContinueDate(resolveDraftDate(getRecordString(continuePayload, "expenseDate"), today));
+      setContinueRequester(getRecordString(continuePayload, "requesterName"));
+      setContinueDescription(getRecordString(continuePayload, "description"));
+      setContinueAmountRaw(normalizeDigits(getRecordString(continuePayload, "amountRaw")));
+
+      const hokPayload = isRecord(payload.hok) ? payload.hok : {};
+      setHokDate(resolveDraftDate(getRecordString(hokPayload, "expenseDate"), today));
+      setHokPasteText(getRecordString(hokPayload, "pasteText"));
+      const hokDraftRows = new Map<string, Record<string, unknown>>();
+      if (Array.isArray(hokPayload.rows)) {
+        for (const item of hokPayload.rows) {
+          if (!isRecord(item)) {
+            continue;
+          }
+          const projectId = getRecordString(item, "projectId").trim();
+          if (projectId) {
+            hokDraftRows.set(projectId, item);
+          }
+        }
+      }
+      setHokRows(
+        createInitialHokRows(hokProjectPresets).map((row) => {
+          const draftRow = hokDraftRows.get(row.projectId);
+          if (!draftRow) {
+            return row;
+          }
+          return {
+            ...row,
+            requesterName: getRecordString(draftRow, "requesterName") || row.requesterName,
+            amountRaw: normalizeDigits(getRecordString(draftRow, "amountRaw")),
+            selected:
+              typeof draftRow.selected === "boolean"
+                ? draftRow.selected
+                : row.selected,
+          };
+        }),
+      );
+
+      setMode(nextMode);
+      setContinueDraftReady(true);
+      setExpenseDraftSavedAt(updatedAt);
+      setExpenseDraftNotice(updatedAt ? "Draft input biaya dipulihkan dari akun ini." : "");
+    },
+    [defaultExpenseCategory, expenseCategoryValues, hokProjectPresets, initialProjectId, projects, today],
+  );
+
   const successMessage = searchParams.get("success")?.trim() ?? "";
   const errorMessage = searchParams.get("error")?.trim() ?? "";
+  const expenseDraftClearToken = searchParams.get("expense_draft_clear")?.trim() ?? "";
   const continueDraftClearToken = searchParams.get("expense_continue_draft_clear")?.trim() ?? "";
 
   useEffect(() => {
     const hasServerClearSignal =
-      continueDraftClearToken.length > 0 &&
-      lastProcessedContinueDraftClearRef.current !== continueDraftClearToken;
+      (expenseDraftClearToken.length > 0 &&
+        lastProcessedContinueDraftClearRef.current !== expenseDraftClearToken) ||
+      (continueDraftClearToken.length > 0 &&
+        lastProcessedContinueDraftClearRef.current !== continueDraftClearToken);
     const shouldClearSubmittedDraft =
       hasServerClearSignal ||
       (Boolean(successMessage) &&
-        window.sessionStorage.getItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY) === "1");
+        (window.sessionStorage.getItem(EXPENSE_DRAFT_PENDING_CLEAR_KEY) === "1" ||
+          window.sessionStorage.getItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY) === "1"));
 
     if (errorMessage) {
+      window.sessionStorage.removeItem(EXPENSE_DRAFT_PENDING_CLEAR_KEY);
       window.sessionStorage.removeItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY);
     }
 
     if (shouldClearSubmittedDraft) {
-      if (continueDraftClearToken) {
-        lastProcessedContinueDraftClearRef.current = continueDraftClearToken;
+      if (expenseDraftClearToken || continueDraftClearToken) {
+        lastProcessedContinueDraftClearRef.current = expenseDraftClearToken || continueDraftClearToken;
       }
       resetContinueDraftAfterSave();
       return;
@@ -629,12 +909,50 @@ export function ExpenseInputModeFields({
     continueDraftReady,
     defaultExpenseCategory,
     errorMessage,
+    expenseDraftClearToken,
     expenseCategoryValues,
     projects,
     resetContinueDraftAfterSave,
     successMessage,
     today,
   ]);
+
+  useEffect(() => {
+    if (hasLoadedExpenseDraftRef.current) {
+      return;
+    }
+    if (expenseDraftClearToken || continueDraftClearToken) {
+      hasLoadedExpenseDraftRef.current = true;
+      setExpenseDraftReady(true);
+      return;
+    }
+
+    let isCancelled = false;
+    hasLoadedExpenseDraftRef.current = true;
+    getExpenseInputDraftAction()
+      .then((draft) => {
+        if (isCancelled) {
+          return;
+        }
+        if (draft?.payload) {
+          applyExpenseDraftPayload(draft.payload, draft.updatedAt);
+        }
+      })
+      .catch(() => {
+        if (!isCancelled) {
+          setExpenseDraftNotice("Draft akun belum bisa dibaca.");
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setExpenseDraftReady(true);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [applyExpenseDraftPayload, continueDraftClearToken, expenseDraftClearToken]);
 
   useEffect(() => {
     if (!continueDraftReady) {
@@ -698,6 +1016,118 @@ export function ExpenseInputModeFields({
     continueProjectId,
     continueRequester,
   ]);
+
+  const expenseDraftPayload = useMemo<ExpenseDraftPayload>(
+    () => ({
+      version: 2,
+      mode,
+      savedAt: new Date().toISOString(),
+      standard: {
+        projectId: standardProjectId,
+        additionalProjectIds: standardAdditionalProjectIds,
+        category: standardCategory,
+        categoryCustom: standardCategoryCustom,
+        expenseDate: standardDate,
+        requesterName: standardRequester,
+        description: standardDescription,
+        amountRaw: standardAmountRaw,
+        recipientName: standardRecipientName,
+        usageInfo: standardUsageInfo,
+        specialistType: standardSpecialistType,
+        specialistTypeCustom: standardSpecialistTypeCustom,
+        quantity: standardQuantity,
+        unitLabel: standardUnitLabel,
+        unitPriceRaw: standardUnitPriceRaw,
+      },
+      scraper: {
+        category: scraperCategory,
+        expenseDate: scraperDate,
+        requesterName: scraperRequester,
+        description: scraperDescription,
+        rows: scraperRows,
+      },
+      continueMode: {
+        entries: continueEntries,
+        projectId: continueProjectId,
+        category: continueCategory,
+        expenseDate: continueDate,
+        requesterName: continueRequester,
+        description: continueDescription,
+        amountRaw: continueAmountRaw,
+      },
+      hok: {
+        expenseDate: hokDate,
+        pasteText: hokPasteText,
+        rows: hokRows.map((row) => ({
+          projectId: row.projectId,
+          requesterName: row.requesterName === row.defaultRequesterName ? "" : row.requesterName,
+          amountRaw: row.amountRaw,
+          selected: row.selected,
+        })),
+      },
+    }),
+    [
+      continueAmountRaw,
+      continueCategory,
+      continueDate,
+      continueDescription,
+      continueEntries,
+      continueProjectId,
+      continueRequester,
+      hokDate,
+      hokPasteText,
+      hokRows,
+      mode,
+      scraperCategory,
+      scraperDate,
+      scraperDescription,
+      scraperRequester,
+      scraperRows,
+      standardAdditionalProjectIds,
+      standardAmountRaw,
+      standardCategory,
+      standardCategoryCustom,
+      standardDate,
+      standardDescription,
+      standardProjectId,
+      standardQuantity,
+      standardRecipientName,
+      standardRequester,
+      standardSpecialistType,
+      standardSpecialistTypeCustom,
+      standardUnitLabel,
+      standardUnitPriceRaw,
+      standardUsageInfo,
+    ],
+  );
+
+  useEffect(() => {
+    if (!expenseDraftReady || continueDraftClearInProgressRef.current) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      if (continueDraftClearInProgressRef.current) {
+        return;
+      }
+      if (!hasExpenseInputDraftContent(expenseDraftPayload, defaultExpenseCategory, today)) {
+        clearExpenseInputDraftAction().catch(() => undefined);
+        setExpenseDraftSavedAt(null);
+        return;
+      }
+
+      saveExpenseInputDraftAction(expenseDraftPayload)
+        .then(() => {
+          setExpenseDraftSavedAt(new Date().toISOString());
+          setExpenseDraftNotice("");
+        })
+        .catch(() => {
+          setExpenseDraftNotice("Draft akun belum bisa disimpan.");
+        });
+    }, EXPENSE_INPUT_DRAFT_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [defaultExpenseCategory, expenseDraftPayload, expenseDraftReady, today]);
 
   const clearContinueDraft = useCallback(() => {
     resetContinueDraftAfterSave();
@@ -778,6 +1208,7 @@ export function ExpenseInputModeFields({
         setHokError("");
         setScraperError("");
         setContinueError("");
+        window.sessionStorage.setItem(EXPENSE_DRAFT_PENDING_CLEAR_KEY, "1");
         window.sessionStorage.removeItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY);
         window.sessionStorage.setItem(EXPENSE_PROJECT_REFOCUS_KEY, "1");
         return;
@@ -792,6 +1223,7 @@ export function ExpenseInputModeFields({
         setHokError("");
         setScraperError("");
         setContinueError("");
+        window.sessionStorage.setItem(EXPENSE_DRAFT_PENDING_CLEAR_KEY, "1");
         window.sessionStorage.setItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY, "1");
         window.sessionStorage.setItem(EXPENSE_PROJECT_REFOCUS_KEY, "1");
         return;
@@ -803,6 +1235,7 @@ export function ExpenseInputModeFields({
         setHokError("");
         setScraperError("");
         setContinueError("");
+        window.sessionStorage.setItem(EXPENSE_DRAFT_PENDING_CLEAR_KEY, "1");
         window.sessionStorage.removeItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY);
         window.sessionStorage.setItem(EXPENSE_PROJECT_REFOCUS_KEY, "1");
         return;
@@ -1274,6 +1707,26 @@ export function ExpenseInputModeFields({
       {mode === CONTINUE_MODE && (
         <input type="hidden" name="continue_rows_json" value={continuePayload} />
       )}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+        <div>
+          <p className="text-xs font-semibold text-slate-700">Draft akun otomatis</p>
+          <p className="text-[11px] text-slate-500">
+            Draft semua mode tersimpan di akun yang sama
+            {formatContinueDraftSavedAt(expenseDraftSavedAt) ? `, terakhir ${formatContinueDraftSavedAt(expenseDraftSavedAt)}` : ""}.
+            {expenseDraftNotice ? ` ${expenseDraftNotice}` : ""}
+          </p>
+        </div>
+        {hasExpenseInputDraftContent(expenseDraftPayload, defaultExpenseCategory, today) || expenseDraftSavedAt ? (
+          <button
+            type="button"
+            data-ui-button="true"
+            onClick={clearContinueDraft}
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+          >
+            Hapus Draft
+          </button>
+        ) : null}
+      </div>
 
       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
         <p className="text-xs font-semibold text-slate-700">Mode input biaya</p>
@@ -1360,9 +1813,10 @@ export function ExpenseInputModeFields({
             <label className="mb-1 block text-xs font-medium text-slate-500">Project</label>
             <ProjectAutocomplete
               projects={projects}
-              initialProjectId={initialProjectId}
+              initialProjectId={standardProjectId}
               autoFocus
               inputRef={projectInputRef}
+              onProjectIdChange={setStandardProjectId}
             />
             <details className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
               <summary className="cursor-pointer text-xs font-semibold text-slate-700">
@@ -1372,13 +1826,23 @@ export function ExpenseInputModeFields({
                 Data akan disimpan ke project utama di atas, plus project tambahan yang Anda centang.
                 Anda bisa filter berdasarkan klien lalu pilih semua project yang sedang tampil.
               </p>
-              <ProjectChecklistSearch projects={projects} inputName="project_ids" />
+              <ProjectChecklistSearch
+                projects={projects}
+                inputName="project_ids"
+                selectedProjectIds={standardAdditionalProjectIds}
+                onSelectedProjectIdsChange={setStandardAdditionalProjectIds}
+              />
             </details>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">Kategori</label>
-              <select name="category" defaultValue={defaultExpenseCategory} required>
+              <select
+                name="category"
+                value={standardCategory}
+                onChange={(event) => setStandardCategory(event.currentTarget.value)}
+                required
+              >
                 {expenseCategories.map((item) => (
                   <option key={item.value} value={item.value}>
                     {item.label}
@@ -1388,7 +1852,13 @@ export function ExpenseInputModeFields({
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">Tanggal</label>
-              <input type="date" name="expense_date" defaultValue={today} required />
+              <input
+                type="date"
+                name="expense_date"
+                value={standardDate}
+                onChange={(event) => setStandardDate(event.currentTarget.value)}
+                required
+              />
             </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -1402,6 +1872,9 @@ export function ExpenseInputModeFields({
                 required
                 suggestions={requesterHistorySuggestions}
                 projectClientNameById={projectClientNameById}
+                currentProjectId={standardProjectId}
+                value={standardRequester}
+                onValueChange={setStandardRequester}
               />
             </div>
           </div>
@@ -1413,6 +1886,9 @@ export function ExpenseInputModeFields({
               required
               suggestionsByProject={descriptionSuggestionsForProjects}
               projectClientNameById={projectClientNameById}
+              currentProjectId={standardProjectId}
+              value={standardDescription}
+              onValueChange={setStandardDescription}
             />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -1429,6 +1905,8 @@ export function ExpenseInputModeFields({
               </label>
               <RupiahInput
                 name="amount"
+                value={standardAmountRaw}
+                onValueChange={setStandardAmountRaw}
                 required
                 placeholder="Contoh: 1.000.000"
                 submitOnEnter
@@ -1450,6 +1928,8 @@ export function ExpenseInputModeFields({
                 </label>
                 <input
                   name="category_custom"
+                  value={standardCategoryCustom}
+                  onChange={(event) => setStandardCategoryCustom(event.currentTarget.value)}
                   placeholder="Isi jika ingin menambah kategori baru"
                 />
               </div>
@@ -1457,20 +1937,34 @@ export function ExpenseInputModeFields({
                 <label className="mb-1 block text-xs font-medium text-slate-500">
                   Penerima / vendor
                 </label>
-                <input name="recipient_name" placeholder="Opsional" />
+                <input
+                  name="recipient_name"
+                  value={standardRecipientName}
+                  onChange={(event) => setStandardRecipientName(event.currentTarget.value)}
+                  placeholder="Opsional"
+                />
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-500">
                   Informasi penggunaan
                 </label>
-                <input name="usage_info" placeholder="Contoh: OPS bensin lapangan" />
+                <input
+                  name="usage_info"
+                  value={standardUsageInfo}
+                  onChange={(event) => setStandardUsageInfo(event.currentTarget.value)}
+                  placeholder="Contoh: OPS bensin lapangan"
+                />
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-500">
                     Spesialis (preset)
                   </label>
-                  <select name="specialist_type" defaultValue="">
+                  <select
+                    name="specialist_type"
+                    value={standardSpecialistType}
+                    onChange={(event) => setStandardSpecialistType(event.currentTarget.value)}
+                  >
                     <option value="">Pilih jika kategori Upah Tim Spesialis</option>
                     {SPECIALIST_COST_PRESETS.map((item) => (
                       <option key={item.value} value={item.value}>
@@ -1485,6 +1979,8 @@ export function ExpenseInputModeFields({
                   </label>
                   <input
                     name="specialist_type_custom"
+                    value={standardSpecialistTypeCustom}
+                    onChange={(event) => setStandardSpecialistTypeCustom(event.currentTarget.value)}
                     placeholder="Contoh: Plumbing, Finishing, Mekanikal"
                   />
                 </div>
@@ -1494,17 +1990,34 @@ export function ExpenseInputModeFields({
           <div className="grid gap-3 sm:grid-cols-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">Qty</label>
-              <input type="number" min={0} step={1} name="quantity" />
+              <input
+                type="number"
+                min={0}
+                step={1}
+                name="quantity"
+                value={standardQuantity}
+                onChange={(event) => setStandardQuantity(normalizeDigits(event.currentTarget.value))}
+              />
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">Satuan</label>
-              <input name="unit_label" placeholder="PCS / LTR / BH" />
+              <input
+                name="unit_label"
+                value={standardUnitLabel}
+                onChange={(event) => setStandardUnitLabel(event.currentTarget.value)}
+                placeholder="PCS / LTR / BH"
+              />
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">
                 Harga satuan
               </label>
-              <RupiahInput name="unit_price" placeholder="0" />
+              <RupiahInput
+                name="unit_price"
+                value={standardUnitPriceRaw}
+                onValueChange={setStandardUnitPriceRaw}
+                placeholder="0"
+              />
             </div>
           </div>
           <div>
@@ -1529,7 +2042,7 @@ export function ExpenseInputModeFields({
             <div>
               <p className="text-xs font-semibold text-slate-700">Draft otomatis aktif</p>
               <p className="text-[11px] text-slate-500">
-                Data mode continue disimpan sementara di browser ini
+                Data mode continue disimpan ke draft akun
                 {continueDraftSavedAtLabel ? `, terakhir ${continueDraftSavedAtLabel}` : ""}.
                 {continueDraftNotice ? ` ${continueDraftNotice}` : ""}
               </p>
@@ -1552,7 +2065,7 @@ export function ExpenseInputModeFields({
               <label className="mb-1 block text-xs font-medium text-slate-500">Project</label>
               <ProjectAutocomplete
                 projects={projects}
-                initialProjectId={initialProjectId}
+                initialProjectId={continueProjectId}
                 inputRef={projectInputRef}
                 onProjectIdChange={setContinueProjectId}
                 hiddenInputName={null}
@@ -1710,7 +2223,12 @@ export function ExpenseInputModeFields({
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">Kategori</label>
-              <select name="category" defaultValue={defaultExpenseCategory} required>
+              <select
+                name="category"
+                value={scraperCategory}
+                onChange={(event) => setScraperCategory(event.currentTarget.value)}
+                required
+              >
                 {expenseCategories.map((item) => (
                   <option key={item.value} value={item.value}>
                     {item.label}
@@ -1720,7 +2238,13 @@ export function ExpenseInputModeFields({
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">Tanggal</label>
-              <input type="date" name="expense_date" defaultValue={today} required />
+              <input
+                type="date"
+                name="expense_date"
+                value={scraperDate}
+                onChange={(event) => setScraperDate(event.currentTarget.value)}
+                required
+              />
             </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -1731,6 +2255,8 @@ export function ExpenseInputModeFields({
               <input
                 ref={scraperRequesterInputRef}
                 name="requester_name"
+                value={scraperRequester}
+                onChange={(event) => setScraperRequester(event.currentTarget.value)}
                 placeholder="Contoh: Admin Scraper"
                 required
                 onKeyDown={handleScraperRequesterEnter}
@@ -1741,6 +2267,8 @@ export function ExpenseInputModeFields({
               <input
                 ref={scraperDescriptionInputRef}
                 name="description"
+                value={scraperDescription}
+                onChange={(event) => setScraperDescription(event.currentTarget.value)}
                 placeholder="Contoh: Hasil input scraper"
                 required
                 onKeyDown={handleScraperDescriptionEnter}
@@ -1866,7 +2394,13 @@ export function ExpenseInputModeFields({
           <div className="grid gap-3 lg:grid-cols-[repeat(3,minmax(0,1fr))]">
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">Tanggal HOK</label>
-              <input type="date" name="expense_date" defaultValue={today} required />
+              <input
+                type="date"
+                name="expense_date"
+                value={hokDate}
+                onChange={(event) => setHokDate(event.currentTarget.value)}
+                required
+              />
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">Kategori</label>

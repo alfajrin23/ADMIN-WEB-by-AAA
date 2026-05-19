@@ -125,6 +125,6 @@ export async function importExcelTemplateAction(formData: FormData) {
     },
   });
   if (returnTo) {
-    redirect(returnTo);
+    redirect(withReturnMessage(returnTo, "success", "Import template Excel berhasil diproses."));
   }
 }

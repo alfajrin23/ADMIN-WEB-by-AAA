@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useDeferredValue, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CheckIcon, EyeIcon, SearchIcon } from "@/components/icons";
 
 type KmpMaterialMonitorProject = {
@@ -37,11 +37,16 @@ export function KmpMaterialMonitorPanel({
   projects,
 }: KmpMaterialMonitorPanelProps) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("incomplete");
-  const deferredSearchQuery = useDeferredValue(searchQuery);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearchQuery(searchQuery), 2000);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
 
   const filteredProjects = useMemo(() => {
-    const normalizedQuery = normalizeText(deferredSearchQuery);
+    const normalizedQuery = normalizeText(debouncedSearchQuery);
 
     return projects
       .filter((project) => {
@@ -84,7 +89,7 @@ export function KmpMaterialMonitorPanel({
         }
         return a.projectName.localeCompare(b.projectName, "id-ID");
       });
-  }, [deferredSearchQuery, projects, statusFilter]);
+  }, [debouncedSearchQuery, projects, statusFilter]);
 
   return (
     <div className="mt-4 space-y-4">

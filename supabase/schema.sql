@@ -357,6 +357,16 @@ create table if not exists public.activity_logs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.user_input_drafts (
+  id uuid primary key default gen_random_uuid(),
+  actor_id uuid not null references public.app_users(id) on delete cascade,
+  draft_key text not null,
+  payload jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  unique (actor_id, draft_key)
+);
+
 alter table public.app_users
 add column if not exists role_key text references public.app_roles(role_key) on delete set null;
 
@@ -368,6 +378,44 @@ create index if not exists idx_role_permissions_role_key on public.role_permissi
 create index if not exists idx_role_permissions_module on public.role_permissions(module);
 create index if not exists idx_activity_logs_created_at on public.activity_logs(created_at desc);
 create index if not exists idx_activity_logs_actor_id on public.activity_logs(actor_id);
+create index if not exists idx_user_input_drafts_actor_key on public.user_input_drafts(actor_id, draft_key);
+create index if not exists idx_user_input_drafts_updated_at on public.user_input_drafts(updated_at desc);
+
+create or replace function public.set_user_input_draft_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_user_input_drafts_updated_at on public.user_input_drafts;
+create trigger trg_user_input_drafts_updated_at
+before update on public.user_input_drafts
+for each row
+execute function public.set_user_input_draft_updated_at();
+
+create or replace function public.cleanup_user_input_drafts(max_age interval default interval '7 days')
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  deleted_count integer;
+begin
+  delete from public.user_input_drafts
+  where updated_at < now() - max_age;
+
+  get diagnostics deleted_count = row_count;
+  return deleted_count;
+end;
+$$;
+
+revoke all on function public.cleanup_user_input_drafts(interval) from public;
+grant execute on function public.cleanup_user_input_drafts(interval) to service_role;
 
 -- ============================================================
 -- RLS UNTUK TABEL SENSITIF
@@ -381,6 +429,7 @@ alter table public.app_users enable row level security;
 alter table public.app_roles enable row level security;
 alter table public.role_permissions enable row level security;
 alter table public.activity_logs enable row level security;
+alter table public.user_input_drafts enable row level security;
 
 -- app_users: HANYA service_role
 drop policy if exists "app_users_select_all" on public.app_users;
@@ -502,6 +551,33 @@ drop policy if exists "activity_logs_delete_all" on public.activity_logs;
 drop policy if exists "activity_logs_delete_service" on public.activity_logs;
 create policy "activity_logs_delete_service"
 on public.activity_logs
+for delete
+to service_role
+using (true);
+
+-- user_input_drafts: HANYA service_role
+drop policy if exists "user_input_drafts_select_service" on public.user_input_drafts;
+create policy "user_input_drafts_select_service"
+on public.user_input_drafts
+for select
+to service_role
+using (true);
+drop policy if exists "user_input_drafts_insert_service" on public.user_input_drafts;
+create policy "user_input_drafts_insert_service"
+on public.user_input_drafts
+for insert
+to service_role
+with check (true);
+drop policy if exists "user_input_drafts_update_service" on public.user_input_drafts;
+create policy "user_input_drafts_update_service"
+on public.user_input_drafts
+for update
+to service_role
+using (true)
+with check (true);
+drop policy if exists "user_input_drafts_delete_service" on public.user_input_drafts;
+create policy "user_input_drafts_delete_service"
+on public.user_input_drafts
 for delete
 to service_role
 using (true);

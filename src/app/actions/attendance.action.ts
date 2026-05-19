@@ -687,6 +687,6 @@ export async function deleteAttendanceAction(formData: FormData) {
     description: "Menghapus data absensi.",
   });
   if (returnTo) {
-    redirect(returnTo);
+    redirect(withReturnMessage(returnTo, "success", "Data absensi berhasil dihapus."));
   }
 }

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { queueActivityLog } from "@/lib/activity-logs";
+import { clearExpenseInputDraftForActor } from "@/lib/input-drafts";
 import {
   ATTENDANCE_DRAFT_PROJECT_CODE,
   ATTENDANCE_DRAFT_PROJECT_NAME,
@@ -1206,13 +1207,15 @@ export async function createHokExpenseEntries(
       total_amount: rows.reduce((sum, row) => sum + row.amount, 0),
     },
   });
+  await clearExpenseInputDraftForActor(actor.id);
   if (successReturnTo) {
     redirect(
-      withReturnMessage(
-        successReturnTo,
-        "success",
-        `HOK berhasil disimpan ke ${rows.length} project.`,
-      ),
+      withReturnParams(successReturnTo, (params) => {
+        params.delete("error");
+        params.set("success", `HOK berhasil disimpan ke ${rows.length} project.`);
+        params.set("expense_draft_clear", randomUUID());
+        params.set("expense_action_token", randomUUID());
+      }),
     );
   }
 }
@@ -1423,13 +1426,15 @@ export async function createScraperExpenseEntries(
       total_amount: rows.reduce((sum, row) => sum + row.amount, 0),
     },
   });
+  await clearExpenseInputDraftForActor(actor.id);
   if (successReturnTo) {
     redirect(
-      withReturnMessage(
-        successReturnTo,
-        "success",
-        `Data scraper berhasil disimpan ke ${rows.length} project.`,
-      ),
+      withReturnParams(successReturnTo, (params) => {
+        params.delete("error");
+        params.set("success", `Data scraper berhasil disimpan ke ${rows.length} project.`);
+        params.set("expense_draft_clear", randomUUID());
+        params.set("expense_action_token", randomUUID());
+      }),
     );
   }
 }

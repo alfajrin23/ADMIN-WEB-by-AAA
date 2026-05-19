@@ -158,6 +158,6 @@ export async function confirmPayrollPaidAction(formData: FormData) {
     },
   });
   if (returnTo) {
-    redirect(returnTo);
+    redirect(withReturnMessage(returnTo, "success", "Status gaji pekerja berhasil disimpan."));
   }
 }

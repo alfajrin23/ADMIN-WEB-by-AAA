@@ -52,7 +52,7 @@ export function ProjectsSearchInput({
               clearTimeout(timeoutRef.current);
             }
             const nextValue = event.currentTarget.value;
-            timeoutRef.current = window.setTimeout(() => applySearch(nextValue), 500);
+            timeoutRef.current = window.setTimeout(() => applySearch(nextValue), 2000);
           }}
           placeholder={placeholder}
           autoComplete="off"

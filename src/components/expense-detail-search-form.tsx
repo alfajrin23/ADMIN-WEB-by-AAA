@@ -32,7 +32,7 @@ export function ExpenseDetailSearchForm({
 
   const handleInputChange = () => {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    timeoutRef.current = window.setTimeout(() => formRef.current?.requestSubmit(), 500);
+    timeoutRef.current = window.setTimeout(() => formRef.current?.requestSubmit(), 2000);
   };
 
   return (

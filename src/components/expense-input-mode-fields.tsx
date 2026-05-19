@@ -10,6 +10,7 @@ import {
   type ClipboardEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
+import { useSearchParams } from "next/navigation";
 import { useFormStatus } from "react-dom";
 import { EnterToNextField } from "@/components/enter-to-next-field";
 import { ProjectAutocomplete, PROJECT_AUTOCOMPLETE_SELECT_EVENT } from "@/components/project-autocomplete";
@@ -345,6 +346,7 @@ export function ExpenseInputModeFields({
   hokProjectPresets,
   formId = "expense-modal-form",
 }: ExpenseInputModeFieldsProps) {
+  const searchParams = useSearchParams();
   const rootRef = useRef<HTMLDivElement>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const hokExcelInputRef = useRef<HTMLInputElement>(null);
@@ -353,6 +355,7 @@ export function ExpenseInputModeFields({
   const scraperProjectInputRefs = useRef(new Map<string, HTMLInputElement | null>());
   const scraperAmountInputRefs = useRef(new Map<string, HTMLInputElement | null>());
   const pendingScraperFocusRef = useRef<{ rowId: string; field: "project" | "amount" } | null>(null);
+  const lastProcessedContinueDraftClearRef = useRef("");
   const [submissionToken] = useState(createExpenseSubmissionToken);
   const [mode, setMode] = useState<ExpenseInputMode>(STANDARD_MODE);
   const [hokQuery, setHokQuery] = useState("");
@@ -482,18 +485,27 @@ export function ExpenseInputModeFields({
     setContinueProjectResetSignal((prev) => prev + 1);
   }, [defaultExpenseCategory, today]);
 
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    const hasSuccess = Boolean(url.searchParams.get("success")?.trim());
-    const hasError = Boolean(url.searchParams.get("error")?.trim());
-    const shouldClearSubmittedDraft =
-      hasSuccess && window.sessionStorage.getItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY) === "1";
+  const successMessage = searchParams.get("success")?.trim() ?? "";
+  const errorMessage = searchParams.get("error")?.trim() ?? "";
+  const continueDraftClearToken = searchParams.get("expense_continue_draft_clear")?.trim() ?? "";
 
-    if (hasError) {
+  useEffect(() => {
+    const hasServerClearSignal =
+      continueDraftClearToken.length > 0 &&
+      lastProcessedContinueDraftClearRef.current !== continueDraftClearToken;
+    const shouldClearSubmittedDraft =
+      hasServerClearSignal ||
+      (Boolean(successMessage) &&
+        window.sessionStorage.getItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY) === "1");
+
+    if (errorMessage) {
       window.sessionStorage.removeItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY);
     }
 
     if (shouldClearSubmittedDraft) {
+      if (continueDraftClearToken) {
+        lastProcessedContinueDraftClearRef.current = continueDraftClearToken;
+      }
       window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
       window.sessionStorage.removeItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY);
       setContinueEntries([]);
@@ -604,7 +616,17 @@ export function ExpenseInputModeFields({
     } finally {
       setContinueDraftReady(true);
     }
-  }, [continueDraftReady, defaultExpenseCategory, expenseCategoryValues, projects, resetContinueDraft, today]);
+  }, [
+    continueDraftClearToken,
+    continueDraftReady,
+    defaultExpenseCategory,
+    errorMessage,
+    expenseCategoryValues,
+    projects,
+    resetContinueDraft,
+    successMessage,
+    today,
+  ]);
 
   useEffect(() => {
     if (!continueDraftReady) {
@@ -788,8 +810,6 @@ export function ExpenseInputModeFields({
   }, [continueEntries.length, mode, validateHokRows, validateScraperRows]);
 
   useEffect(() => {
-    const url = new URL(window.location.href);
-    const successMessage = url.searchParams.get("success")?.trim() ?? "";
     if (!successMessage) {
       return;
     }
@@ -804,7 +824,7 @@ export function ExpenseInputModeFields({
     });
 
     return () => window.cancelAnimationFrame(frameId);
-  }, [focusProjectInput]);
+  }, [focusProjectInput, successMessage]);
 
   const normalizedHokQuery = normalizeText(hokQuery);
   const visibleHokRows = useMemo(() => {

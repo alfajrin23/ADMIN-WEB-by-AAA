@@ -772,11 +772,11 @@ async function createContinueExpenseEntries(
   });
   if (successReturnTo) {
     redirect(
-      withReturnMessage(
-        successReturnTo,
-        "success",
-        `${entries.length} biaya berhasil disimpan (Mode Continue).`,
-      ),
+      withReturnParams(successReturnTo, (params) => {
+        params.delete("error");
+        params.set("success", `${entries.length} biaya berhasil disimpan (Mode Continue).`);
+        params.set("expense_continue_draft_clear", randomUUID());
+      }),
     );
   }
 }

@@ -122,6 +122,32 @@ type AuthUserRow = {
   created_at: string;
 };
 
+function toAuthUserRow(value: unknown): AuthUserRow | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const row = value as Partial<AuthUserRow>;
+  if (
+    typeof row.id !== "string" ||
+    typeof row.full_name !== "string" ||
+    typeof row.username !== "string" ||
+    typeof row.role !== "string" ||
+    typeof row.password_hash !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    full_name: row.full_name,
+    username: row.username,
+    role: row.role,
+    password_hash: row.password_hash,
+    created_at: typeof row.created_at === "string" ? row.created_at : new Date().toISOString(),
+  };
+}
+
 export async function loginAction(formData: FormData) {
   const username = normalizeUsername(getString(formData, "username"));
   const password = getString(formData, "password");
@@ -147,6 +173,7 @@ export async function loginAction(formData: FormData) {
   }
 
   let foundUser: AuthUserRow | null = null;
+  let userQueryError: string | null = null;
   try {
     const { data, error } = await supabase
       .from("app_users")
@@ -155,18 +182,40 @@ export async function loginAction(formData: FormData) {
       .maybeSingle();
 
     if (error) {
-      console.warn("[login] Gagal query user dari database.", error.message);
-      redirect(toErrorRedirect("/login", "Terjadi kesalahan saat login. Silakan coba lagi."));
+      userQueryError = error.message;
+    } else {
+      foundUser = toAuthUserRow(data);
     }
-
-    foundUser = data as AuthUserRow | null;
   } catch (err) {
     // Re-throw Next.js redirect errors
     if (err && typeof err === "object" && "digest" in err) {
       throw err;
     }
-    console.warn("[login] Exception saat query user.", err);
-    redirect(toErrorRedirect("/login", "Terjadi kesalahan saat login. Silakan coba lagi."));
+    userQueryError = err instanceof Error ? err.message : "Exception saat query user.";
+  }
+
+  if (!foundUser) {
+    try {
+      const { data, error } = await supabase
+        .rpc("get_app_user_for_login", { p_username: username })
+        .maybeSingle();
+
+      if (error) {
+        console.warn(
+          "[login] Gagal query user dari database.",
+          userQueryError ? `${userQueryError}; fallback RPC: ${error.message}` : error.message,
+        );
+        redirect(toErrorRedirect("/login", "Terjadi kesalahan saat login. Silakan coba lagi."));
+      }
+
+      foundUser = toAuthUserRow(data);
+    } catch (err) {
+      if (err && typeof err === "object" && "digest" in err) {
+        throw err;
+      }
+      console.warn("[login] Exception saat query user.", err);
+      redirect(toErrorRedirect("/login", "Terjadi kesalahan saat login. Silakan coba lagi."));
+    }
   }
 
   if (!foundUser || !foundUser.password_hash) {

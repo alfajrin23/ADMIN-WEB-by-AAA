@@ -75,7 +75,7 @@ const getCachedUserRowById = unstable_cache(
       .maybeSingle();
 
     if (!withRoleKey.error && withRoleKey.data) {
-      return withRoleKey.data as AppUserRow;
+      return toAppUserRow(withRoleKey.data);
     }
 
     const fallback = await supabase
@@ -84,7 +84,15 @@ const getCachedUserRowById = unstable_cache(
       .eq("id", id)
       .maybeSingle();
 
-    return !fallback.error && fallback.data ? (fallback.data as AppUserRow) : null;
+    if (!fallback.error && fallback.data) {
+      return toAppUserRow(fallback.data);
+    }
+
+    const rpcFallback = await supabase
+      .rpc("get_app_user_for_session", { p_user_id: id })
+      .maybeSingle();
+
+    return !rpcFallback.error && rpcFallback.data ? toAppUserRow(rpcFallback.data) : null;
   },
   ["app-user-row-by-id"],
   {
@@ -163,6 +171,31 @@ async function findUserRowById(id: string): Promise<AppUserRow | null> {
     return null;
   }
   return getCachedUserRowById(id);
+}
+
+function toAppUserRow(value: unknown): AppUserRow | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const row = value as Partial<AppUserRow>;
+  if (
+    typeof row.id !== "string" ||
+    typeof row.full_name !== "string" ||
+    typeof row.username !== "string" ||
+    typeof row.role !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    full_name: row.full_name,
+    username: row.username,
+    role: row.role,
+    role_key: typeof row.role_key === "string" ? row.role_key : null,
+    created_at: typeof row.created_at === "string" ? row.created_at : new Date().toISOString(),
+  };
 }
 
 async function mapAppUser(row: AppUserRow): Promise<AppUser> {

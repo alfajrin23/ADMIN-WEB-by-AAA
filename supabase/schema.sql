@@ -381,6 +381,61 @@ create index if not exists idx_activity_logs_actor_id on public.activity_logs(ac
 create index if not exists idx_user_input_drafts_actor_key on public.user_input_drafts(actor_id, draft_key);
 create index if not exists idx_user_input_drafts_updated_at on public.user_input_drafts(updated_at desc);
 
+create or replace function public.get_app_user_for_login(p_username text)
+returns table (
+  id uuid,
+  full_name text,
+  username text,
+  role text,
+  password_hash text,
+  created_at timestamptz
+)
+language sql
+security definer
+set search_path = public
+as $$
+  select
+    app_users.id,
+    app_users.full_name,
+    app_users.username,
+    app_users.role,
+    app_users.password_hash,
+    app_users.created_at
+  from public.app_users
+  where app_users.username = lower(trim(p_username))
+  limit 1;
+$$;
+
+create or replace function public.get_app_user_for_session(p_user_id uuid)
+returns table (
+  id uuid,
+  full_name text,
+  username text,
+  role text,
+  role_key text,
+  created_at timestamptz
+)
+language sql
+security definer
+set search_path = public
+as $$
+  select
+    app_users.id,
+    app_users.full_name,
+    app_users.username,
+    app_users.role,
+    app_users.role_key,
+    app_users.created_at
+  from public.app_users
+  where app_users.id = p_user_id
+  limit 1;
+$$;
+
+revoke all on function public.get_app_user_for_login(text) from public;
+revoke all on function public.get_app_user_for_session(uuid) from public;
+grant execute on function public.get_app_user_for_login(text) to anon, authenticated, service_role;
+grant execute on function public.get_app_user_for_session(uuid) to anon, authenticated, service_role;
+
 create or replace function public.set_user_input_draft_updated_at()
 returns trigger
 language plpgsql

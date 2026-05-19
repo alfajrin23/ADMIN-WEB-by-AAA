@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { PassThrough } from "node:stream";
 import * as XLSX from "xlsx/xlsx.mjs";
 import { google } from "googleapis";
 import { createDetailReportWorkbook } from "@/lib/excel-db";
@@ -40,7 +41,18 @@ export async function GET(request: Request) {
     ]);
 
     const reportProjects: Array<{ id: string; name: string }> = [];
-    const reportExpenses: Array<any> = [];
+    const reportExpenses: Array<{
+      project_id: string;
+      category: string;
+      requester_name: string | null;
+      description: string | null;
+      quantity: number;
+      unit_label: string | null;
+      usage_info: string | null;
+      unit_price: number;
+      amount: number;
+      expense_date: string;
+    }> = [];
     const categoryOptionsByProject: Record<string, Array<{ value: string; label: string }>> = {};
     const summaryRows: Array<Record<string, string | number>> = [];
     const allCategoryValues: string[] = [];
@@ -164,8 +176,7 @@ export async function GET(request: Request) {
     const drive = google.drive({ version: "v3", auth });
     
     // Create File Stream from Buffer
-    const stream = require("stream");
-    const bufferStream = new stream.PassThrough();
+    const bufferStream = new PassThrough();
     bufferStream.end(buffer);
 
     const now = new Date();

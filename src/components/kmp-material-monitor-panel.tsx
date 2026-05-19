@@ -41,7 +41,7 @@ export function KmpMaterialMonitorPanel({
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("incomplete");
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedSearchQuery(searchQuery), 2000);
+    const timer = window.setTimeout(() => setDebouncedSearchQuery(searchQuery), 1000);
     return () => window.clearTimeout(timer);
   }, [searchQuery]);
 

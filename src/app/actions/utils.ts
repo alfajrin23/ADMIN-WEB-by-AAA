@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { revalidatePath, revalidateTag } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { queueActivityLog } from "@/lib/activity-logs";
 import { clearExpenseInputDraftForActor } from "@/lib/input-drafts";
@@ -64,6 +64,7 @@ import { activeDataSource } from "@/lib/storage";
 import {
   getSupabaseAttendanceSelect,
   getSupabaseServerClient,
+  isSupabaseWriteConfigured,
   omitSpecialistTeamNameField,
   withSupabaseSpecialistTeamNameFallback,
 } from "@/lib/supabase";
@@ -161,15 +162,28 @@ export function revalidateProjectPages() {
   revalidatePath("/projects");
 }
 export function revalidateProjectCache() {
-  revalidateTag(CACHE_TAGS.projects, "max");
+  updateTag(CACHE_TAGS.projects);
 }
 export function revalidateExpenseCache() {
-  revalidateTag(CACHE_TAGS.expenses, "max");
-  revalidateTag(CACHE_TAGS.expenseCategories, "max");
+  updateTag(CACHE_TAGS.expenses);
+  updateTag(CACHE_TAGS.expenseCategories);
 }
 export function revalidateAttendanceCache() {
-  revalidateTag(CACHE_TAGS.attendance, "max");
-  revalidateTag(CACHE_TAGS.payrollResets, "max");
+  updateTag(CACHE_TAGS.attendance);
+  updateTag(CACHE_TAGS.payrollResets);
+}
+const SUPABASE_WRITE_CONFIG_ERROR =
+  "SUPABASE_SERVICE_ROLE_KEY belum diset, jadi Supabase menolak tambah/edit/hapus data. Tambahkan service role key ke .env.local lalu restart server.";
+
+export function getSupabaseMutationErrorMessage(fallbackMessage: string) {
+  return isSupabaseWriteConfigured ? fallbackMessage : SUPABASE_WRITE_CONFIG_ERROR;
+}
+
+export function ensureSupabaseWriteConfigured(returnTo: string | null, fallbackMessage: string): boolean {
+  if (isSupabaseWriteConfigured) {
+    return true;
+  }
+  redirect(withReturnMessage(returnTo ?? "/", "error", getSupabaseMutationErrorMessage(fallbackMessage)));
 }
 export async function requireEditorActionUser() {
   const user = await requireAuthUser();
@@ -1130,6 +1144,9 @@ export async function createHokExpenseEntries(
     if (!supabase) {
       return;
     }
+    if (!ensureSupabaseWriteConfigured(errorReturnTo ?? successReturnTo, "Gagal menyimpan data HOK.")) {
+      return;
+    }
     const { error } = await supabase.from("project_expenses").upsert(
       rows.map((row) => ({
         id: createExpenseMutationId({
@@ -1156,7 +1173,7 @@ export async function createHokExpenseEntries(
     );
     if (error) {
       if (errorReturnTo) {
-        redirect(withReturnMessage(errorReturnTo, "error", "Gagal menyimpan data HOK. Silakan coba lagi."));
+        redirect(withReturnMessage(errorReturnTo, "error", getSupabaseMutationErrorMessage("Gagal menyimpan data HOK. Silakan coba lagi.")));
       }
       return;
     }
@@ -1340,6 +1357,9 @@ export async function createScraperExpenseEntries(
     if (!supabase) {
       return;
     }
+    if (!ensureSupabaseWriteConfigured(errorReturnTo ?? successReturnTo, "Gagal menyimpan data scraper.")) {
+      return;
+    }
 
     const saveExpensePromise = supabase.from("project_expenses").upsert(
       rows.map((row) => ({
@@ -1371,7 +1391,7 @@ export async function createScraperExpenseEntries(
       : await saveExpensePromise;
     if (expenseResult.error) {
       if (errorReturnTo) {
-        redirect(withReturnMessage(errorReturnTo, "error", "Gagal menyimpan data scraper. Silakan coba lagi."));
+        redirect(withReturnMessage(errorReturnTo, "error", getSupabaseMutationErrorMessage("Gagal menyimpan data scraper. Silakan coba lagi.")));
       }
       return;
     }

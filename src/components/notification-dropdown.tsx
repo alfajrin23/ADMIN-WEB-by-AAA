@@ -12,19 +12,20 @@ export function NotificationDropdown({ updates }: { updates: SystemUpdate[] }) {
 
   useEffect(() => {
     const lastSeen = localStorage.getItem(LAST_SEEN_KEY);
+    let nextUnreadCount = 0;
     if (!lastSeen) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setUnreadCount(updates.length);
+      nextUnreadCount = updates.length;
     } else {
       const unseenIndex = updates.findIndex((item) => item.version === lastSeen);
       if (unseenIndex === -1) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setUnreadCount(updates.length);
+        nextUnreadCount = updates.length;
       } else {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setUnreadCount(unseenIndex);
+        nextUnreadCount = unseenIndex;
       }
     }
+
+    const timer = window.setTimeout(() => setUnreadCount(nextUnreadCount), 0);
+    return () => window.clearTimeout(timer);
   }, [updates]);
 
   // Click outside to close

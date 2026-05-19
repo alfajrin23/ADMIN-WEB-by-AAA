@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { updateExpenseAction, getEditExpenseModalDataAction } from "@/app/actions/expense.action";
 import { CloseIcon, SaveIcon } from "@/components/icons";
 import { RupiahInput } from "@/components/rupiah-input";
@@ -14,6 +15,10 @@ type EditExpenseModalProps = {
 export function EditExpenseModal({ expenseId, onClose }: EditExpenseModalProps) {
   const [data, setData] = useState<Awaited<ReturnType<typeof getEditExpenseModalDataAction>> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const queryText = searchParams.toString();
+  const returnTo = queryText ? `${pathname}?${queryText}` : pathname;
 
   useEffect(() => {
     let active = true;
@@ -76,13 +81,13 @@ export function EditExpenseModal({ expenseId, onClose }: EditExpenseModalProps) 
           </button>
         </div>
 
-        <form action={updateExpenseAction} className="mt-4 space-y-3" onSubmit={() => setTimeout(onClose, 100)}>
+        <form action={updateExpenseAction} className="mt-4 space-y-3">
           <input type="hidden" name="expense_id" value={expense.id} />
-          {/* Default action has no return_to so form submits and revalidates without changing URL */}
+          <input type="hidden" name="return_to" value={returnTo} />
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-500">Project</label>
             <select name="project_id" defaultValue={expense.projectId} required>
-              {projects.map((project: any) => (
+              {projects.map((project) => (
                 <option key={project.id} value={project.id}>
                   {project.name}
                 </option>
@@ -93,7 +98,7 @@ export function EditExpenseModal({ expenseId, onClose }: EditExpenseModalProps) 
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">Kategori</label>
               <select name="category" defaultValue={expense.category} required>
-                {expenseCategories.map((item: any) => (
+                {expenseCategories.map((item) => (
                   <option key={item.value} value={item.value}>
                     {item.label}
                   </option>

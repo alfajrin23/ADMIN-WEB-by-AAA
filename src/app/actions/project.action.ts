@@ -1,8 +1,8 @@
 "use server";
 import { createHash, randomUUID } from "node:crypto";
-import { getString, getStringList, getNumber, getStringValues, getNumberValues, getPositiveInteger, parseYearInput, replaceDateYearKeepingMonthDay, getReturnTo, withReturnMessage, withReturnParams, isChecked, revalidateProjectPages, revalidateProjectCache, revalidateExpenseCache, revalidateAttendanceCache, requireEditorActionUser, requireAttendanceActionUser, requireImportActionUser, requireLogsActionUser, createTimestamp, createDeterministicUuid, ensureSupabaseAttendanceDraftProjectId, resolveDraftAttendanceNotes, resolveFinalAttendanceNotes, parseAttendanceStatusValue, parseWorkerTeamValue, normalizeAttendanceIdentityText, createAttendanceMutationId, createPayrollResetMutationId, resolveAutoOvertimeWage, AttendanceDuplicateCheckInput, AttendanceDuplicateCheckRow, hasSameAttendanceIdentity, findDuplicateAttendanceRecord, getExpenseSubmissionToken, createExpenseMutationId, shouldSyncExpenseCategory, parseProjectInitialCategories, buildSupabaseCategoryRows, upsertSupabaseCategories, isFirebaseNotFoundError, hasWarnedFirebaseWriteDatabaseMissing, runFirebaseWriteSafely, deleteFirebaseDocsByField, ParsedTemplateImportData, normalizeImportText, normalizeImportNumber, buildImportExpenseSignature, chunkArray, importTemplateDataToSupabase, importTemplateDataToFirebase, getParsedCategory, getSpecialistType, getParsedWorkerTeam, getParsedReimburseType, resolveAmountByMode, getExpenseTargetProjectIds, parsePositiveAmount, createHokExpenseEntries, createScraperExpenseEntries, AttendanceRecapRowInput, resolveAttendanceExportRowId, buildAttendanceRecapRowsFromFormData } from "./utils";
+import { getString, getStringList, getNumber, getStringValues, getNumberValues, getPositiveInteger, parseYearInput, replaceDateYearKeepingMonthDay, getReturnTo, withReturnMessage, withReturnParams, isChecked, revalidateProjectPages, revalidateProjectCache, revalidateExpenseCache, revalidateAttendanceCache, requireEditorActionUser, requireAttendanceActionUser, requireImportActionUser, requireLogsActionUser, createTimestamp, createDeterministicUuid, ensureSupabaseAttendanceDraftProjectId, resolveDraftAttendanceNotes, resolveFinalAttendanceNotes, parseAttendanceStatusValue, parseWorkerTeamValue, normalizeAttendanceIdentityText, createAttendanceMutationId, createPayrollResetMutationId, resolveAutoOvertimeWage, AttendanceDuplicateCheckInput, AttendanceDuplicateCheckRow, hasSameAttendanceIdentity, findDuplicateAttendanceRecord, getExpenseSubmissionToken, createExpenseMutationId, shouldSyncExpenseCategory, parseProjectInitialCategories, buildSupabaseCategoryRows, upsertSupabaseCategories, isFirebaseNotFoundError, hasWarnedFirebaseWriteDatabaseMissing, runFirebaseWriteSafely, deleteFirebaseDocsByField, ParsedTemplateImportData, normalizeImportText, normalizeImportNumber, buildImportExpenseSignature, chunkArray, importTemplateDataToSupabase, importTemplateDataToFirebase, getParsedCategory, getSpecialistType, getParsedWorkerTeam, getParsedReimburseType, resolveAmountByMode, getExpenseTargetProjectIds, parsePositiveAmount, createHokExpenseEntries, createScraperExpenseEntries, AttendanceRecapRowInput, resolveAttendanceExportRowId, buildAttendanceRecapRowsFromFormData, ensureSupabaseWriteConfigured, getSupabaseMutationErrorMessage } from "./utils";
 
-import { revalidatePath, revalidateTag } from "next/cache";
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { queueActivityLog } from "@/lib/activity-logs";
 import {
@@ -20,7 +20,6 @@ import {
   canManageProjects,
   requireAuthUser,
 } from "@/lib/auth";
-import { CACHE_TAGS } from "@/lib/cache-tags";
 import {
   type AttendanceStatus,
   ATTENDANCE_STATUSES,
@@ -98,10 +97,16 @@ export async function createProjectAction(formData: FormData) {
     if (!supabase) {
       return;
     }
-    await Promise.all([
+    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal menambah project.")) {
+      return;
+    }
+    const [, projectResult] = await Promise.all([
       upsertSupabaseCategories(supabase, initialCategories),
       supabase.from("projects").insert(payload),
     ]);
+    if (projectResult.error) {
+      redirect(withReturnMessage(returnTo ?? "/projects", "error", getSupabaseMutationErrorMessage("Gagal menambah project.")));
+    }
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
     if (!firestore) {
@@ -172,7 +177,10 @@ export async function updateProjectAction(formData: FormData) {
     if (!supabase) {
       return;
     }
-    await supabase
+    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal memperbarui project.")) {
+      return;
+    }
+    const { error } = await supabase
       .from("projects")
       .update({
         name: payload.name,
@@ -182,6 +190,9 @@ export async function updateProjectAction(formData: FormData) {
         status: payload.status,
       })
       .eq("id", payload.id);
+    if (error) {
+      redirect(withReturnMessage(returnTo ?? "/projects", "error", getSupabaseMutationErrorMessage("Gagal memperbarui project.")));
+    }
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
     if (!firestore) {
@@ -269,7 +280,13 @@ export async function updateManyProjectsAction(formData: FormData) {
     if (!supabase) {
       return;
     }
-    await supabase.from("projects").update(patch).in("id", projectIds);
+    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal memperbarui project.")) {
+      return;
+    }
+    const { error } = await supabase.from("projects").update(patch).in("id", projectIds);
+    if (error) {
+      redirect(withReturnMessage(returnTo ?? "/projects", "error", getSupabaseMutationErrorMessage("Gagal memperbarui project.")));
+    }
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
     if (!firestore) {
@@ -329,7 +346,13 @@ export async function deleteProjectAction(formData: FormData) {
     if (!supabase) {
       return;
     }
-    await supabase.from("projects").delete().eq("id", projectId);
+    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal menghapus project.")) {
+      return;
+    }
+    const { error } = await supabase.from("projects").delete().eq("id", projectId);
+    if (error) {
+      redirect(withReturnMessage(returnTo ?? "/projects", "error", getSupabaseMutationErrorMessage("Gagal menghapus project.")));
+    }
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
     if (!firestore) {
@@ -380,7 +403,13 @@ export async function deleteSelectedProjectsAction(formData: FormData) {
     if (!supabase) {
       return;
     }
-    await supabase.from("projects").delete().in("id", projectIds);
+    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal menghapus project.")) {
+      return;
+    }
+    const { error } = await supabase.from("projects").delete().in("id", projectIds);
+    if (error) {
+      redirect(withReturnMessage(returnTo ?? "/projects", "error", getSupabaseMutationErrorMessage("Gagal menghapus project.")));
+    }
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
     if (!firestore) {

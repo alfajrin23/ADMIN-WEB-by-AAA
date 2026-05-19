@@ -6,7 +6,7 @@ import {
 import { updateUserRoleAction } from "@/app/auth-actions";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { CloseIcon, EditIcon, EyeIcon, FilterIcon, RolesIcon, SaveIcon, TrashIcon } from "@/components/icons";
-import { type ActivityLog, getActivityLogs } from "@/lib/activity-logs";
+import { type ActivityLog, getActivityLogReadResult } from "@/lib/activity-logs";
 import {
   canEditRoles,
   canManageModule,
@@ -231,7 +231,12 @@ function getLogEntityEditHref(log: ActivityLog) {
 export default async function LogsPage({ searchParams }: LogsPageProps) {
   const currentUser = await requireLogsUser();
   const params = await searchParams;
-  const [logs, users, roles] = await Promise.all([getActivityLogs(300), getAppUsers(), getRoleCatalog()]);
+  const [logReadResult, users, roles] = await Promise.all([
+    getActivityLogReadResult(300),
+    getAppUsers(),
+    getRoleCatalog(),
+  ]);
+  const logs = logReadResult.logs;
   const error = typeof params.error === "string" ? params.error : "";
   const success = typeof params.success === "string" ? params.success : "";
   const fromDate = parseDateFilter(typeof params.from === "string" ? params.from : "");
@@ -270,6 +275,11 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
       {success ? (
         <section className="panel border-emerald-300 bg-emerald-50 p-4">
           <p className="text-sm text-emerald-700">{success}</p>
+        </section>
+      ) : null}
+      {logReadResult.errorMessage ? (
+        <section className="panel border-amber-300 bg-amber-50 p-4">
+          <p className="text-sm text-amber-800">{logReadResult.errorMessage}</p>
         </section>
       ) : null}
 
@@ -537,7 +547,11 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
                 {filteredLogs.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="px-4 py-6 text-center text-slate-500">
-                      Log tidak ditemukan untuk rentang tanggal ini.
+                      {logReadResult.errorMessage
+                        ? "Log belum bisa dimuat karena konfigurasi Supabase server belum lengkap."
+                        : logs.length === 0
+                          ? "Belum ada log input yang tersimpan di database."
+                          : "Log tidak ditemukan untuk rentang tanggal ini."}
                     </td>
                   </tr>
                 ) : null}

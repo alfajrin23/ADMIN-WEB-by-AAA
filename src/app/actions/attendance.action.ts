@@ -1,8 +1,8 @@
 "use server";
 import { createHash, randomUUID } from "node:crypto";
-import { getString, getStringList, getNumber, getStringValues, getNumberValues, getPositiveInteger, parseYearInput, replaceDateYearKeepingMonthDay, getReturnTo, withReturnMessage, withReturnParams, isChecked, revalidateProjectPages, revalidateProjectCache, revalidateExpenseCache, revalidateAttendanceCache, requireEditorActionUser, requireAttendanceActionUser, requireImportActionUser, requireLogsActionUser, createTimestamp, createDeterministicUuid, ensureSupabaseAttendanceDraftProjectId, resolveDraftAttendanceNotes, resolveFinalAttendanceNotes, parseAttendanceStatusValue, parseWorkerTeamValue, normalizeAttendanceIdentityText, createAttendanceMutationId, createPayrollResetMutationId, resolveAutoOvertimeWage, AttendanceDuplicateCheckInput, AttendanceDuplicateCheckRow, hasSameAttendanceIdentity, findDuplicateAttendanceRecord, getExpenseSubmissionToken, createExpenseMutationId, shouldSyncExpenseCategory, parseProjectInitialCategories, buildSupabaseCategoryRows, upsertSupabaseCategories, isFirebaseNotFoundError, hasWarnedFirebaseWriteDatabaseMissing, runFirebaseWriteSafely, deleteFirebaseDocsByField, ParsedTemplateImportData, normalizeImportText, normalizeImportNumber, buildImportExpenseSignature, chunkArray, importTemplateDataToSupabase, importTemplateDataToFirebase, getParsedCategory, getSpecialistType, getParsedWorkerTeam, getParsedReimburseType, resolveAmountByMode, getExpenseTargetProjectIds, parsePositiveAmount, createHokExpenseEntries, createScraperExpenseEntries, AttendanceRecapRowInput, resolveAttendanceExportRowId, buildAttendanceRecapRowsFromFormData } from "./utils";
+import { getString, getStringList, getNumber, getStringValues, getNumberValues, getPositiveInteger, parseYearInput, replaceDateYearKeepingMonthDay, getReturnTo, withReturnMessage, withReturnParams, isChecked, revalidateProjectPages, revalidateProjectCache, revalidateExpenseCache, revalidateAttendanceCache, requireEditorActionUser, requireAttendanceActionUser, requireImportActionUser, requireLogsActionUser, createTimestamp, createDeterministicUuid, ensureSupabaseAttendanceDraftProjectId, resolveDraftAttendanceNotes, resolveFinalAttendanceNotes, parseAttendanceStatusValue, parseWorkerTeamValue, normalizeAttendanceIdentityText, createAttendanceMutationId, createPayrollResetMutationId, resolveAutoOvertimeWage, AttendanceDuplicateCheckInput, AttendanceDuplicateCheckRow, hasSameAttendanceIdentity, findDuplicateAttendanceRecord, getExpenseSubmissionToken, createExpenseMutationId, shouldSyncExpenseCategory, parseProjectInitialCategories, buildSupabaseCategoryRows, upsertSupabaseCategories, isFirebaseNotFoundError, hasWarnedFirebaseWriteDatabaseMissing, runFirebaseWriteSafely, deleteFirebaseDocsByField, ParsedTemplateImportData, normalizeImportText, normalizeImportNumber, buildImportExpenseSignature, chunkArray, importTemplateDataToSupabase, importTemplateDataToFirebase, getParsedCategory, getSpecialistType, getParsedWorkerTeam, getParsedReimburseType, resolveAmountByMode, getExpenseTargetProjectIds, parsePositiveAmount, createHokExpenseEntries, createScraperExpenseEntries, AttendanceRecapRowInput, resolveAttendanceExportRowId, buildAttendanceRecapRowsFromFormData, ensureSupabaseWriteConfigured, getSupabaseMutationErrorMessage } from "./utils";
 
-import { revalidatePath, revalidateTag } from "next/cache";
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { queueActivityLog } from "@/lib/activity-logs";
 import {
@@ -20,7 +20,6 @@ import {
   canManageProjects,
   requireAuthUser,
 } from "@/lib/auth";
-import { CACHE_TAGS } from "@/lib/cache-tags";
 import {
   type AttendanceStatus,
   ATTENDANCE_STATUSES,
@@ -160,6 +159,9 @@ export async function createAttendanceAction(formData: FormData) {
     if (!supabase) {
       return;
     }
+    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal menyimpan data absensi.")) {
+      return;
+    }
     const draftProjectId = payload.project_id || await ensureSupabaseAttendanceDraftProjectId(supabase);
     if (!draftProjectId) {
       redirect(withReturnMessage(returnTo, "error", "Gagal menyiapkan penyimpanan draft absensi."));
@@ -191,7 +193,7 @@ export async function createAttendanceAction(formData: FormData) {
       ),
     );
     if (result.error) {
-      redirect(withReturnMessage(returnTo, "error", "Gagal menyimpan data absensi."));
+      redirect(withReturnMessage(returnTo, "error", getSupabaseMutationErrorMessage("Gagal menyimpan data absensi.")));
     }
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
@@ -318,6 +320,9 @@ export async function updateAttendanceAction(formData: FormData) {
     if (!supabase) {
       return;
     }
+    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal memperbarui data absensi.")) {
+      return;
+    }
     const draftProjectId = payload.project_id || await ensureSupabaseAttendanceDraftProjectId(supabase);
     if (!draftProjectId) {
       redirect(withReturnMessage(returnTo, "error", "Gagal menyiapkan penyimpanan draft absensi."));
@@ -339,12 +344,15 @@ export async function updateAttendanceAction(formData: FormData) {
       attendance_date: payload.attendance_date,
       notes: payload.notes,
     };
-    await withSupabaseSpecialistTeamNameFallback(({ omitSpecialistTeamName }) =>
+    const result = await withSupabaseSpecialistTeamNameFallback(({ omitSpecialistTeamName }) =>
       supabase
         .from("attendance_records")
         .update(omitSpecialistTeamNameField(attendancePayload, omitSpecialistTeamName))
         .eq("id", payload.id),
     );
+    if (result.error) {
+      redirect(withReturnMessage(returnTo, "error", getSupabaseMutationErrorMessage("Gagal memperbarui data absensi.")));
+    }
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
     if (!firestore) {
@@ -480,6 +488,9 @@ export async function prepareAttendanceExportAction(formData: FormData) {
     if (!supabase) {
       return;
     }
+    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal menyimpan finalisasi rekap.")) {
+      return;
+    }
 
     const [attendanceResult, payrollResult] = await Promise.all([
       withSupabaseSpecialistTeamNameFallback(({ omitSpecialistTeamName }) =>
@@ -534,7 +545,7 @@ export async function prepareAttendanceExportAction(formData: FormData) {
     ]);
 
     if (attendanceResult.error || payrollResult.error) {
-      redirect(withReturnMessage(returnTo, "error", "Gagal menyimpan finalisasi rekap."));
+      redirect(withReturnMessage(returnTo, "error", getSupabaseMutationErrorMessage("Gagal menyimpan finalisasi rekap.")));
     }
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
@@ -662,7 +673,13 @@ export async function deleteAttendanceAction(formData: FormData) {
     if (!supabase) {
       return;
     }
-    await supabase.from("attendance_records").delete().eq("id", attendanceId);
+    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal menghapus data absensi.")) {
+      return;
+    }
+    const { error } = await supabase.from("attendance_records").delete().eq("id", attendanceId);
+    if (error) {
+      redirect(withReturnMessage(returnTo ?? "/attendance", "error", getSupabaseMutationErrorMessage("Gagal menghapus data absensi.")));
+    }
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
     if (!firestore) {

@@ -6,7 +6,7 @@ function normalizeSupabaseKey(value: string | undefined) {
   }
 
   const trimmed = value.trim().replace(/^['"]|['"]$/g, "");
-  if (trimmed.startsWith(".sb_publishable_")) {
+  if (trimmed.startsWith(".sb_publishable_") || trimmed.startsWith(".sb_secret_")) {
     return trimmed.slice(1);
   }
   return trimmed;
@@ -14,9 +14,15 @@ function normalizeSupabaseKey(value: string | undefined) {
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
 const supabaseAnonKey = normalizeSupabaseKey(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+const supabaseServiceRoleKey = normalizeSupabaseKey(
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SECRET_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    process.env.NEXT_SUPABASE_SERVICE_ROLE_KEY,
+);
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && (supabaseServiceRoleKey || supabaseAnonKey));
+export const isSupabaseWriteConfigured = Boolean(supabaseUrl && supabaseServiceRoleKey);
 
 type SupabaseCompatResult<T> = {
   data: T | null;

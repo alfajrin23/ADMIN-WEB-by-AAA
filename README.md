@@ -34,8 +34,11 @@ cp .env.example .env.local
 DATA_SOURCE=supabase
 NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 AUTH_SESSION_SECRET=use-a-long-random-secret
 ```
+
+`SUPABASE_SERVICE_ROLE_KEY` wajib ada untuk tambah/edit/hapus data dan logs input karena schema Supabase memakai RLS dengan write hanya untuk `service_role`.
 
 4. Jalankan SQL schema di Supabase SQL Editor:
 

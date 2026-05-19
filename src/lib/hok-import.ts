@@ -68,6 +68,8 @@ const HEADER_KEYWORDS: Record<HokHeaderRole, string[]> = {
   ],
 };
 
+const LOOKUP_STOPWORDS = new Set(["project", "proyek", "nama", "pekerjaan"]);
+
 function normalizeCellText(value: unknown) {
   if (value == null) {
     return "";
@@ -93,7 +95,7 @@ function tokenizeLookup(value: string) {
   return normalizeLookupText(value)
     .split(" ")
     .map((token) => token.trim())
-    .filter((token) => token.length > 1);
+    .filter((token) => token.length > 1 && !LOOKUP_STOPWORDS.has(token));
 }
 
 function normalizeAmountRaw(value: string) {
@@ -164,17 +166,17 @@ function diceCoefficient(str1: string, str2: string): number {
   if (s1 === s2) return 1;
   if (s1.length < 2 || s2.length < 2) return s1 === s2 ? 1 : 0;
   
-  let bigrams1 = [];
+  const bigrams1 = [];
   for (let i = 0; i < s1.length - 1; i++) {
     bigrams1.push(s1.slice(i, i + 2));
   }
-  let bigrams2 = [];
+  const bigrams2 = [];
   for (let i = 0; i < s2.length - 1; i++) {
     bigrams2.push(s2.slice(i, i + 2));
   }
 
   let intersection = 0;
-  let bg2Copy = [...bigrams2];
+  const bg2Copy = [...bigrams2];
   for (let i = 0; i < bigrams1.length; i++) {
     const index = bg2Copy.indexOf(bigrams1[i]);
     if (index > -1) {

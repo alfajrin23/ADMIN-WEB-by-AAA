@@ -2,7 +2,7 @@ import "server-only";
 
 import { after } from "next/server";
 import type { AppRole, AppUser } from "@/lib/auth";
-import { getSupabaseServerClient } from "@/lib/supabase";
+import { getSupabaseServerClient, isSupabaseWriteConfigured } from "@/lib/supabase";
 
 export type ActivityLog = {
   id: string;
@@ -28,6 +28,15 @@ export type CreateActivityLogInput = {
   description: string;
   payload?: Record<string, unknown> | null;
 };
+
+export type ActivityLogReadResult = {
+  logs: ActivityLog[];
+  errorMessage: string;
+  isWriteConfigured: boolean;
+};
+
+export const SUPABASE_ACTIVITY_LOG_CONFIG_MESSAGE =
+  "SUPABASE_SERVICE_ROLE_KEY belum diset. Logs input dan operasi tambah/edit/hapus Supabase membutuhkan service role key server-side.";
 
 function mapActivityLogRow(row: Record<string, unknown>): ActivityLog {
   const actorRoleRaw = String(row.actor_role ?? "");
@@ -56,6 +65,11 @@ function mapActivityLogRow(row: Record<string, unknown>): ActivityLog {
 }
 
 export async function createActivityLog(input: CreateActivityLogInput) {
+  if (!isSupabaseWriteConfigured) {
+    console.warn("[activity-log] SUPABASE_SERVICE_ROLE_KEY belum diset, log tidak ditulis.");
+    return;
+  }
+
   const supabase = getSupabaseServerClient();
   if (!supabase) {
     return;
@@ -85,13 +99,25 @@ export function queueActivityLog(input: CreateActivityLogInput) {
   });
 }
 
-export async function getActivityLogs(limit = 200): Promise<ActivityLog[]> {
-  const supabase = getSupabaseServerClient();
-  if (!supabase) {
-    return [];
+export async function getActivityLogReadResult(limit = 200): Promise<ActivityLogReadResult> {
+  if (!isSupabaseWriteConfigured) {
+    return {
+      logs: [],
+      errorMessage: SUPABASE_ACTIVITY_LOG_CONFIG_MESSAGE,
+      isWriteConfigured: false,
+    };
   }
 
-  const { data } = await supabase
+  const supabase = getSupabaseServerClient();
+  if (!supabase) {
+    return {
+      logs: [],
+      errorMessage: "Supabase belum terkonfigurasi.",
+      isWriteConfigured: false,
+    };
+  }
+
+  const { data, error } = await supabase
     .from("activity_logs")
     .select(
       "id, actor_id, actor_name, actor_username, actor_role, action_type, module, entity_id, entity_name, description, payload, created_at",
@@ -99,5 +125,21 @@ export async function getActivityLogs(limit = 200): Promise<ActivityLog[]> {
     .order("created_at", { ascending: false })
     .limit(limit);
 
-  return (data ?? []).map((row) => mapActivityLogRow(row as Record<string, unknown>));
+  if (error) {
+    return {
+      logs: [],
+      errorMessage: `Gagal membaca logs input dari Supabase: ${error.message}`,
+      isWriteConfigured: true,
+    };
+  }
+
+  return {
+    logs: (data ?? []).map((row) => mapActivityLogRow(row as Record<string, unknown>)),
+    errorMessage: "",
+    isWriteConfigured: true,
+  };
+}
+
+export async function getActivityLogs(limit = 200): Promise<ActivityLog[]> {
+  return (await getActivityLogReadResult(limit)).logs;
 }

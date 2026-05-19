@@ -40,7 +40,7 @@ export function ProjectChecklistSearch({
   const selectedIds = selectedProjectIds ?? internalSelectedIds;
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedQuery(query), 2000);
+    const timer = window.setTimeout(() => setDebouncedQuery(query), 1000);
     return () => window.clearTimeout(timer);
   }, [query]);
 

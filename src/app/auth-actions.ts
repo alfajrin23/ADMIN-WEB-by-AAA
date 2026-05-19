@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath, revalidateTag } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { queueActivityLog } from "@/lib/activity-logs";
 import {
@@ -54,9 +54,9 @@ function toSuccessRedirect(pathname: string, message: string) {
 function revalidateRolePages() {
   revalidatePath("/logs");
   revalidatePath("/roles");
-  revalidateTag(CACHE_TAGS.roles, "max");
-  revalidateTag(CACHE_TAGS.users, "max");
-  revalidateTag(CACHE_TAGS.activityLogs, "max");
+  updateTag(CACHE_TAGS.roles);
+  updateTag(CACHE_TAGS.users);
+  updateTag(CACHE_TAGS.activityLogs);
 }
 
 function parsePermissionMatrix(formData: FormData): AppPermissionMatrix {
@@ -688,7 +688,7 @@ export async function updateProfileAction(formData: FormData) {
     description: `Memperbarui profil (Nama: ${fullName}${password ? ', Password Diubah' : ''}).`,
   });
 
-  revalidateTag(CACHE_TAGS.users, "max");
+  updateTag(CACHE_TAGS.users);
   revalidatePath("/");
   
   return { ok: true, message: "Profil berhasil tersimpan!" };

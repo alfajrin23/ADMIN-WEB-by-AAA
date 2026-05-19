@@ -111,7 +111,7 @@ export function ProjectRecapExpenseList({
   const [categoryFilter, setCategoryFilter] = useState("");
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedSearchQuery(searchQuery), 2000);
+    const timer = window.setTimeout(() => setDebouncedSearchQuery(searchQuery), 1000);
     return () => window.clearTimeout(timer);
   }, [searchQuery]);
 

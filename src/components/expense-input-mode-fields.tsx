@@ -483,10 +483,6 @@ export function ExpenseInputModeFields({
   }, [defaultExpenseCategory, today]);
 
   useEffect(() => {
-    if (continueDraftReady) {
-      return;
-    }
-
     const url = new URL(window.location.href);
     const hasSuccess = Boolean(url.searchParams.get("success")?.trim());
     const hasError = Boolean(url.searchParams.get("error")?.trim());
@@ -500,7 +496,16 @@ export function ExpenseInputModeFields({
     if (shouldClearSubmittedDraft) {
       window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
       window.sessionStorage.removeItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY);
+      setContinueEntries([]);
+      resetContinueDraft();
+      setContinueError("");
+      setContinueDraftSavedAt(null);
+      setContinueDraftNotice("");
       setContinueDraftReady(true);
+      return;
+    }
+
+    if (continueDraftReady) {
       return;
     }
 
@@ -599,7 +604,7 @@ export function ExpenseInputModeFields({
     } finally {
       setContinueDraftReady(true);
     }
-  }, [continueDraftReady, defaultExpenseCategory, expenseCategoryValues, projects, today]);
+  }, [continueDraftReady, defaultExpenseCategory, expenseCategoryValues, projects, resetContinueDraft, today]);
 
   useEffect(() => {
     if (!continueDraftReady) {

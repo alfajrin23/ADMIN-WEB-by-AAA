@@ -1,7 +1,11 @@
 import Link from "next/link";
-import { updateActivityLogAction } from "@/app/actions/log.action";
+import {
+  deleteExpenseDataFromActivityLogAction,
+  updateActivityLogAction,
+} from "@/app/actions/log.action";
 import { updateUserRoleAction } from "@/app/auth-actions";
-import { CloseIcon, EditIcon, EyeIcon, FilterIcon, RolesIcon, SaveIcon } from "@/components/icons";
+import { ConfirmActionButton } from "@/components/confirm-action-button";
+import { CloseIcon, EditIcon, EyeIcon, FilterIcon, RolesIcon, SaveIcon, TrashIcon } from "@/components/icons";
 import { type ActivityLog, getActivityLogs } from "@/lib/activity-logs";
 import {
   canEditRoles,
@@ -117,6 +121,66 @@ function getPayloadStringArray(payload: Record<string, unknown> | null, key: str
     .filter((item) => item.length > 0);
 }
 
+function getPayloadPositiveInteger(payload: Record<string, unknown> | null, key: string) {
+  if (!payload) {
+    return 0;
+  }
+  const value = payload[key];
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : 0;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function getLogExpenseIds(log: ActivityLog) {
+  if (log.module !== "expense") {
+    return [];
+  }
+  const ids = new Set<string>();
+  for (const id of getPayloadStringArray(log.payload, "expense_ids")) {
+    ids.add(id);
+  }
+  const payloadExpenseId = getPayloadString(log.payload, "expense_id");
+  if (payloadExpenseId) {
+    ids.add(payloadExpenseId);
+  }
+  if (log.entityId) {
+    ids.add(log.entityId);
+  }
+  return [...ids];
+}
+
+function getLogExpenseDeleteCount(log: ActivityLog) {
+  const expenseIds = getLogExpenseIds(log);
+  if (expenseIds.length > 0) {
+    return expenseIds.length;
+  }
+  return getPayloadPositiveInteger(log.payload, "entry_count");
+}
+
+function canDeleteExpenseDataFromLog(log: ActivityLog) {
+  if (log.module !== "expense") {
+    return false;
+  }
+  if (log.actionType.toLowerCase().startsWith("delete")) {
+    return false;
+  }
+  if (getLogExpenseIds(log).length > 0) {
+    return true;
+  }
+  return (
+    getPayloadString(log.payload, "expense_mode").length > 0 &&
+    getPayloadPositiveInteger(log.payload, "entry_count") > 0 &&
+    getPayloadStringArray(log.payload, "project_ids").length > 0
+  );
+}
+
+function getDeleteExpenseDataDescription(log: ActivityLog) {
+  const count = getLogExpenseDeleteCount(log);
+  if (getLogExpenseIds(log).length > 0) {
+    return `Yakin ingin menghapus ${count} data biaya asli yang tercatat pada log ini? Aksi ini menghapus data dari database.`;
+  }
+  return `Yakin ingin menghapus ${count} data biaya dari log lama ini? Sistem hanya akan menghapus jika kandidat data bisa dipastikan dari waktu log dan jumlah entry.`;
+}
+
 function getLogEntityEditHref(log: ActivityLog) {
   const primaryProjectId = getPayloadString(log.payload, "project_id");
   const secondaryProjectIds = getPayloadStringArray(log.payload, "project_ids");
@@ -130,18 +194,18 @@ function getLogEntityEditHref(log: ActivityLog) {
   }
 
   if (log.module === "expense") {
-    if (log.entityId) {
-      return `/projects/expenses/edit?id=${encodeURIComponent(log.entityId)}`;
+    const expenseIds = getLogExpenseIds(log);
+    if (expenseIds.length === 1) {
+      return `/projects/expenses/edit?id=${encodeURIComponent(expenseIds[0])}`;
     }
     if (fallbackProjectId) {
       const query = new URLSearchParams({
         view: "rekap",
         project: fallbackProjectId,
-        modal: "expense-new",
       });
       return `/projects?${query.toString()}`;
     }
-    return "/projects?modal=expense-new";
+    return "/projects?view=rekap";
   }
 
   if (log.module === "attendance") {
@@ -187,6 +251,8 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
   const selectedLogMode = params.mode === "edit" && canEditLogs ? "edit" : "view";
   const selectedLog = selectedLogId ? logs.find((log) => log.id === selectedLogId) ?? null : null;
   const selectedLogEntityEditHref = selectedLog ? getLogEntityEditHref(selectedLog) : null;
+  const canDeleteSelectedExpenseData =
+    selectedLog ? canEditLogs && canDeleteExpenseDataFromLog(selectedLog) : false;
   const selectedLogPayloadEntries = toPayloadEntries(selectedLog?.payload ?? null);
   const closeModalHref = createLogsHref({
     fromDate,
@@ -387,6 +453,7 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
               <tbody>
                 {filteredLogs.map((log) => {
                   const entityEditHref = getLogEntityEditHref(log);
+                  const canDeleteExpenseData = canEditLogs && canDeleteExpenseDataFromLog(log);
                   return (
                     <tr key={log.id}>
                       <td className="text-slate-600">{formatDateTime(log.createdAt)}</td>
@@ -440,6 +507,27 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
                               </span>
                               Edit Data
                             </Link>
+                          ) : null}
+                          {canDeleteExpenseData ? (
+                            <form action={deleteExpenseDataFromActivityLogAction}>
+                              <input type="hidden" name="log_id" value={log.id} />
+                              <input
+                                type="hidden"
+                                name="return_to"
+                                value={createLogsHref({ fromDate, toDate })}
+                              />
+                              <ConfirmActionButton
+                                className="button-danger button-xs"
+                                modalTitle="Konfirmasi Hapus Data Biaya"
+                                modalDescription={getDeleteExpenseDataDescription(log)}
+                                confirmLabel="Ya, Hapus Data"
+                              >
+                                <span className="btn-icon bg-rose-100 text-rose-700">
+                                  <TrashIcon />
+                                </span>
+                                Hapus Data
+                              </ConfirmActionButton>
+                            </form>
                           ) : null}
                         </div>
                       </td>
@@ -627,6 +715,23 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
                       </span>
                       Edit Data Asli
                     </Link>
+                  ) : null}
+                  {canDeleteSelectedExpenseData ? (
+                    <form action={deleteExpenseDataFromActivityLogAction}>
+                      <input type="hidden" name="log_id" value={selectedLog.id} />
+                      <input type="hidden" name="return_to" value={closeModalHref} />
+                      <ConfirmActionButton
+                        className="button-danger button-sm"
+                        modalTitle="Konfirmasi Hapus Data Biaya"
+                        modalDescription={getDeleteExpenseDataDescription(selectedLog)}
+                        confirmLabel="Ya, Hapus Data"
+                      >
+                        <span className="btn-icon bg-rose-100 text-rose-700">
+                          <TrashIcon />
+                        </span>
+                        Hapus Data Asli
+                      </ConfirmActionButton>
+                    </form>
                   ) : null}
                   {canEditLogs ? (
                     <Link

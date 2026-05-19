@@ -764,6 +764,9 @@ async function createContinueExpenseEntries(
     payload: {
       expense_mode: "continue",
       entry_count: entries.length,
+      ...(activeDataSource === "supabase" || activeDataSource === "firebase"
+        ? { expense_ids: rows.map((row) => row.id) }
+        : {}),
       project_ids: [...new Set(entries.map((e) => e.projectId))],
     },
   });

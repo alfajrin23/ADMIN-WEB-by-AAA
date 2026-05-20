@@ -1,8 +1,12 @@
-import { DashboardActiveProjects } from "@/components/dashboard-active-projects";
-import { DashboardBudgetUsage } from "@/components/dashboard-budget-usage";
+import { DashboardCharts } from "@/components/dashboard-charts";
 import { DashboardClientBoard } from "@/components/dashboard-client-board";
 import { DashboardProjectExpenseList } from "@/components/dashboard-project-expense-list";
-import { TrendUpIcon, WalletIcon } from "@/components/icons";
+import {
+  CashInIcon,
+  ProjectIcon,
+  TrendUpIcon,
+  UsersIcon,
+} from "@/components/icons";
 import { requireAuthUser } from "@/lib/auth";
 import { getDashboardData } from "@/lib/data";
 import { formatCompactCurrency } from "@/lib/format";
@@ -34,7 +38,8 @@ export default async function DashboardPage() {
         return b.totalExpense - a.totalExpense;
       }
       return a.clientName.localeCompare(b.clientName, "id-ID");
-    });
+    })
+    .slice(0, 6);
 
   const maxClientExpense = clientRowsBase[0]?.totalExpense ?? 0;
   const clientRows = clientRowsBase.map((client) => ({
@@ -54,8 +59,47 @@ export default async function DashboardPage() {
       return a.projectName.localeCompare(b.projectName, "id-ID");
     });
 
+  const summaryCards = [
+    {
+      key: "month-expense",
+      label: "Pengeluaran Bulan Ini",
+      value: formatCompactCurrency(dashboard.monthExpense),
+      note: "Ritme biaya bulan berjalan untuk memantau laju cash out.",
+      accent: "amber",
+      icon: <TrendUpIcon className="h-4 w-4" />,
+      chip: `${budgetScopeLabel}`,
+    },
+    {
+      key: "active-projects",
+      label: "Project Aktif",
+      value: dashboard.activeProjects.toLocaleString("id-ID"),
+      note: `${dashboard.totalProjects.toLocaleString("id-ID")} total project tercatat di sistem.`,
+      accent: "blue",
+      icon: <ProjectIcon className="h-4 w-4" />,
+      chip: "Status lapangan",
+    },
+    {
+      key: "active-workers",
+      label: "Pekerja Aktif",
+      value: dashboard.activeWorkers.toLocaleString("id-ID"),
+      note: "Ringkasan tenaga kerja aktif dari absensi terbaru.",
+      accent: "emerald",
+      icon: <UsersIcon className="h-4 w-4" />,
+      chip: "Absensi aktif",
+    },
+    {
+      key: "kasbon",
+      label: "Total Kasbon",
+      value: formatCompactCurrency(dashboard.totalKasbon),
+      note: "Akumulasi kasbon pekerja yang sudah masuk ke sistem.",
+      accent: "slate",
+      icon: <CashInIcon className="h-4 w-4" />,
+      chip: "Kasbon berjalan",
+    },
+  ] as const;
+
   return (
-    <div className="dashboard-summary-page space-y-3">
+    <div className="space-y-4">
       {activeDataSource === "demo" ? (
         <section className="panel border-amber-300 bg-amber-50 p-3.5">
           <p className="text-sm text-amber-700">
@@ -69,41 +113,32 @@ export default async function DashboardPage() {
         </section>
       ) : null}
 
-      <section className="dashboard-summary-top-grid">
-        <article className="dashboard-month-card">
-          <div className="dashboard-month-card__icon">
-            <TrendUpIcon />
-          </div>
-          <div className="min-w-0">
-            <p className="dashboard-month-card__label">Pengeluaran Bulan Ini</p>
-            <strong className="dashboard-month-card__value">
-              {formatCompactCurrency(dashboard.monthExpense)}
-            </strong>
-            <div className="dashboard-month-card__meta">
-              <span>{budgetScopeLabel}</span>
-              <span>
-                <WalletIcon className="h-3.5 w-3.5" />
-                Total {formatCompactCurrency(dashboard.totalExpense)}
-              </span>
+      <section className="dashboard-kpi-grid">
+        {summaryCards.map((card) => (
+          <article
+            key={card.key}
+            className={`dashboard-kpi-card dashboard-kpi-card--${card.accent}`}
+          >
+            <div className="dashboard-kpi-card__header">
+              <span className="dashboard-kpi-card__icon">{card.icon}</span>
+              <span className="dashboard-kpi-card__chip">{card.chip}</span>
             </div>
-          </div>
-        </article>
-
-        <DashboardActiveProjects
-          totalProjects={dashboard.totalProjects}
-          activeProjects={dashboard.activeProjects}
-          completedProjects={dashboard.completedProjects}
-          delayedProjects={dashboard.delayedProjects}
-          clients={dashboard.projectStatusByClient}
-        />
+            <p className="dashboard-kpi-card__label">{card.label}</p>
+            <p className="dashboard-kpi-card__value">{card.value}</p>
+            <p className="dashboard-kpi-card__note">{card.note}</p>
+          </article>
+        ))}
       </section>
 
-      <section className="dashboard-summary-main-grid">
+      <section className="dashboard-focus-grid">
         <section className="soft-card dashboard-client-panel p-4 md:p-5">
           <div className="section-header">
             <div>
               <h2 className="section-title">Biaya Pengeluaran per Klien</h2>
-              <p className="section-description">Total biaya dan kategori terbesar dari setiap klien.</p>
+              <p className="section-description">
+                Kartu klien bergerak vertikal dari atas ke bawah agar ritmenya selaras dengan panel
+                pengeluaran per project.
+              </p>
             </div>
             <span className="badge badge-primary">{clientRows.length} klien</span>
           </div>
@@ -114,13 +149,13 @@ export default async function DashboardPage() {
         </section>
 
         <DashboardProjectExpenseList rows={projectExpenseRows} />
-
-        <DashboardBudgetUsage
-          categoryTotals={dashboard.categoryTotals}
-          clients={dashboard.categoryTotalsByClient}
-          scopeLabel={budgetScopeLabel}
-        />
       </section>
+
+      <DashboardCharts
+        projectStatusTotals={dashboard.projectStatusTotals}
+        budgetCategoryTotals={dashboard.categoryTotals}
+        budgetScopeLabel={budgetScopeLabel}
+      />
     </div>
   );
 }

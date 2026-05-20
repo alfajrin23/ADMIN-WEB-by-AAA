@@ -9,7 +9,7 @@ type DashboardProjectExpenseListProps = {
   rows: DashboardData["projectExpenseTotals"];
 };
 
-const PAGE_SIZE = 4;
+const PAGE_SIZE = 6;
 const ALL_CLIENTS_VALUE = "__all_clients__";
 
 function formatProjectStatusLabel(value: string) {
@@ -36,17 +36,12 @@ function chunkRows<T>(rows: T[], size: number) {
   return chunks;
 }
 
-function getProjectKey(item: DashboardData["projectExpenseTotals"][number]) {
-  return item.projectId || item.projectName;
-}
-
 export function DashboardProjectExpenseList({
   rows,
 }: DashboardProjectExpenseListProps) {
   const [selectedClient, setSelectedClient] = useState(ALL_CLIENTS_VALUE);
   const [activePage, setActivePage] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
-  const [hoveredProjectKey, setHoveredProjectKey] = useState<string | null>(null);
   const clientOptions = useMemo(() => {
     const options = new Map<string, string>();
     for (const item of rows) {
@@ -83,15 +78,6 @@ export function DashboardProjectExpenseList({
   const topProject = visibleRows[0] ?? null;
   const pages = chunkRows(visibleRows, PAGE_SIZE);
   const safeActivePage = pages.length > 0 ? activePage % pages.length : 0;
-  const hoveredProject =
-    visibleRows.find((item) => getProjectKey(item) === hoveredProjectKey) ?? topProject;
-  const hoveredCategoryRows =
-    hoveredProject?.categoryTotals
-      .filter((item) => item.total > 0)
-      .slice()
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 5) ?? [];
-  const maxHoveredCategoryTotal = hoveredCategoryRows[0]?.total ?? 0;
 
   useEffect(() => {
     if (pages.length <= 1 || isPaused) {
@@ -116,7 +102,9 @@ export function DashboardProjectExpenseList({
       <div className="section-header">
         <div className="min-w-0">
           <h2 className="section-title">Total Pengeluaran per Project</h2>
-          <p className="section-description">Rincian project dengan transaksi biaya terbesar.</p>
+          <p className="section-description">
+            Pilih klien untuk menampilkan project sesuai klien yang dipilih user.
+          </p>
         </div>
         <span className="badge badge-primary">{visibleRows.length} project</span>
       </div>
@@ -177,108 +165,64 @@ export function DashboardProjectExpenseList({
             </article>
           </div>
 
-          <div className="dashboard-project-content-grid">
-            <div className="dashboard-project-stage">
-              <div
-                className="dashboard-project-stage__track"
-                style={{ transform: `translate3d(0, -${safeActivePage * 100}%, 0)` }}
-              >
-                {pages.map((page, pageIndex) => (
-                  <div key={`project-page-${pageIndex}`} className="dashboard-project-stage__page">
-                    {page.map((item, index) => {
-                      const ratio = maxExpense
-                        ? Math.max(10, Math.round((item.totalExpense / maxExpense) * 100))
-                        : 0;
-                      const rank = pageIndex * PAGE_SIZE + index + 1;
+          <div className="dashboard-project-stage">
+            <div
+              className="dashboard-project-stage__track"
+              style={{ transform: `translate3d(0, -${safeActivePage * 100}%, 0)` }}
+            >
+              {pages.map((page, pageIndex) => (
+                <div key={`project-page-${pageIndex}`} className="dashboard-project-stage__page">
+                  {page.map((item, index) => {
+                    const ratio = maxExpense
+                      ? Math.max(10, Math.round((item.totalExpense / maxExpense) * 100))
+                      : 0;
+                    const rank = pageIndex * PAGE_SIZE + index + 1;
 
-                      return (
-                        <article
-                          key={getProjectKey(item)}
-                          className="dashboard-project-item dashboard-project-item--compact"
-                          title={`${item.projectName} - ${formatCurrency(item.totalExpense)}`}
-                          tabIndex={0}
-                          onFocus={() => setHoveredProjectKey(getProjectKey(item))}
-                          onMouseEnter={() => setHoveredProjectKey(getProjectKey(item))}
-                        >
-                          <div className="dashboard-project-item__rank dashboard-project-item__rank--compact">
-                            {String(rank).padStart(2, "0")}
+                    return (
+                      <article
+                        key={item.projectId || item.projectName}
+                        className="dashboard-project-item dashboard-project-item--compact"
+                        title={`${item.projectName} - ${formatCurrency(item.totalExpense)}`}
+                      >
+                        <div className="dashboard-project-item__rank dashboard-project-item__rank--compact">
+                          {String(rank).padStart(2, "0")}
+                        </div>
+                        <div className="dashboard-project-item__body dashboard-project-item__body--compact">
+                          <div className="dashboard-project-item__topline">
+                            <p className="dashboard-project-item__name dashboard-project-item__name--compact">
+                              {item.projectName}
+                            </p>
+                            <strong className="dashboard-project-item__amount-compact">
+                              {formatCompactCurrency(item.totalExpense)}
+                            </strong>
                           </div>
-                          <div className="dashboard-project-item__body dashboard-project-item__body--compact">
-                            <div className="dashboard-project-item__topline">
-                              <p className="dashboard-project-item__name dashboard-project-item__name--compact">
-                                {item.projectName}
-                              </p>
-                              <strong className="dashboard-project-item__amount-compact">
-                                {formatCompactCurrency(item.totalExpense)}
-                              </strong>
-                            </div>
 
-                            <div className="dashboard-project-item__meta-row">
-                              <span>{resolveClientName(item.clientName)}</span>
-                              <span
-                                className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${PROJECT_STATUS_STYLE[item.projectStatus]}`}
-                              >
-                                {formatProjectStatusLabel(item.projectStatus)}
-                              </span>
-                              <span>{item.transactionCount} trx</span>
-                              <span>
-                                {item.latestExpenseDate ? formatDate(item.latestExpenseDate) : "-"}
-                              </span>
-                            </div>
-
-                            <div className="dashboard-project-item__progress dashboard-project-item__progress--compact">
-                              <div
-                                className="dashboard-project-item__progress-bar"
-                                style={{ width: `${ratio}%` }}
-                              />
-                            </div>
+                          <div className="dashboard-project-item__meta-row">
+                            <span>{resolveClientName(item.clientName)}</span>
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${PROJECT_STATUS_STYLE[item.projectStatus]}`}
+                            >
+                              {formatProjectStatusLabel(item.projectStatus)}
+                            </span>
+                            <span>{item.transactionCount} trx</span>
+                            <span>
+                              {item.latestExpenseDate ? formatDate(item.latestExpenseDate) : "-"}
+                            </span>
                           </div>
-                        </article>
-                      );
-                    })}
-                  </div>
-                ))}
-              </div>
-            </div>
 
-            <aside className="dashboard-project-hover-card" aria-live="polite">
-              {hoveredProject ? (
-                <>
-                  <p className="dashboard-project-hover-card__eyebrow">Rincian Kategori</p>
-                  <h3 title={hoveredProject.projectName}>{hoveredProject.projectName}</h3>
-                  <strong className="dashboard-project-hover-card__total">
-                    {formatCurrency(hoveredProject.totalExpense)}
-                  </strong>
-                  <div className="dashboard-project-hover-card__categories">
-                    {hoveredCategoryRows.map((category) => {
-                      const ratio = maxHoveredCategoryTotal
-                        ? Math.max(8, Math.round((category.total / maxHoveredCategoryTotal) * 100))
-                        : 0;
-                      return (
-                        <div key={`${getProjectKey(hoveredProject)}-${category.category}`}>
-                          <div className="dashboard-project-hover-card__category-head">
-                            <span>{category.label}</span>
-                            <strong>{formatCompactCurrency(category.total)}</strong>
-                          </div>
-                          <div className="dashboard-project-hover-card__bar">
-                            <span style={{ width: `${ratio}%` }} />
+                          <div className="dashboard-project-item__progress dashboard-project-item__progress--compact">
+                            <div
+                              className="dashboard-project-item__progress-bar"
+                              style={{ width: `${ratio}%` }}
+                            />
                           </div>
                         </div>
-                      );
-                    })}
-                    {hoveredCategoryRows.length === 0 ? (
-                      <div className="empty-state dashboard-project-hover-card__empty">
-                        Belum ada rincian kategori.
-                      </div>
-                    ) : null}
-                  </div>
-                </>
-              ) : (
-                <div className="empty-state dashboard-project-hover-card__empty">
-                  Belum ada data project.
+                      </article>
+                    );
+                  })}
                 </div>
-              )}
-            </aside>
+              ))}
+            </div>
           </div>
 
           {pages.length > 1 ? (

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ArrowLeftIcon, ArrowRightIcon, ProjectIcon, WalletIcon } from "@/components/icons";
-import { formatCompactCurrency } from "@/lib/format";
+import { formatCompactCurrency, formatCurrency } from "@/lib/format";
 
 export type DashboardClientBoardItem = {
   clientName: string;
@@ -58,7 +58,9 @@ export function DashboardClientBoard({ clients }: DashboardClientBoardProps) {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-slate-950">{client.clientName}</p>
-                  <p className="mt-1 text-[11px] text-slate-500">Kategori biaya terbesar per klien.</p>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Ringkasan biaya klien tampil bergantian dengan slide vertikal dari atas ke bawah.
+                  </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="badge badge-neutral">
@@ -86,15 +88,10 @@ export function DashboardClientBoard({ clients }: DashboardClientBoardProps) {
                       {category.label}
                     </p>
                     <p className="mt-1 text-sm font-semibold text-slate-950">
-                      {formatCompactCurrency(category.total)}
+                      {formatCurrency(category.total)}
                     </p>
                   </div>
                 ))}
-                {client.categoryTotals.length === 0 ? (
-                  <div className="client-category-pill client-category-pill--empty">
-                    Belum ada kategori biaya.
-                  </div>
-                ) : null}
               </div>
             </article>
           ))}
@@ -118,25 +115,19 @@ export function DashboardClientBoard({ clients }: DashboardClientBoardProps) {
             >
               <ArrowLeftIcon className="-rotate-90" />
             </button>
-            {clients.length <= 8 ? (
-              <div className="client-carousel-dots">
-                {clients.map((client, index) => (
-                  <button
-                    key={`${client.clientName}-dot`}
-                    type="button"
-                    className={`client-carousel-dot ${
-                      index === safeActiveIndex ? "client-carousel-dot--active" : ""
-                    }`}
-                    aria-label={`Tampilkan ${client.clientName}`}
-                    onClick={() => setActiveIndex(index)}
-                  />
-                ))}
-              </div>
-            ) : (
-              <span className="client-carousel-page">
-                {safeActiveIndex + 1}/{clients.length}
-              </span>
-            )}
+            <div className="client-carousel-dots">
+              {clients.map((client, index) => (
+                <button
+                  key={`${client.clientName}-dot`}
+                  type="button"
+                  className={`client-carousel-dot ${
+                    index === safeActiveIndex ? "client-carousel-dot--active" : ""
+                  }`}
+                  aria-label={`Tampilkan ${client.clientName}`}
+                  onClick={() => setActiveIndex(index)}
+                />
+              ))}
+            </div>
             <button
               type="button"
               className="client-carousel-control"

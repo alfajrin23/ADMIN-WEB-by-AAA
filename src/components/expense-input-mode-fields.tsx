@@ -512,6 +512,8 @@ export function ExpenseInputModeFields({
   const continueDraftClearInProgressRef = useRef(false);
   const hasLoadedExpenseDraftRef = useRef(false);
   const draftServerUpdatedAtRef = useRef<string | null>(null);
+  const serverDraftIsClearedRef = useRef(false);
+  const hasUserEditedDraftRef = useRef(false);
   const [submissionToken] = useState(createExpenseSubmissionToken);
   const [mode, setMode] = useState<ExpenseInputMode>(STANDARD_MODE);
   const [hokQuery, setHokQuery] = useState("");
@@ -673,8 +675,14 @@ export function ExpenseInputModeFields({
     setExpenseDraftSavedAt(null);
   }, []);
 
+  const markUserDraftInteraction = useCallback(() => {
+    hasUserEditedDraftRef.current = true;
+  }, []);
+
   const resetExpenseDraftAfterSave = useCallback(() => {
     continueDraftClearInProgressRef.current = true;
+    hasUserEditedDraftRef.current = false;
+    serverDraftIsClearedRef.current = true;
     clearStaleLocalDraftCache();
     setMode(STANDARD_MODE);
     setStandardProjectId(initialProjectId ?? "");
@@ -842,6 +850,8 @@ export function ExpenseInputModeFields({
       setContinueDraftReady(true);
       setExpenseDraftSavedAt(updatedAt);
       setExpenseDraftNotice(updatedAt ? "Draft input biaya dipulihkan dari akun ini." : "");
+      serverDraftIsClearedRef.current = false;
+      hasUserEditedDraftRef.current = false;
     },
     [defaultExpenseCategory, expenseCategoryValues, hokProjectPresets, initialProjectId, projects, today],
   );
@@ -1008,6 +1018,7 @@ export function ExpenseInputModeFields({
         }
         draftServerUpdatedAtRef.current = draft?.updatedAt ?? null;
         if (draft?.isCleared) {
+          serverDraftIsClearedRef.current = true;
           clearStaleLocalDraftCache();
           return;
         }
@@ -1054,6 +1065,13 @@ export function ExpenseInputModeFields({
             toTimestamp(draft.updatedAt) > toTimestamp(draftServerUpdatedAtRef.current)
           ) {
             draftServerUpdatedAtRef.current = draft.updatedAt;
+            serverDraftIsClearedRef.current = true;
+            if (hasUserEditedDraftRef.current) {
+              clearStaleLocalDraftCache();
+              setExpenseDraftNotice("Draft lama sudah kosong di akun. Input aktif ini akan disimpan sebagai draft baru.");
+              setContinueDraftNotice("");
+              return;
+            }
             resetExpenseDraftAfterSave();
             setExpenseDraftNotice("Draft akun dikosongkan karena data sudah disimpan di perangkat lain.");
             setContinueDraftNotice("");
@@ -1080,7 +1098,7 @@ export function ExpenseInputModeFields({
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.clearInterval(intervalId);
     };
-  }, [expenseDraftReady, resetExpenseDraftAfterSave]);
+  }, [clearStaleLocalDraftCache, expenseDraftReady, resetExpenseDraftAfterSave]);
 
   useEffect(() => {
     if (!continueDraftReady) {
@@ -1246,13 +1264,21 @@ export function ExpenseInputModeFields({
           initialProjectId ?? "",
         )
       ) {
-        clearExpenseInputDraftAction()
-          .then((result) => {
-            if (result?.updatedAt) {
-              draftServerUpdatedAtRef.current = result.updatedAt;
-            }
-          })
-          .catch(() => undefined);
+        if (!serverDraftIsClearedRef.current) {
+          serverDraftIsClearedRef.current = true;
+          clearExpenseInputDraftAction()
+            .then((result) => {
+              if (result?.updatedAt) {
+                draftServerUpdatedAtRef.current = result.updatedAt;
+              }
+              if (result?.isCleared) {
+                serverDraftIsClearedRef.current = true;
+              }
+            })
+            .catch(() => {
+              serverDraftIsClearedRef.current = false;
+            });
+        }
         setExpenseDraftSavedAt(null);
         return;
       }
@@ -1264,10 +1290,11 @@ export function ExpenseInputModeFields({
         .then((result) => {
           if (result?.isCleared) {
             draftServerUpdatedAtRef.current = result.updatedAt ?? null;
-            resetExpenseDraftAfterSave();
-            setExpenseDraftNotice("Draft akun dikosongkan karena data sudah disimpan di perangkat lain.");
+            serverDraftIsClearedRef.current = true;
+            setExpenseDraftNotice("Draft lama sudah kosong di akun. Lanjutkan input, perubahan berikutnya akan menjadi draft baru.");
             return;
           }
+          serverDraftIsClearedRef.current = false;
           if (result?.updatedAt) {
             draftServerUpdatedAtRef.current = result.updatedAt;
           }
@@ -1860,7 +1887,13 @@ export function ExpenseInputModeFields({
   const continueDraftSavedAtLabel = formatContinueDraftSavedAt(continueDraftSavedAt);
 
   return (
-    <div ref={rootRef} className="space-y-3">
+    <div
+      ref={rootRef}
+      className="space-y-3"
+      onChange={markUserDraftInteraction}
+      onClick={markUserDraftInteraction}
+      onInput={markUserDraftInteraction}
+    >
       <EnterToNextField formId={formId} />
       <input type="hidden" name="expense_submission_token" value={submissionToken} />
       <input type="hidden" name="expense_input_mode" value={mode} />

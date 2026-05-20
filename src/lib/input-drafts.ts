@@ -128,9 +128,14 @@ export async function saveInputDraftForActor(input: {
   const existingUpdatedAt = existing.data?.updated_at
     ? String(existing.data.updated_at)
     : null;
+  const payloadSavedAt = getRecordString(input.payload, "savedAt") || null;
+  const latestKnownClientTimestamp = Math.max(
+    toTimestamp(input.knownUpdatedAt),
+    toTimestamp(payloadSavedAt),
+  );
   if (
     isClearedDraftPayload(existingPayload) &&
-    toTimestamp(existingUpdatedAt) > toTimestamp(input.knownUpdatedAt)
+    toTimestamp(existingUpdatedAt) > latestKnownClientTimestamp
   ) {
     return {
       ok: false,

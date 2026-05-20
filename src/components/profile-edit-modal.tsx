@@ -4,6 +4,7 @@ import { useActionState, useEffect, useRef, useState } from "react";
 import { updateProfileAction } from "@/app/auth-actions";
 import { CloseIcon, SaveIcon } from "@/components/icons";
 import { PasswordRevealInput } from "@/components/password-reveal-input";
+import { SuccessToast } from "@/components/success-toast";
 
 export type ProfileEditModalProps = {
   isOpen: boolean;
@@ -52,6 +53,7 @@ export function ProfileEditModal({ isOpen, onClose, defaultFullName }: ProfileEd
       className="backdrop:bg-slate-900/40 backdrop:backdrop-blur-sm p-0 m-auto mt-20 md:mt-32 w-full max-w-sm rounded-2xl bg-white shadow-2xl open:animate-in open:fade-in open:zoom-in-95"
       onClose={onClose}
     >
+      <SuccessToast message={successMsg} />
       <div className="flex items-center justify-between border-b border-slate-100 p-4">
         <h2 className="text-base font-semibold text-slate-900">Edit Profil Anda</h2>
         <button
@@ -69,12 +71,6 @@ export function ProfileEditModal({ isOpen, onClose, defaultFullName }: ProfileEd
             {state.error}
           </div>
         )}
-        {successMsg && (
-          <div className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-600 border border-emerald-100">
-            {successMsg}
-          </div>
-        )}
-
         <div className="space-y-1.5 mt-2">
           <label htmlFor="full_name" className="text-sm font-medium text-slate-700">
             Nama Lengkap

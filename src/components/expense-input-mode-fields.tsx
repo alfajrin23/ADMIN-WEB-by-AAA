@@ -273,9 +273,15 @@ function resolveDraftCategory(value: string, categoryValues: Set<string>, fallba
   return categoryValues.has(value) ? value : fallback;
 }
 
-function hasStandardDraftContent(input: StandardDraftState, defaultCategory: string, today: string) {
+function hasStandardDraftContent(
+  input: StandardDraftState,
+  defaultCategory: string,
+  today: string,
+  defaultProjectId = "",
+) {
+  const projectId = input.projectId.trim();
   return (
-    input.projectId.trim().length > 0 ||
+    (projectId.length > 0 && projectId !== defaultProjectId) ||
     input.additionalProjectIds.length > 0 ||
     input.category !== defaultCategory ||
     input.categoryCustom.trim().length > 0 ||
@@ -293,13 +299,24 @@ function hasStandardDraftContent(input: StandardDraftState, defaultCategory: str
   );
 }
 
-function hasScraperDraftContent(input: ScraperDraftState, defaultCategory: string, today: string) {
+function hasScraperDraftContent(
+  input: ScraperDraftState,
+  defaultCategory: string,
+  today: string,
+  defaultProjectId = "",
+) {
   return (
     input.category !== defaultCategory ||
     input.expenseDate !== today ||
     input.requesterName.trim().length > 0 ||
     input.description.trim().length > 0 ||
-    input.rows.some((row) => row.projectId.trim().length > 0 || normalizeDigits(row.amountRaw).length > 0)
+    input.rows.some((row) => {
+      const projectId = row.projectId.trim();
+      return (
+        (projectId.length > 0 && projectId !== defaultProjectId) ||
+        normalizeDigits(row.amountRaw).length > 0
+      );
+    })
   );
 }
 
@@ -311,10 +328,15 @@ function hasHokDraftContent(input: HokDraftState, today: string) {
   );
 }
 
-function hasExpenseInputDraftContent(input: ExpenseDraftPayload, defaultCategory: string, today: string) {
+function hasExpenseInputDraftContent(
+  input: ExpenseDraftPayload,
+  defaultCategory: string,
+  today: string,
+  defaultProjectId = "",
+) {
   return (
-    hasStandardDraftContent(input.standard, defaultCategory, today) ||
-    hasScraperDraftContent(input.scraper, defaultCategory, today) ||
+    hasStandardDraftContent(input.standard, defaultCategory, today, defaultProjectId) ||
+    hasScraperDraftContent(input.scraper, defaultCategory, today, defaultProjectId) ||
     hasHokDraftContent(input.hok, today) ||
     hasContinueDraftContent(input.continueMode)
   );
@@ -348,6 +370,14 @@ function formatContinueDraftSavedAt(value: string | null) {
     dateStyle: "short",
     timeStyle: "short",
   }).format(date);
+}
+
+function toTimestamp(value: string | null | undefined) {
+  if (!value) {
+    return 0;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function formatHokImportIssuePreview(
@@ -481,6 +511,7 @@ export function ExpenseInputModeFields({
   const lastProcessedContinueDraftClearRef = useRef("");
   const continueDraftClearInProgressRef = useRef(false);
   const hasLoadedExpenseDraftRef = useRef(false);
+  const draftServerUpdatedAtRef = useRef<string | null>(null);
   const [submissionToken] = useState(createExpenseSubmissionToken);
   const [mode, setMode] = useState<ExpenseInputMode>(STANDARD_MODE);
   const [hokQuery, setHokQuery] = useState("");
@@ -634,11 +665,38 @@ export function ExpenseInputModeFields({
     setContinueProjectResetSignal((prev) => prev + 1);
   }, [defaultExpenseCategory, today]);
 
-  const resetContinueDraftAfterSave = useCallback(() => {
+  const resetExpenseDraftAfterSave = useCallback(() => {
     continueDraftClearInProgressRef.current = true;
     window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
     window.sessionStorage.removeItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY);
     window.sessionStorage.removeItem(EXPENSE_DRAFT_PENDING_CLEAR_KEY);
+    setMode(STANDARD_MODE);
+    setStandardProjectId(initialProjectId ?? "");
+    setStandardAdditionalProjectIds([]);
+    setStandardCategory(defaultExpenseCategory);
+    setStandardCategoryCustom("");
+    setStandardDate(today);
+    setStandardRequester("");
+    setStandardDescription("");
+    setStandardAmountRaw("");
+    setStandardRecipientName("");
+    setStandardUsageInfo("");
+    setStandardSpecialistType("");
+    setStandardSpecialistTypeCustom("");
+    setStandardQuantity("");
+    setStandardUnitLabel("");
+    setStandardUnitPriceRaw("");
+    setScraperRows(createInitialScraperRows(initialProjectId));
+    setScraperCategory(defaultExpenseCategory);
+    setScraperDate(today);
+    setScraperRequester("");
+    setScraperDescription("");
+    setScraperError("");
+    setHokQuery("");
+    setHokRows(createInitialHokRows(hokProjectPresets));
+    setHokError("");
+    setHokPasteText("");
+    setHokImportFeedback(null);
     setContinueEntries([]);
     resetContinueDraft();
     setContinueError("");
@@ -648,7 +706,7 @@ export function ExpenseInputModeFields({
     setExpenseDraftNotice("");
     setContinueDraftReady(true);
     setContinueDraftClearVersion((prev) => prev + 1);
-  }, [resetContinueDraft]);
+  }, [defaultExpenseCategory, hokProjectPresets, initialProjectId, resetContinueDraft, today]);
 
   const applyExpenseDraftPayload = useCallback(
     (payload: Record<string, unknown>, updatedAt: string | null) => {
@@ -801,11 +859,11 @@ export function ExpenseInputModeFields({
       if (expenseDraftClearToken || continueDraftClearToken) {
         lastProcessedContinueDraftClearRef.current = expenseDraftClearToken || continueDraftClearToken;
       }
-      resetContinueDraftAfterSave();
+      resetExpenseDraftAfterSave();
       return;
     }
 
-    if (continueDraftReady) {
+    if (!expenseDraftReady || continueDraftReady) {
       return;
     }
 
@@ -910,9 +968,10 @@ export function ExpenseInputModeFields({
     defaultExpenseCategory,
     errorMessage,
     expenseDraftClearToken,
+    expenseDraftReady,
     expenseCategoryValues,
     projects,
-    resetContinueDraftAfterSave,
+    resetExpenseDraftAfterSave,
     successMessage,
     today,
   ]);
@@ -934,6 +993,11 @@ export function ExpenseInputModeFields({
         if (isCancelled) {
           return;
         }
+        draftServerUpdatedAtRef.current = draft?.updatedAt ?? null;
+        if (draft?.isCleared) {
+          resetExpenseDraftAfterSave();
+          return;
+        }
         if (draft?.payload) {
           applyExpenseDraftPayload(draft.payload, draft.updatedAt);
         }
@@ -952,7 +1016,53 @@ export function ExpenseInputModeFields({
     return () => {
       isCancelled = true;
     };
-  }, [applyExpenseDraftPayload, continueDraftClearToken, expenseDraftClearToken]);
+  }, [applyExpenseDraftPayload, continueDraftClearToken, expenseDraftClearToken, resetExpenseDraftAfterSave]);
+
+  useEffect(() => {
+    if (!expenseDraftReady) {
+      return;
+    }
+
+    let isChecking = false;
+    const checkServerDraftStatus = () => {
+      if (isChecking) {
+        return;
+      }
+      isChecking = true;
+      getExpenseInputDraftAction()
+        .then((draft) => {
+          if (
+            draft?.isCleared &&
+            toTimestamp(draft.updatedAt) > toTimestamp(draftServerUpdatedAtRef.current)
+          ) {
+            draftServerUpdatedAtRef.current = draft.updatedAt;
+            resetExpenseDraftAfterSave();
+            setExpenseDraftNotice("Draft akun dikosongkan karena data sudah disimpan di perangkat lain.");
+            setContinueDraftNotice("");
+          }
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          isChecking = false;
+        });
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        checkServerDraftStatus();
+      }
+    };
+
+    window.addEventListener("focus", checkServerDraftStatus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    const intervalId = window.setInterval(checkServerDraftStatus, 30000);
+
+    return () => {
+      window.removeEventListener("focus", checkServerDraftStatus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.clearInterval(intervalId);
+    };
+  }, [expenseDraftReady, resetExpenseDraftAfterSave]);
 
   useEffect(() => {
     if (!continueDraftReady) {
@@ -1110,14 +1220,39 @@ export function ExpenseInputModeFields({
       if (continueDraftClearInProgressRef.current) {
         return;
       }
-      if (!hasExpenseInputDraftContent(expenseDraftPayload, defaultExpenseCategory, today)) {
-        clearExpenseInputDraftAction().catch(() => undefined);
+      if (
+        !hasExpenseInputDraftContent(
+          expenseDraftPayload,
+          defaultExpenseCategory,
+          today,
+          initialProjectId ?? "",
+        )
+      ) {
+        clearExpenseInputDraftAction()
+          .then((result) => {
+            if (result?.updatedAt) {
+              draftServerUpdatedAtRef.current = result.updatedAt;
+            }
+          })
+          .catch(() => undefined);
         setExpenseDraftSavedAt(null);
         return;
       }
 
-      saveExpenseInputDraftAction(expenseDraftPayload)
-        .then(() => {
+      saveExpenseInputDraftAction({
+        ...expenseDraftPayload,
+        serverKnownUpdatedAt: draftServerUpdatedAtRef.current,
+      })
+        .then((result) => {
+          if (result?.isCleared) {
+            draftServerUpdatedAtRef.current = result.updatedAt ?? null;
+            resetExpenseDraftAfterSave();
+            setExpenseDraftNotice("Draft akun dikosongkan karena data sudah disimpan di perangkat lain.");
+            return;
+          }
+          if (result?.updatedAt) {
+            draftServerUpdatedAtRef.current = result.updatedAt;
+          }
           setExpenseDraftSavedAt(new Date().toISOString());
           setExpenseDraftNotice("");
         })
@@ -1127,12 +1262,19 @@ export function ExpenseInputModeFields({
     }, EXPENSE_INPUT_DRAFT_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timer);
-  }, [defaultExpenseCategory, expenseDraftPayload, expenseDraftReady, today]);
+  }, [
+    defaultExpenseCategory,
+    expenseDraftPayload,
+    expenseDraftReady,
+    initialProjectId,
+    resetExpenseDraftAfterSave,
+    today,
+  ]);
 
   const clearContinueDraft = useCallback(() => {
-    resetContinueDraftAfterSave();
+    resetExpenseDraftAfterSave();
     setContinueDraftNotice("Draft mode continue dihapus.");
-  }, [resetContinueDraftAfterSave]);
+  }, [resetExpenseDraftAfterSave]);
 
   const validateHokRows = useCallback(() => {
     const selectedRows = hokRows.filter((row) => row.selected);
@@ -1716,7 +1858,12 @@ export function ExpenseInputModeFields({
             {expenseDraftNotice ? ` ${expenseDraftNotice}` : ""}
           </p>
         </div>
-        {hasExpenseInputDraftContent(expenseDraftPayload, defaultExpenseCategory, today) || expenseDraftSavedAt ? (
+        {hasExpenseInputDraftContent(
+          expenseDraftPayload,
+          defaultExpenseCategory,
+          today,
+          initialProjectId ?? "",
+        ) || expenseDraftSavedAt ? (
           <button
             type="button"
             data-ui-button="true"

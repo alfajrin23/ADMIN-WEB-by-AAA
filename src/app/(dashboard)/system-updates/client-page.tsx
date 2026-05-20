@@ -3,6 +3,7 @@
 import { useTransition, useState } from "react";
 import { SystemUpdate } from "@/lib/types";
 import { saveSystemUpdateAction, deleteSystemUpdateAction } from "@/app/actions/system-updates.action";
+import { SuccessToast } from "@/components/success-toast";
 
 function formatDateLabel(dateRaw: string) {
   const date = new Date(dateRaw);
@@ -91,15 +92,10 @@ export function SystemUpdatesClient({ initialUpdates }: { initialUpdates: System
 
   return (
     <div className="space-y-4">
-      {/* Feedback messages */}
-      {successMsg && (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
-          ✓ {successMsg}
-        </div>
-      )}
+      <SuccessToast message={successMsg} />
       {errorMsg && (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
-          ✗ {errorMsg}
+          Gagal: {errorMsg}
         </div>
       )}
 

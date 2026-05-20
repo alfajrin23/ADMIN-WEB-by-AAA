@@ -6,6 +6,7 @@ import {
 } from "@/app/auth-actions";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { PermissionMatrix } from "@/components/permission-matrix";
+import { SuccessToast } from "@/components/success-toast";
 import {
   RolesIcon,
   SaveIcon,
@@ -37,14 +38,10 @@ export default async function RolesPage({ searchParams }: RolesPageProps) {
 
   return (
     <div className="space-y-4">
+      <SuccessToast message={success} />
       {error ? (
         <section className="panel border-rose-300 bg-rose-50 p-4">
           <p className="text-sm text-rose-700">{error}</p>
-        </section>
-      ) : null}
-      {success ? (
-        <section className="panel border-emerald-300 bg-emerald-50 p-4">
-          <p className="text-sm text-emerald-700">{success}</p>
         </section>
       ) : null}
 

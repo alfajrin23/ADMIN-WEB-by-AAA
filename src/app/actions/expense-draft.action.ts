@@ -25,16 +25,18 @@ export async function saveExpenseInputDraftAction(payload: unknown) {
   const actor = await requireAuthUser();
   const draftPayload = toDraftPayload(payload);
   if (!draftPayload) {
-    return;
+    return { ok: false };
   }
-  await saveInputDraftForActor({
+  const { serverKnownUpdatedAt, ...persistedPayload } = draftPayload;
+  return saveInputDraftForActor({
     actorId: actor.id,
     draftKey: EXPENSE_INPUT_DRAFT_KEY,
-    payload: draftPayload,
+    payload: persistedPayload,
+    knownUpdatedAt: typeof serverKnownUpdatedAt === "string" ? serverKnownUpdatedAt : null,
   });
 }
 
 export async function clearExpenseInputDraftAction() {
   const actor = await requireAuthUser();
-  await clearExpenseInputDraftForActor(actor.id);
+  return clearExpenseInputDraftForActor(actor.id);
 }

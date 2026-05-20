@@ -9,7 +9,6 @@ type SuccessToastProps = {
 };
 
 export function SuccessToast({ message, durationMs = 2800 }: SuccessToastProps) {
-  const [isOpen, setIsOpen] = useState(Boolean(message));
   const hasMessage = useMemo(() => message.trim().length > 0, [message]);
 
   useEffect(() => {
@@ -23,19 +22,33 @@ export function SuccessToast({ message, durationMs = 2800 }: SuccessToastProps) 
       const nextUrl = `${url.pathname}${url.search}${url.hash}`;
       window.history.replaceState({}, "", nextUrl);
     }
+  }, [hasMessage, message]);
 
+  if (!hasMessage) {
+    return null;
+  }
+
+  return <SuccessToastContent key={message} message={message} durationMs={durationMs} />;
+}
+
+function SuccessToastContent({ message, durationMs }: Required<SuccessToastProps>) {
+  const [isOpen, setIsOpen] = useState(true);
+
+  useEffect(() => {
     const timer = window.setTimeout(() => {
       setIsOpen(false);
     }, durationMs);
     return () => window.clearTimeout(timer);
-  }, [durationMs, hasMessage]);
+  }, [durationMs]);
 
-  if (!hasMessage || !isOpen) {
+  if (!isOpen) {
     return null;
   }
 
   return (
-    <div className="success-toast fixed right-4 top-4 z-[95] flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-800 shadow-lg">
+    <div
+      className="success-toast fixed right-4 top-4 z-[95] flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-800 shadow-lg"
+    >
       <span className="success-toast__check inline-flex h-8 w-8 items-center justify-center rounded-full bg-emerald-600 text-white">
         <CheckIcon />
       </span>

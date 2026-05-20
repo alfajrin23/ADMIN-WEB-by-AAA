@@ -88,14 +88,6 @@ async function replaceRolePermissions(
     return { ok: false as const, reason: "Supabase belum terkonfigurasi." };
   }
 
-  const deleteResult = await supabase.from("role_permissions").delete().eq("role_key", roleKey);
-  if (deleteResult.error) {
-    return {
-      ok: false as const,
-      reason: "Tabel role_permissions belum tersedia. Jalankan schema terbaru dulu.",
-    };
-  }
-
   const rows = PERMISSION_MODULES.map((moduleDef) => ({
     role_key: roleKey,
     module: moduleDef.value,
@@ -105,9 +97,15 @@ async function replaceRolePermissions(
     can_delete: permissions[moduleDef.value].delete,
     can_import: permissions[moduleDef.value].import,
   }));
-  const insertResult = await supabase.from("role_permissions").insert(rows);
+  const insertResult = await supabase
+    .from("role_permissions")
+    .upsert(rows, { onConflict: "role_key,module" });
   if (insertResult.error) {
-    return { ok: false as const, reason: "Gagal menyimpan permission role." };
+    return {
+      ok: false as const,
+      reason:
+        "Gagal menyimpan permission role. Pastikan tabel role_permissions dan unique key role_key,module sudah tersedia.",
+    };
   }
 
   return { ok: true as const };
@@ -508,27 +506,24 @@ export async function createRoleAction(formData: FormData) {
     redirect(toErrorRedirect(returnTo, "Supabase belum terkonfigurasi."));
   }
 
-  const existed = await supabase
+  const insertResult = await supabase
     .from("app_roles")
-    .select("role_key")
-    .eq("role_key", requestedRoleKey)
-    .maybeSingle();
-  if (!existed.error && existed.data?.role_key) {
-    redirect(toErrorRedirect(returnTo, "Key role sudah dipakai."));
-  }
-  if (existed.error) {
-    redirect(
-      toErrorRedirect(returnTo, "Tabel app_roles belum tersedia. Jalankan schema terbaru dulu."),
-    );
-  }
-
-  const insertResult = await supabase.from("app_roles").insert({
-    role_key: requestedRoleKey,
-    name,
-    description,
-  });
+    .insert({
+      role_key: requestedRoleKey,
+      name,
+      description,
+    });
   if (insertResult.error) {
-    redirect(toErrorRedirect(returnTo, "Gagal membuat role baru."));
+    const errorCode = typeof insertResult.error.code === "string" ? insertResult.error.code : "";
+    if (errorCode === "23505") {
+      redirect(toErrorRedirect(returnTo, "Key role sudah dipakai."));
+    }
+    redirect(
+      toErrorRedirect(
+        returnTo,
+        "Gagal membuat role baru. Pastikan tabel app_roles tersedia dan SUPABASE_SERVICE_ROLE_KEY sudah aktif.",
+      ),
+    );
   }
 
   const permissionResult = await replaceRolePermissions(requestedRoleKey, permissions);

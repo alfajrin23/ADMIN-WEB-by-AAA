@@ -171,10 +171,18 @@ export type DashboardData = {
     transactionCount: number;
     totalExpense: number;
     latestExpenseDate: string;
+    categoryTotals: CategoryTotal[];
   }>;
   projectCountByClient: Array<{
     clientName: string;
     count: number;
+  }>;
+  projectStatusByClient: Array<{
+    clientName: string;
+    total: number;
+    active: number;
+    completed: number;
+    delayed: number;
   }>;
   projectStatusTotals: Array<{
     status: ProjectStatus;

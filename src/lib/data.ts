@@ -954,6 +954,53 @@ function buildProjectCountByClient(projects: Project[]) {
   });
 }
 
+function buildProjectStatusByClient(projects: Project[]) {
+  const totals: Record<
+    string,
+    {
+      clientName: string;
+      total: number;
+      active: number;
+      completed: number;
+      delayed: number;
+    }
+  > = {};
+
+  for (const project of projects) {
+    const clientName = resolveClientScopeName(project.clientName);
+    const key = resolveClientScopeKey(project.clientName);
+    if (!totals[key]) {
+      totals[key] = {
+        clientName,
+        total: 0,
+        active: 0,
+        completed: 0,
+        delayed: 0,
+      };
+    }
+
+    const summary = totals[key];
+    summary.total += 1;
+    if (project.status === "aktif") {
+      summary.active += 1;
+    } else if (project.status === "selesai") {
+      summary.completed += 1;
+    } else if (project.status === "tertunda") {
+      summary.delayed += 1;
+    }
+  }
+
+  return Object.values(totals).sort((a, b) => {
+    if (b.active !== a.active) {
+      return b.active - a.active;
+    }
+    if (b.total !== a.total) {
+      return b.total - a.total;
+    }
+    return a.clientName.localeCompare(b.clientName, "id-ID");
+  });
+}
+
 function getProjectStatusRank(status: Project["status"] | undefined) {
   if (status === "selesai") {
     return 0;
@@ -983,6 +1030,7 @@ function buildProjectExpenseTotals(expenses: ExpenseEntry[], projects: Project[]
       transactionCount: number;
       totalExpense: number;
       latestExpenseDate: string;
+      totalsByCategory: Map<string, number>;
     }
   > = {};
 
@@ -1002,17 +1050,49 @@ function buildProjectExpenseTotals(expenses: ExpenseEntry[], projects: Project[]
         transactionCount: 0,
         totalExpense: 0,
         latestExpenseDate: expenseDate,
+        totalsByCategory: new Map<string, number>(),
       };
     }
 
     totals[key].transactionCount += 1;
     totals[key].totalExpense += expense.amount;
+    const category = resolveSummaryCostCategory({
+      category: expense.category,
+      description: expense.description,
+      usageInfo: expense.usageInfo,
+    });
+    if (category) {
+      totals[key].totalsByCategory.set(
+        category,
+        (totals[key].totalsByCategory.get(category) ?? 0) + expense.amount,
+      );
+    }
     if (expenseDate > totals[key].latestExpenseDate) {
       totals[key].latestExpenseDate = expenseDate;
     }
   }
 
-  return Object.values(totals).sort((a, b) => {
+  return Object.values(totals).map((item) => ({
+    projectId: item.projectId,
+    projectName: item.projectName,
+    clientName: item.clientName,
+    projectStatus: item.projectStatus,
+    transactionCount: item.transactionCount,
+    totalExpense: item.totalExpense,
+    latestExpenseDate: item.latestExpenseDate,
+    categoryTotals: Array.from(item.totalsByCategory.entries())
+      .map(([category, total]) => ({
+        category,
+        label: getCostCategoryLabel(category),
+        total,
+      }))
+      .sort((a, b) => {
+        if (b.total !== a.total) {
+          return b.total - a.total;
+        }
+        return a.label.localeCompare(b.label, "id-ID");
+      }),
+  })).sort((a, b) => {
     const statusRankDiff = getProjectStatusRank(a.projectStatus) - getProjectStatusRank(b.projectStatus);
     if (statusRankDiff !== 0) {
       return statusRankDiff;
@@ -3091,6 +3171,7 @@ function buildDashboardDataFromCollections(input: {
     recentExpenses,
     projectExpenseTotals: buildProjectExpenseTotals(visibleExpenses, input.projects),
     projectCountByClient: buildProjectCountByClient(input.projects),
+    projectStatusByClient: buildProjectStatusByClient(input.projects),
     projectStatusTotals,
     attendanceTrend: buildAttendanceTrend(input.attendance),
     expenseTrend: buildExpenseTrend(visibleExpenses),

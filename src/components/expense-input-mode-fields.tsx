@@ -665,11 +665,17 @@ export function ExpenseInputModeFields({
     setContinueProjectResetSignal((prev) => prev + 1);
   }, [defaultExpenseCategory, today]);
 
-  const resetExpenseDraftAfterSave = useCallback(() => {
-    continueDraftClearInProgressRef.current = true;
+  const clearStaleLocalDraftCache = useCallback(() => {
     window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
     window.sessionStorage.removeItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY);
     window.sessionStorage.removeItem(EXPENSE_DRAFT_PENDING_CLEAR_KEY);
+    setContinueDraftSavedAt(null);
+    setExpenseDraftSavedAt(null);
+  }, []);
+
+  const resetExpenseDraftAfterSave = useCallback(() => {
+    continueDraftClearInProgressRef.current = true;
+    clearStaleLocalDraftCache();
     setMode(STANDARD_MODE);
     setStandardProjectId(initialProjectId ?? "");
     setStandardAdditionalProjectIds([]);
@@ -706,7 +712,14 @@ export function ExpenseInputModeFields({
     setExpenseDraftNotice("");
     setContinueDraftReady(true);
     setContinueDraftClearVersion((prev) => prev + 1);
-  }, [defaultExpenseCategory, hokProjectPresets, initialProjectId, resetContinueDraft, today]);
+  }, [
+    clearStaleLocalDraftCache,
+    defaultExpenseCategory,
+    hokProjectPresets,
+    initialProjectId,
+    resetContinueDraft,
+    today,
+  ]);
 
   const applyExpenseDraftPayload = useCallback(
     (payload: Record<string, unknown>, updatedAt: string | null) => {
@@ -995,7 +1008,7 @@ export function ExpenseInputModeFields({
         }
         draftServerUpdatedAtRef.current = draft?.updatedAt ?? null;
         if (draft?.isCleared) {
-          resetExpenseDraftAfterSave();
+          clearStaleLocalDraftCache();
           return;
         }
         if (draft?.payload) {
@@ -1016,7 +1029,12 @@ export function ExpenseInputModeFields({
     return () => {
       isCancelled = true;
     };
-  }, [applyExpenseDraftPayload, continueDraftClearToken, expenseDraftClearToken, resetExpenseDraftAfterSave]);
+  }, [
+    applyExpenseDraftPayload,
+    clearStaleLocalDraftCache,
+    continueDraftClearToken,
+    expenseDraftClearToken,
+  ]);
 
   useEffect(() => {
     if (!expenseDraftReady) {

@@ -897,6 +897,11 @@ function getErrorText(error: unknown) {
     .toLowerCase();
 }
 
+function isKmpMaterialAmountConstraintError(error: unknown) {
+  const text = getErrorText(error);
+  return text.includes("amount") && (text.includes("check") || text.includes("violates"));
+}
+
 function getKmpMaterialMutationErrorMessage(error: unknown) {
   const text = getErrorText(error);
   if (
@@ -906,7 +911,7 @@ function getKmpMaterialMutationErrorMessage(error: unknown) {
     return "Data project desa pada checklist sudah tidak cocok dengan database. Muat ulang halaman lalu pilih material lagi.";
   }
 
-  if (text.includes("amount") && (text.includes("check") || text.includes("violates"))) {
+  if (isKmpMaterialAmountConstraintError(error)) {
     return "Database masih menolak checklist tanpa nominal. Jalankan schema Supabase terbaru agar amount 0 diperbolehkan.";
   }
 
@@ -985,6 +990,15 @@ function getUnavailableProjectMessage(rows: KmpMaterialChecklistRow[], unavailab
   const preview = names.slice(0, 3).join(", ");
   const suffix = names.length > 3 ? ` dan ${names.length - 3} desa lain` : "";
   return `Checklist belum disimpan karena data project desa ${preview}${suffix} sudah tidak tersedia. Muat ulang halaman lalu coba lagi.`;
+}
+
+function getKmpMaterialSystemAmount(materialKey: string) {
+  const rule = getKmpCianjurMaterialRule(materialKey);
+  if (!rule) {
+    return 0;
+  }
+
+  return getKmpCianjurMaterialAmountOptions(rule)[0]?.amount ?? 0;
 }
 
 async function createKmpMaterialChecklistEntries(
@@ -1148,6 +1162,7 @@ async function createKmpMaterialChecklistEntries(
       expense_date: basePayload.expense_date,
     };
   });
+  let savedMutationRows = mutationRows;
 
   if (activeDataSource === "excel") {
     for (const row of mutationRows) {
@@ -1182,6 +1197,46 @@ async function createKmpMaterialChecklistEntries(
       onConflict: "id",
     });
     if (error) {
+      console.warn("[kmp-material] gagal menyimpan checklist material.", error.message);
+      const shouldRetryWithSystemAmount =
+        isKmpMaterialAmountConstraintError(error) &&
+        mutationRows.some((row) => Number(row.amount) <= 0);
+      if (shouldRetryWithSystemAmount) {
+        const fallbackMutationRows = mutationRows.map((mutationRow, index) => {
+          if (Number(mutationRow.amount) > 0) {
+            return mutationRow;
+          }
+
+          const sourceRow = rows[index];
+          const fallbackAmount = getKmpMaterialSystemAmount(sourceRow?.materialKey ?? "");
+          if (fallbackAmount <= 0) {
+            return mutationRow;
+          }
+
+          return {
+            ...mutationRow,
+            usage_info: `Checklist Material KMP Cianjur - ${sourceRow?.materialLabel ?? mutationRow.description} - nominal sistem`,
+            amount: fallbackAmount,
+          };
+        });
+        const { error: retryError } = await supabase.from("project_expenses").upsert(fallbackMutationRows, {
+          onConflict: "id",
+        });
+        if (!retryError) {
+          savedMutationRows = fallbackMutationRows;
+        } else {
+          console.warn("[kmp-material] retry nominal sistem gagal.", retryError.message);
+          if (errorReturnTo) {
+            redirect(withReturnMessage(errorReturnTo, "error", getKmpMaterialMutationErrorMessage(retryError)));
+          }
+          return;
+        }
+      } else if (errorReturnTo) {
+        redirect(withReturnMessage(errorReturnTo, "error", getKmpMaterialMutationErrorMessage(error)));
+        return;
+      }
+    }
+    if (error && savedMutationRows === mutationRows) {
       if (errorReturnTo) {
         redirect(withReturnMessage(errorReturnTo, "error", getKmpMaterialMutationErrorMessage(error)));
       }
@@ -1242,14 +1297,14 @@ async function createKmpMaterialChecklistEntries(
     payload: {
       expense_mode: "kmp_material_check",
       ...(activeDataSource === "supabase" || activeDataSource === "firebase"
-        ? { expense_ids: mutationRows.map((row) => row.id) }
+        ? { expense_ids: savedMutationRows.map((row) => row.id) }
         : {}),
       project_ids: rows.map((row) => row.projectId),
       project_names: rows.map((row) => row.projectName || row.projectId),
       material_keys: rows.map((row) => row.materialKey),
       material_names: rows.map((row) => row.materialName),
       expense_date: expenseDate,
-      total_amount: rows.reduce((sum, row) => sum + row.amount, 0),
+      total_amount: savedMutationRows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0),
     },
   });
   await clearExpenseInputDraftForActor(actor.id);

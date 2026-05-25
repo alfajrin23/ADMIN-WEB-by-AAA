@@ -85,6 +85,10 @@ function getDefaultSystemAmount(rule: KmpMaterialChecklistRule | undefined) {
   return amount && amount > 0 ? String(amount) : "";
 }
 
+function getDefaultSelectedAmountMode(rule: KmpMaterialChecklistRule | undefined): AmountMode {
+  return getDefaultSystemAmount(rule) ? "system" : "none";
+}
+
 function createInitialMaterialDraft(label: string, rule: KmpMaterialChecklistRule | undefined): MaterialDraft {
   return {
     selected: false,
@@ -190,7 +194,11 @@ export function KmpMaterialMonitorPanel({
         const rule = materialRuleByLabel.get(label);
         const key = getMaterialDraftKey(project.projectId, label);
         const current = next[key] ?? createInitialMaterialDraft(label, rule);
-        next[key] = { ...current, selected: true };
+        next[key] = {
+          ...current,
+          selected: true,
+          amountMode: current.amountMode === "none" ? getDefaultSelectedAmountMode(rule) : current.amountMode,
+        };
       }
       return next;
     });
@@ -612,12 +620,17 @@ export function KmpMaterialMonitorPanel({
                                     type="checkbox"
                                     checked={draft.selected}
                                     disabled={isDisabled}
-                                    onChange={(event) =>
+                                    onChange={(event) => {
+                                      const checked = event.currentTarget.checked;
                                       updateMaterialDraft(project.projectId, label, (current) => ({
                                         ...current,
-                                        selected: event.currentTarget.checked,
-                                      }))
-                                    }
+                                        selected: checked,
+                                        amountMode:
+                                          checked && current.amountMode === "none"
+                                            ? getDefaultSelectedAmountMode(rule)
+                                            : current.amountMode,
+                                      }));
+                                    }}
                                     className="mt-2 h-4 w-4"
                                     aria-label={`Pilih ${label}`}
                                   />

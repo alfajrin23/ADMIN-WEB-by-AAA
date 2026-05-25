@@ -1011,6 +1011,9 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                   completeProjectCount={kmpMaterialReport.completeProjectCount}
                   incompleteProjectCount={kmpMaterialReport.incompleteProjectCount}
                   projects={kmpMaterialMonitorProjects}
+                  canEdit={canEdit}
+                  returnTo={openKmpMaterialReportHref}
+                  today={today}
                 />
               )
             ) : activeModal === "project-new" ? (

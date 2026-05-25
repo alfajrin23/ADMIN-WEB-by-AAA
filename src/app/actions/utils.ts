@@ -511,7 +511,7 @@ export function getExpenseSubmissionToken(formData: FormData) {
   return getString(formData, "expense_submission_token") || randomUUID();
 }
 export function createExpenseMutationId(input: {
-  mode: "standard" | "hok_kmp_cianjur" | "scraper";
+  mode: "standard" | "hok_kmp_cianjur" | "scraper" | "kmp_material_check";
   submissionToken: string;
   projectId: string;
   rowKey?: string;

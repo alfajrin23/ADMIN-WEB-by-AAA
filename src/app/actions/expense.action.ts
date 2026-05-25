@@ -61,7 +61,10 @@ import {
   updateExcelProject,
 } from "@/lib/excel-db";
 import { getFirestoreServerClient } from "@/lib/firebase";
-import { getCurrentJakartaDate } from "@/lib/date";
+import {
+  getKmpCianjurMaterialAmountOptions,
+  getKmpCianjurMaterialRule,
+} from "@/lib/kmp-materials";
 import { activeDataSource } from "@/lib/storage";
 import {
   getSupabaseAttendanceSelect,
@@ -83,6 +86,10 @@ export async function createExpenseAction(formData: FormData) {
   }
   if (getString(formData, "expense_input_mode") === "continue") {
     await createContinueExpenseEntries(actor, formData, successReturnTo, errorReturnTo);
+    return;
+  }
+  if (getString(formData, "expense_input_mode") === "kmp_material_check") {
+    await createKmpMaterialChecklistEntries(actor, formData, successReturnTo, errorReturnTo);
     return;
   }
 
@@ -818,6 +825,298 @@ async function createContinueExpenseEntries(
         params.set("success", `${entries.length} biaya berhasil disimpan (Mode Continue).`);
         params.set("expense_draft_clear", clearToken);
         params.set("expense_continue_draft_clear", clearToken);
+        params.set("expense_action_token", randomUUID());
+      }),
+    );
+  }
+}
+
+type KmpMaterialChecklistEntryJson = {
+  projectId?: unknown;
+  projectName?: unknown;
+  materialKey?: unknown;
+  materialName?: unknown;
+  amountMode?: unknown;
+  systemAmount?: unknown;
+  manualAmount?: unknown;
+};
+
+function parseNonNegativeAmount(value: unknown) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value >= 0 ? Math.floor(Math.abs(value)) : 0;
+  }
+
+  if (typeof value !== "string") {
+    return 0;
+  }
+
+  const normalizedDigits = value.replace(/[^\d]/g, "");
+  if (!normalizedDigits) {
+    return 0;
+  }
+
+  const parsed = Number(normalizedDigits);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function getStringField(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+async function createKmpMaterialChecklistEntries(
+  actor: Awaited<ReturnType<typeof requireEditorActionUser>>,
+  formData: FormData,
+  successReturnTo: string | null,
+  errorReturnTo: string | null,
+) {
+  const rawRows = getString(formData, "kmp_material_rows_json");
+  let parsedRows: unknown;
+  try {
+    parsedRows = rawRows ? JSON.parse(rawRows) : [];
+  } catch {
+    if (errorReturnTo) {
+      redirect(withReturnMessage(errorReturnTo, "error", "Data checklist material tidak valid."));
+    }
+    return;
+  }
+
+  if (!Array.isArray(parsedRows) || parsedRows.length === 0) {
+    if (errorReturnTo) {
+      redirect(withReturnMessage(errorReturnTo, "error", "Pilih minimal satu material untuk disimpan."));
+    }
+    return;
+  }
+
+  const invalidManualAmountLabels: string[] = [];
+  const invalidRows: string[] = [];
+  const rowMap = new Map<string, {
+    projectId: string;
+    projectName: string;
+    materialKey: string;
+    materialLabel: string;
+    materialName: string;
+    amountMode: "none" | "system" | "manual";
+    amount: number;
+  }>();
+
+  for (const item of parsedRows) {
+    if (!item || typeof item !== "object") {
+      invalidRows.push("Baris kosong");
+      continue;
+    }
+
+    const entry = item as KmpMaterialChecklistEntryJson;
+    const projectId = getStringField(entry.projectId);
+    const projectName = getStringField(entry.projectName);
+    const materialKey = getStringField(entry.materialKey);
+    const rule = getKmpCianjurMaterialRule(materialKey);
+    if (!projectId || !rule) {
+      invalidRows.push(projectName || materialKey || projectId || "Baris material");
+      continue;
+    }
+
+    const rawAmountMode = getStringField(entry.amountMode);
+    const amountMode: "none" | "system" | "manual" =
+      rawAmountMode === "system" || rawAmountMode === "manual" ? rawAmountMode : "none";
+    const materialName = getStringField(entry.materialName) || rule.label;
+    let amount = 0;
+
+    if (amountMode === "system") {
+      const options = getKmpCianjurMaterialAmountOptions(rule);
+      const requestedSystemAmount = parseNonNegativeAmount(entry.systemAmount);
+      const selectedOption =
+        options.find((option) => option.amount === requestedSystemAmount) ?? options[0];
+      amount = selectedOption?.amount ?? 0;
+    } else if (amountMode === "manual") {
+      amount = parseNonNegativeAmount(entry.manualAmount);
+      if (amount <= 0) {
+        invalidManualAmountLabels.push(`${projectName || projectId} - ${materialName}`);
+        continue;
+      }
+    }
+
+    rowMap.set(`${projectId}:${materialKey}`, {
+      projectId,
+      projectName,
+      materialKey,
+      materialLabel: rule.label,
+      materialName,
+      amountMode,
+      amount,
+    });
+  }
+
+  if (invalidRows.length > 0) {
+    if (errorReturnTo) {
+      redirect(
+        withReturnMessage(
+          errorReturnTo,
+          "error",
+          `Ada ${invalidRows.length} baris checklist material yang tidak valid.`,
+        ),
+      );
+    }
+    return;
+  }
+
+  if (invalidManualAmountLabels.length > 0) {
+    if (errorReturnTo) {
+      redirect(
+        withReturnMessage(
+          errorReturnTo,
+          "error",
+          `Nominal manual wajib lebih dari 0 untuk ${invalidManualAmountLabels.length} material.`,
+        ),
+      );
+    }
+    return;
+  }
+
+  const rows = Array.from(rowMap.values());
+  if (rows.length === 0) {
+    if (errorReturnTo) {
+      redirect(withReturnMessage(errorReturnTo, "error", "Tidak ada material valid untuk disimpan."));
+    }
+    return;
+  }
+
+  const expenseDate = getString(formData, "expense_date") || new Date().toISOString().slice(0, 10);
+  const basePayload = {
+    category: "material",
+    specialist_type: null,
+    requester_name: "CEK MATERIAL KMP CIANJUR",
+    recipient_name: null,
+    quantity: 1,
+    unit_label: null,
+    unit_price: 0,
+    expense_date: expenseDate,
+  };
+  const mutationRows = rows.map((row) => {
+    const usageInfoPrefix = `Checklist Material KMP Cianjur - ${row.materialLabel}`;
+    return {
+      id: createExpenseMutationId({
+        mode: "kmp_material_check",
+        submissionToken: "kmp-material-check",
+        projectId: row.projectId,
+        rowKey: row.materialKey,
+      }),
+      project_id: row.projectId,
+      category: basePayload.category,
+      specialist_type: basePayload.specialist_type,
+      requester_name: basePayload.requester_name,
+      description: row.materialName,
+      recipient_name: basePayload.recipient_name,
+      quantity: basePayload.quantity,
+      unit_label: basePayload.unit_label,
+      usage_info:
+        row.amountMode === "system"
+          ? `${usageInfoPrefix} - nominal sistem`
+          : row.amountMode === "manual"
+            ? `${usageInfoPrefix} - nominal manual`
+            : `${usageInfoPrefix} - tanpa nominal`,
+      unit_price: basePayload.unit_price,
+      amount: row.amount,
+      expense_date: basePayload.expense_date,
+    };
+  });
+
+  if (activeDataSource === "excel") {
+    for (const row of mutationRows) {
+      insertExcelExpense({
+        project_id: row.project_id,
+        category: row.category as Parameters<typeof insertExcelExpense>[0]["category"],
+        specialist_type: row.specialist_type,
+        requester_name: row.requester_name,
+        description: row.description,
+        recipient_name: row.recipient_name,
+        quantity: row.quantity,
+        unit_label: row.unit_label,
+        usage_info: row.usage_info,
+        unit_price: row.unit_price,
+        amount: row.amount,
+        expense_date: row.expense_date,
+      });
+    }
+  } else if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return;
+    }
+    if (!ensureSupabaseWriteConfigured(errorReturnTo ?? successReturnTo, "Gagal menyimpan checklist material.")) {
+      return;
+    }
+
+    const { error } = await supabase.from("project_expenses").upsert(mutationRows, {
+      onConflict: "id",
+    });
+    if (error) {
+      if (errorReturnTo) {
+        redirect(withReturnMessage(errorReturnTo, "error", getSupabaseMutationErrorMessage("Gagal menyimpan checklist material. Silakan coba lagi.")));
+      }
+      return;
+    }
+  } else if (activeDataSource === "firebase") {
+    const firestore = getFirestoreServerClient();
+    if (!firestore) {
+      return;
+    }
+    await runFirebaseWriteSafely(async () => {
+      const batch = firestore.batch();
+      for (const row of mutationRows) {
+        batch.set(
+          firestore.collection("project_expenses").doc(row.id),
+          {
+            id: row.id,
+            project_id: row.project_id,
+            category: row.category,
+            specialist_type: row.specialist_type,
+            requester_name: row.requester_name,
+            description: row.description,
+            recipient_name: row.recipient_name,
+            quantity: row.quantity,
+            unit_label: row.unit_label,
+            usage_info: row.usage_info,
+            unit_price: row.unit_price,
+            amount: row.amount,
+            expense_date: row.expense_date,
+            created_at: createTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+      await batch.commit();
+    });
+  } else {
+    return;
+  }
+
+  revalidateProjectPages();
+  revalidateExpenseCache();
+  revalidatePath("/logs");
+  queueActivityLog({
+    actor,
+    actionType: "create",
+    module: "expense",
+    description: `Menyimpan ${rows.length} checklist material KMP Cianjur.`,
+    payload: {
+      expense_mode: "kmp_material_check",
+      ...(activeDataSource === "supabase" || activeDataSource === "firebase"
+        ? { expense_ids: mutationRows.map((row) => row.id) }
+        : {}),
+      project_ids: rows.map((row) => row.projectId),
+      project_names: rows.map((row) => row.projectName || row.projectId),
+      material_keys: rows.map((row) => row.materialKey),
+      material_names: rows.map((row) => row.materialName),
+      expense_date: expenseDate,
+      total_amount: rows.reduce((sum, row) => sum + row.amount, 0),
+    },
+  });
+  await clearExpenseInputDraftForActor(actor.id);
+  if (successReturnTo) {
+    redirect(
+      withReturnParams(successReturnTo, (params) => {
+        params.delete("error");
+        params.set("success", `${rows.length} checklist material berhasil disimpan.`);
         params.set("expense_action_token", randomUUID());
       }),
     );

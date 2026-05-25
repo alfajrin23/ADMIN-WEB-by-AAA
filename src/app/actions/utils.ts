@@ -1232,6 +1232,7 @@ export async function createHokExpenseEntries(
         params.set("success", `HOK berhasil disimpan ke ${rows.length} project.`);
         params.set("expense_draft_clear", randomUUID());
         params.set("expense_action_token", randomUUID());
+        params.set("expense_saved_mode", "hok_kmp_cianjur");
       }),
     );
   }
@@ -1454,6 +1455,7 @@ export async function createScraperExpenseEntries(
         params.set("success", `Data scraper berhasil disimpan ke ${rows.length} project.`);
         params.set("expense_draft_clear", randomUUID());
         params.set("expense_action_token", randomUUID());
+        params.set("expense_saved_mode", "scraper");
       }),
     );
   }

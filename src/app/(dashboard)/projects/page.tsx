@@ -1092,7 +1092,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 action={createExpenseAction}
                 className="mt-4 space-y-3"
               >
-                <input type="hidden" name="return_to" value={closeModalHref} />
+                <input type="hidden" name="return_to" value={openExpenseModalHref} />
                 <input type="hidden" name="error_return_to" value={expenseModalErrorReturnHref} />
                 <ExpenseInputModeFields
                   projects={projects}

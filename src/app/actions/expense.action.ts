@@ -239,6 +239,7 @@ export async function createExpenseAction(formData: FormData) {
       params.set("success", successMessage);
       params.set("expense_draft_clear", randomUUID());
       params.set("expense_action_token", randomUUID());
+      params.set("expense_saved_mode", "standard");
     }),
   );
 }
@@ -826,6 +827,7 @@ async function createContinueExpenseEntries(
         params.set("expense_draft_clear", clearToken);
         params.set("expense_continue_draft_clear", clearToken);
         params.set("expense_action_token", randomUUID());
+        params.set("expense_saved_mode", "continue");
       }),
     );
   }

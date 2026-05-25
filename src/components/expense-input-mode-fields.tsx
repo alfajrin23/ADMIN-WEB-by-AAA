@@ -500,6 +500,8 @@ export function ExpenseInputModeFields({
   formId = "expense-modal-form",
 }: ExpenseInputModeFieldsProps) {
   const searchParams = useSearchParams();
+  const expenseSavedModeParam = searchParams.get("expense_saved_mode")?.trim() ?? "";
+  const expenseSavedMode = expenseSavedModeParam ? resolveDraftMode(expenseSavedModeParam) : null;
   const rootRef = useRef<HTMLDivElement>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const hokExcelInputRef = useRef<HTMLInputElement>(null);
@@ -515,7 +517,7 @@ export function ExpenseInputModeFields({
   const serverDraftIsClearedRef = useRef(false);
   const hasUserEditedDraftRef = useRef(false);
   const [submissionToken] = useState(createExpenseSubmissionToken);
-  const [mode, setMode] = useState<ExpenseInputMode>(STANDARD_MODE);
+  const [mode, setMode] = useState<ExpenseInputMode>(() => expenseSavedMode ?? STANDARD_MODE);
   const [hokQuery, setHokQuery] = useState("");
   const [hokRows, setHokRows] = useState<HokProjectRow[]>(() => createInitialHokRows(hokProjectPresets));
   const [hokError, setHokError] = useState("");
@@ -679,12 +681,14 @@ export function ExpenseInputModeFields({
     hasUserEditedDraftRef.current = true;
   }, []);
 
-  const resetExpenseDraftAfterSave = useCallback(() => {
+  const resetExpenseDraftAfterSave = useCallback((nextMode?: ExpenseInputMode) => {
     continueDraftClearInProgressRef.current = true;
     hasUserEditedDraftRef.current = false;
     serverDraftIsClearedRef.current = true;
     clearStaleLocalDraftCache();
-    setMode(STANDARD_MODE);
+    if (nextMode) {
+      setMode(nextMode);
+    }
     setStandardProjectId(initialProjectId ?? "");
     setStandardAdditionalProjectIds([]);
     setStandardCategory(defaultExpenseCategory);
@@ -882,7 +886,7 @@ export function ExpenseInputModeFields({
       if (expenseDraftClearToken || continueDraftClearToken) {
         lastProcessedContinueDraftClearRef.current = expenseDraftClearToken || continueDraftClearToken;
       }
-      resetExpenseDraftAfterSave();
+      resetExpenseDraftAfterSave(expenseSavedMode ?? mode);
       return;
     }
 
@@ -992,7 +996,9 @@ export function ExpenseInputModeFields({
     errorMessage,
     expenseDraftClearToken,
     expenseDraftReady,
+    expenseSavedMode,
     expenseCategoryValues,
+    mode,
     projects,
     resetExpenseDraftAfterSave,
     successMessage,
@@ -1072,7 +1078,7 @@ export function ExpenseInputModeFields({
               setContinueDraftNotice("");
               return;
             }
-            resetExpenseDraftAfterSave();
+            resetExpenseDraftAfterSave(mode);
             setExpenseDraftNotice("Draft akun dikosongkan karena data sudah disimpan di perangkat lain.");
             setContinueDraftNotice("");
           }
@@ -1098,7 +1104,7 @@ export function ExpenseInputModeFields({
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.clearInterval(intervalId);
     };
-  }, [clearStaleLocalDraftCache, expenseDraftReady, resetExpenseDraftAfterSave]);
+  }, [clearStaleLocalDraftCache, expenseDraftReady, mode, resetExpenseDraftAfterSave]);
 
   useEffect(() => {
     if (!continueDraftReady) {
@@ -1317,9 +1323,9 @@ export function ExpenseInputModeFields({
   ]);
 
   const clearContinueDraft = useCallback(() => {
-    resetExpenseDraftAfterSave();
+    resetExpenseDraftAfterSave(mode);
     setContinueDraftNotice("Draft mode continue dihapus.");
-  }, [resetExpenseDraftAfterSave]);
+  }, [mode, resetExpenseDraftAfterSave]);
 
   const validateHokRows = useCallback(() => {
     const selectedRows = hokRows.filter((row) => row.selected);

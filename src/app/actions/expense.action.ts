@@ -841,6 +841,19 @@ type KmpMaterialChecklistEntryJson = {
   manualAmount?: unknown;
 };
 
+type KmpMaterialChecklistRow = {
+  projectId: string;
+  projectName: string;
+  materialKey: string;
+  materialLabel: string;
+  materialName: string;
+  amountMode: "none" | "system" | "manual";
+  amount: number;
+};
+
+const SUPABASE_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function parseNonNegativeAmount(value: unknown) {
   if (typeof value === "number") {
     return Number.isFinite(value) && value >= 0 ? Math.floor(Math.abs(value)) : 0;
@@ -861,6 +874,117 @@ function parseNonNegativeAmount(value: unknown) {
 
 function getStringField(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function resolveChecklistExpenseDate(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : new Date().toISOString().slice(0, 10);
+}
+
+function getErrorText(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return "";
+  }
+
+  const withMessage = error as {
+    code?: unknown;
+    message?: unknown;
+    details?: unknown;
+    hint?: unknown;
+  };
+  return [withMessage.code, withMessage.message, withMessage.details, withMessage.hint]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .toLowerCase();
+}
+
+function getKmpMaterialMutationErrorMessage(error: unknown) {
+  const text = getErrorText(error);
+  if (
+    text.includes("project_id") &&
+    (text.includes("uuid") || text.includes("foreign key") || text.includes("violates"))
+  ) {
+    return "Data project desa pada checklist sudah tidak cocok dengan database. Muat ulang halaman lalu pilih material lagi.";
+  }
+
+  if (text.includes("amount") && (text.includes("check") || text.includes("violates"))) {
+    return "Database masih menolak checklist tanpa nominal. Jalankan schema Supabase terbaru agar amount 0 diperbolehkan.";
+  }
+
+  if (text.includes("row-level security") || text.includes("rls")) {
+    return getSupabaseMutationErrorMessage("Supabase menolak penulisan checklist material. Pastikan service role key sudah benar.");
+  }
+
+  return getSupabaseMutationErrorMessage("Gagal menyimpan checklist material. Silakan coba lagi.");
+}
+
+async function findUnavailableKmpMaterialProjectIds(projectIds: string[]) {
+  const uniqueProjectIds = Array.from(new Set(projectIds.map((projectId) => projectId.trim()).filter(Boolean)));
+  if (uniqueProjectIds.length === 0) {
+    return [];
+  }
+
+  if (activeDataSource === "excel") {
+    const existingIds = new Set(readExcelDatabase().projects.map((project) => project.id));
+    return uniqueProjectIds.filter((projectId) => !existingIds.has(projectId));
+  }
+
+  if (activeDataSource === "supabase") {
+    const invalidUuidIds = uniqueProjectIds.filter((projectId) => !SUPABASE_UUID_PATTERN.test(projectId));
+    if (invalidUuidIds.length > 0) {
+      return invalidUuidIds;
+    }
+
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return [];
+    }
+
+    const existingIds = new Set<string>();
+    for (const chunk of chunkArray(uniqueProjectIds, 100)) {
+      const { data, error } = await supabase.from("projects").select("id").in("id", chunk);
+      if (error) {
+        console.warn("[kmp-material] gagal validasi project checklist.", error.message);
+        return [];
+      }
+      for (const row of data ?? []) {
+        existingIds.add(String(row.id ?? ""));
+      }
+    }
+    return uniqueProjectIds.filter((projectId) => !existingIds.has(projectId));
+  }
+
+  if (activeDataSource === "firebase") {
+    const firestore = getFirestoreServerClient();
+    if (!firestore) {
+      return [];
+    }
+
+    const existingIds = new Set<string>();
+    for (const chunk of chunkArray(uniqueProjectIds, 30)) {
+      const snapshot = await firestore.collection("projects").where("id", "in", chunk).get();
+      for (const doc of snapshot.docs) {
+        const data = doc.data();
+        existingIds.add(String(data.id ?? doc.id));
+      }
+    }
+    return uniqueProjectIds.filter((projectId) => !existingIds.has(projectId));
+  }
+
+  return [];
+}
+
+function getUnavailableProjectMessage(rows: KmpMaterialChecklistRow[], unavailableProjectIds: string[]) {
+  const unavailableSet = new Set(unavailableProjectIds);
+  const names = Array.from(
+    new Set(
+      rows
+        .filter((row) => unavailableSet.has(row.projectId))
+        .map((row) => row.projectName || row.projectId),
+    ),
+  );
+  const preview = names.slice(0, 3).join(", ");
+  const suffix = names.length > 3 ? ` dan ${names.length - 3} desa lain` : "";
+  return `Checklist belum disimpan karena data project desa ${preview}${suffix} sudah tidak tersedia. Muat ulang halaman lalu coba lagi.`;
 }
 
 async function createKmpMaterialChecklistEntries(
@@ -889,15 +1013,7 @@ async function createKmpMaterialChecklistEntries(
 
   const invalidManualAmountLabels: string[] = [];
   const invalidRows: string[] = [];
-  const rowMap = new Map<string, {
-    projectId: string;
-    projectName: string;
-    materialKey: string;
-    materialLabel: string;
-    materialName: string;
-    amountMode: "none" | "system" | "manual";
-    amount: number;
-  }>();
+  const rowMap = new Map<string, KmpMaterialChecklistRow>();
 
   for (const item of parsedRows) {
     if (!item || typeof item !== "object") {
@@ -980,7 +1096,20 @@ async function createKmpMaterialChecklistEntries(
     return;
   }
 
-  const expenseDate = getString(formData, "expense_date") || new Date().toISOString().slice(0, 10);
+  const unavailableProjectIds = await findUnavailableKmpMaterialProjectIds(
+    rows.map((row) => row.projectId),
+  );
+  if (unavailableProjectIds.length > 0) {
+    revalidateProjectPages();
+    revalidateProjectCache();
+    revalidateExpenseCache();
+    if (errorReturnTo) {
+      redirect(withReturnMessage(errorReturnTo, "error", getUnavailableProjectMessage(rows, unavailableProjectIds)));
+    }
+    return;
+  }
+
+  const expenseDate = resolveChecklistExpenseDate(getString(formData, "expense_date"));
   const basePayload = {
     category: "material",
     specialist_type: null,
@@ -1040,6 +1169,9 @@ async function createKmpMaterialChecklistEntries(
   } else if (activeDataSource === "supabase") {
     const supabase = getSupabaseServerClient();
     if (!supabase) {
+      if (errorReturnTo) {
+        redirect(withReturnMessage(errorReturnTo, "error", "Supabase belum terkonfigurasi untuk menyimpan checklist material."));
+      }
       return;
     }
     if (!ensureSupabaseWriteConfigured(errorReturnTo ?? successReturnTo, "Gagal menyimpan checklist material.")) {
@@ -1051,7 +1183,7 @@ async function createKmpMaterialChecklistEntries(
     });
     if (error) {
       if (errorReturnTo) {
-        redirect(withReturnMessage(errorReturnTo, "error", getSupabaseMutationErrorMessage("Gagal menyimpan checklist material. Silakan coba lagi.")));
+        redirect(withReturnMessage(errorReturnTo, "error", getKmpMaterialMutationErrorMessage(error)));
       }
       return;
     }
@@ -1087,6 +1219,15 @@ async function createKmpMaterialChecklistEntries(
       await batch.commit();
     });
   } else {
+    if (successReturnTo) {
+      redirect(
+        withReturnParams(successReturnTo, (params) => {
+          params.delete("error");
+          params.set("success", "Mode demo aktif, checklist material tidak disimpan ke database.");
+          params.set("expense_action_token", randomUUID());
+        }),
+      );
+    }
     return;
   }
 

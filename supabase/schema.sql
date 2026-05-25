@@ -75,6 +75,12 @@ alter table public.project_expenses
 add column if not exists usage_info text;
 alter table public.project_expenses
 add column if not exists unit_price numeric(14, 2) not null default 0;
+alter table public.project_expenses
+alter column amount set default 0;
+alter table public.project_expenses
+drop constraint if exists project_expenses_amount_check;
+alter table public.project_expenses
+drop constraint if exists project_expenses_amount_positive_check;
 
 alter table public.attendance_records
 add column if not exists team_type text not null default 'tukang';

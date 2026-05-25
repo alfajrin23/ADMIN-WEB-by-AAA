@@ -110,12 +110,14 @@ function resolveDraftAmount(draft: MaterialDraft, rule: KmpMaterialChecklistRule
 function KmpMaterialSubmitButton({
   canEdit,
   selectedCount,
+  invalidManualCount,
 }: {
   canEdit: boolean;
   selectedCount: number;
+  invalidManualCount: number;
 }) {
   const { pending } = useFormStatus();
-  const isDisabled = !canEdit || selectedCount === 0 || pending;
+  const isDisabled = !canEdit || selectedCount === 0 || invalidManualCount > 0 || pending;
 
   return (
     <button
@@ -129,6 +131,8 @@ function KmpMaterialSubmitButton({
       </span>
       {pending
         ? "Menyimpan..."
+        : invalidManualCount > 0
+          ? "Lengkapi Nominal Manual"
         : selectedCount > 0
           ? `Simpan Checklist (${selectedCount})`
           : "Pilih Material"}
@@ -286,6 +290,13 @@ export function KmpMaterialMonitorPanel({
       return total + resolveDraftAmount(draft, rule);
     }, 0);
   }, [selectedMaterialRows]);
+  const invalidManualSelectionCount = useMemo(
+    () =>
+      selectedMaterialRows.filter(
+        (row) => row.amountMode === "manual" && normalizeDigits(row.manualAmount).length === 0,
+      ).length,
+    [selectedMaterialRows],
+  );
 
   return (
     <div className="mt-4 space-y-4">
@@ -438,11 +449,20 @@ export function KmpMaterialMonitorPanel({
               </p>
               <p>Total nominal: {formatCurrency(selectedTotalAmount)}</p>
             </div>
-            <KmpMaterialSubmitButton canEdit={canEdit} selectedCount={selectedMaterialRows.length} />
+            <KmpMaterialSubmitButton
+              canEdit={canEdit}
+              selectedCount={selectedMaterialRows.length}
+              invalidManualCount={invalidManualSelectionCount}
+            />
           </div>
           {!canEdit ? (
             <p className="mt-2 text-xs font-semibold text-amber-700">
               Role viewer hanya bisa melihat monitoring material.
+            </p>
+          ) : null}
+          {invalidManualSelectionCount > 0 ? (
+            <p className="mt-2 text-xs font-semibold text-rose-700">
+              Isi nominal manual pada {invalidManualSelectionCount} material sebelum menyimpan.
             </p>
           ) : null}
         </div>

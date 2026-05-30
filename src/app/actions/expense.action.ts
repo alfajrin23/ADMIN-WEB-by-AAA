@@ -249,6 +249,22 @@ export async function createExpenseAction(formData: FormData) {
   );
 }
 
+export async function createScraperExpenseQuickAction(formData: FormData) {
+  if (getString(formData, "expense_input_mode") !== "scraper") {
+    return {
+      ok: false,
+      message: "Mode input scraper tidak aktif.",
+      savedCount: 0,
+    };
+  }
+
+  const actor = await requireEditorActionUser();
+  return createScraperExpenseEntries(actor, formData, null, null, {
+    deferCacheRevalidation: true,
+    skipDraftClear: true,
+  });
+}
+
 export async function syncKmpMaterialProjectStatusesAction() {
   const actor = await requireAuthUser();
   const completedProjectIds = await completeKmpCianjurProjectsWithFullMaterialProgress();

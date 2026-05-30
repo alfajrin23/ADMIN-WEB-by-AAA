@@ -10,13 +10,14 @@ import {
   type ClipboardEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useFormStatus } from "react-dom";
 import {
   clearExpenseInputDraftAction,
   getExpenseInputDraftAction,
   saveExpenseInputDraftAction,
 } from "@/app/actions/expense-draft.action";
+import { createScraperExpenseQuickAction } from "@/app/actions/expense.action";
 import { EnterToNextField } from "@/components/enter-to-next-field";
 import { ProjectAutocomplete, PROJECT_AUTOCOMPLETE_SELECT_EVENT } from "@/components/project-autocomplete";
 import { ProjectChecklistSearch } from "@/components/project-checklist-search";
@@ -24,6 +25,7 @@ import { ProjectScopedAutocompleteInput } from "@/components/project-scoped-auto
 import { RequesterProjectAutocompleteInput } from "@/components/requester-project-autocomplete-input";
 import { RupiahInput } from "@/components/rupiah-input";
 import { ClipboardIcon, ExcelIcon, SaveIcon } from "@/components/icons";
+import { SuccessToast } from "@/components/success-toast";
 import { parseHokClipboardText, parseHokImportRows, type HokImportResult } from "@/lib/hok-import";
 import { SPECIALIST_COST_PRESETS } from "@/lib/constants";
 
@@ -170,6 +172,7 @@ const EXPENSE_DRAFT_PENDING_CLEAR_KEY = "expense-modal-draft-pending-clear";
 const EXPENSE_CONTINUE_DRAFT_STORAGE_KEY = "admin-web:expense-continue-draft:v1";
 const EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY = "expense-modal-continue-draft-pending-clear";
 const EXPENSE_INPUT_DRAFT_DEBOUNCE_MS = 1000;
+const SCRAPER_SAVE_TIMEOUT_MS = 15_000;
 const HOK_EXCEL_ACCEPT = ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 type ExpenseInputMode = typeof STANDARD_MODE | typeof HOK_MODE | typeof SCRAPER_MODE | typeof CONTINUE_MODE;
 
@@ -454,27 +457,35 @@ function ExpenseSubmitButton({
   selectedHokRowCount,
   selectedScraperRowCount,
   continueEntryCount,
+  isScraperSaving,
+  onScraperSave,
 }: {
   disabled: boolean;
   mode: ExpenseInputMode;
   selectedHokRowCount: number;
   selectedScraperRowCount: number;
   continueEntryCount: number;
+  isScraperSaving: boolean;
+  onScraperSave: () => void;
 }) {
   const { pending } = useFormStatus();
-  const isDisabled = disabled || pending;
+  const isScraperMode = mode === SCRAPER_MODE;
+  const isPending = isScraperMode ? isScraperSaving : pending;
+  const isDisabled = disabled || isPending;
 
   return (
     <button
+      type={isScraperMode ? "button" : "submit"}
+      onClick={isScraperMode ? onScraperSave : undefined}
       className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
       disabled={isDisabled}
       aria-disabled={isDisabled}
-      aria-busy={pending}
+      aria-busy={isPending}
     >
       <span className="btn-icon icon-float-soft bg-white/20 text-white">
         <SaveIcon />
       </span>
-      {pending
+      {isPending
         ? "Menyimpan..."
         : mode === HOK_MODE
           ? `Simpan HOK ${selectedHokRowCount > 0 ? `(${selectedHokRowCount} project)` : ""}`
@@ -499,6 +510,7 @@ export function ExpenseInputModeFields({
   hokProjectPresets,
   formId = "expense-modal-form",
 }: ExpenseInputModeFieldsProps) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const expenseSavedModeParam = searchParams.get("expense_saved_mode")?.trim() ?? "";
   const expenseSavedMode = expenseSavedModeParam ? resolveDraftMode(expenseSavedModeParam) : null;
@@ -530,6 +542,8 @@ export function ExpenseInputModeFields({
     createInitialScraperRows(initialProjectId),
   );
   const [scraperError, setScraperError] = useState("");
+  const [scraperSuccessMessage, setScraperSuccessMessage] = useState("");
+  const [isScraperSaving, setIsScraperSaving] = useState(false);
   const [standardProjectId, setStandardProjectId] = useState(initialProjectId ?? "");
   const [standardAdditionalProjectIds, setStandardAdditionalProjectIds] = useState<string[]>([]);
   const [standardCategory, setStandardCategory] = useState(defaultExpenseCategory);
@@ -1377,6 +1391,66 @@ export function ExpenseInputModeFields({
     return "";
   }, [scraperRows]);
 
+  const saveScraperExpense = useCallback(() => {
+    if (isScraperSaving) {
+      return;
+    }
+
+    const validationMessage = validateScraperRows();
+    if (validationMessage) {
+      setScraperError(validationMessage);
+      setHokError("");
+      return;
+    }
+
+    const form = rootRef.current?.closest("form");
+    if (!(form instanceof HTMLFormElement)) {
+      setScraperError("Form input scraper tidak ditemukan. Muat ulang halaman lalu coba lagi.");
+      return;
+    }
+
+    setHokError("");
+    setScraperError("");
+    setContinueError("");
+    setScraperSuccessMessage("");
+    setIsScraperSaving(true);
+    let timeoutId: number | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutId = window.setTimeout(
+        () => reject(new Error("SCRAPER_SAVE_TIMEOUT")),
+        SCRAPER_SAVE_TIMEOUT_MS,
+      );
+    });
+    void Promise.race([
+      createScraperExpenseQuickAction(new FormData(form)),
+      timeout,
+    ])
+      .then((result) => {
+        if (!result.ok) {
+          setScraperError(result.message);
+          return;
+        }
+
+        resetExpenseDraftAfterSave(SCRAPER_MODE);
+        setScraperSuccessMessage(result.message);
+        void clearExpenseInputDraftAction().catch(() => undefined);
+        router.refresh();
+      })
+      .catch((error: unknown) => {
+        setScraperError(
+          error instanceof Error && error.message === "SCRAPER_SAVE_TIMEOUT"
+            ? "Respons server terlalu lama. Data mungkin sudah tersimpan. Periksa rekap sebelum mencoba simpan ulang."
+            : "Gagal menyimpan data scraper. Silakan coba lagi.",
+        );
+      })
+      .finally(() => {
+        if (timeoutId) {
+          window.clearTimeout(timeoutId);
+        }
+        setIsScraperSaving(false);
+      });
+  }, [isScraperSaving, resetExpenseDraftAfterSave, router, validateScraperRows]);
+
   useEffect(() => {
     if (!hokError || mode !== HOK_MODE) {
       return;
@@ -1431,8 +1505,14 @@ export function ExpenseInputModeFields({
         return;
       }
 
+      if (mode === SCRAPER_MODE) {
+        event.preventDefault();
+        saveScraperExpense();
+        return;
+      }
+
       const validationMessage =
-        mode === HOK_MODE ? validateHokRows() : mode === SCRAPER_MODE ? validateScraperRows() : "";
+        mode === HOK_MODE ? validateHokRows() : "";
       if (!validationMessage) {
         setHokError("");
         setScraperError("");
@@ -1455,7 +1535,12 @@ export function ExpenseInputModeFields({
 
     form.addEventListener("submit", handleSubmit);
     return () => form.removeEventListener("submit", handleSubmit);
-  }, [continueEntries.length, mode, validateHokRows, validateScraperRows]);
+  }, [
+    continueEntries.length,
+    mode,
+    saveScraperExpense,
+    validateHokRows,
+  ]);
 
   useEffect(() => {
     if (!successMessage) {
@@ -1921,6 +2006,7 @@ export function ExpenseInputModeFields({
       onClick={markUserDraftInteraction}
       onInput={markUserDraftInteraction}
     >
+      <SuccessToast message={scraperSuccessMessage} />
       <EnterToNextField formId={formId} />
       <input type="hidden" name="expense_submission_token" value={submissionToken} />
       <input type="hidden" name="expense_input_mode" value={mode} />
@@ -2978,6 +3064,8 @@ export function ExpenseInputModeFields({
         selectedHokRowCount={selectedHokRows.length}
         selectedScraperRowCount={completedScraperRows.length}
         continueEntryCount={continueEntries.length}
+        isScraperSaving={isScraperSaving}
+        onScraperSave={saveScraperExpense}
       />
     </div>
   );

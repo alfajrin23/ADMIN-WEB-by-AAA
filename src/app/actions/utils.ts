@@ -750,6 +750,19 @@ export function queueKmpCianjurProjectCompletionSync() {
   });
 }
 
+function revalidateScraperExpenseViews() {
+  revalidateProjectPages();
+  revalidateProjectCache();
+  revalidateExpenseCache();
+  revalidatePath("/logs");
+}
+
+function queueScraperExpenseViewRevalidation() {
+  after(() => {
+    revalidateScraperExpenseViews();
+  });
+}
+
 export async function importTemplateDataToSupabase(parsed: ParsedTemplateImportData) {
   const supabase = getSupabaseServerClient();
   if (!supabase) {
@@ -1327,44 +1340,48 @@ export async function createHokExpenseEntries(
     );
   }
 }
+export type ScraperExpenseSaveResult = {
+  ok: boolean;
+  message: string;
+  savedCount: number;
+};
+
+type CreateScraperExpenseEntriesOptions = {
+  deferCacheRevalidation?: boolean;
+  skipDraftClear?: boolean;
+};
+
 export async function createScraperExpenseEntries(
   actor: Awaited<ReturnType<typeof requireEditorActionUser>>,
   formData: FormData,
   successReturnTo: string | null,
   errorReturnTo: string | null,
-) {
+  options: CreateScraperExpenseEntriesOptions = {},
+): Promise<ScraperExpenseSaveResult> {
+  const fail = (message: string): ScraperExpenseSaveResult => {
+    if (errorReturnTo) {
+      redirect(withReturnMessage(errorReturnTo, "error", message));
+    }
+    return { ok: false, message, savedCount: 0 };
+  };
+
   const rawRows = getString(formData, "scraper_rows_json");
   let parsedRows: unknown;
   try {
     parsedRows = rawRows ? JSON.parse(rawRows) : [];
   } catch {
-    if (errorReturnTo) {
-      redirect(withReturnMessage(errorReturnTo, "error", "Data mode scraper tidak valid."));
-    }
-    return;
+    return fail("Data mode scraper tidak valid.");
   }
 
   if (!Array.isArray(parsedRows) || parsedRows.length === 0) {
-    if (errorReturnTo) {
-      redirect(withReturnMessage(errorReturnTo, "error", "Tambahkan minimal satu baris project scraper."));
-    }
-    return;
+    return fail("Tambahkan minimal satu baris project scraper.");
   }
 
   const requesterName = getString(formData, "requester_name");
   const description = getString(formData, "description");
   const parsedCategory = getParsedCategory(formData);
   if (!requesterName || !description || !parsedCategory) {
-    if (errorReturnTo) {
-      redirect(
-        withReturnMessage(
-          errorReturnTo,
-          "error",
-          "Lengkapi nama pengajuan, kategori, dan keterangan untuk mode scraper.",
-        ),
-      );
-    }
-    return;
+    return fail("Lengkapi nama pengajuan, kategori, dan keterangan untuk mode scraper.");
   }
 
   const specialistType = getSpecialistType(formData, parsedCategory);
@@ -1408,16 +1425,7 @@ export async function createScraperExpenseEntries(
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
 
   if (rows.length === 0) {
-    if (errorReturnTo) {
-      redirect(
-        withReturnMessage(
-          errorReturnTo,
-          "error",
-          "Setiap baris scraper wajib memiliki project dan nominal yang valid.",
-        ),
-      );
-    }
-    return;
+    return fail("Setiap baris scraper wajib memiliki project dan nominal yang valid.");
   }
 
   const submissionToken = getExpenseSubmissionToken(formData);
@@ -1446,10 +1454,10 @@ export async function createScraperExpenseEntries(
   } else if (activeDataSource === "supabase") {
     const supabase = getSupabaseServerClient();
     if (!supabase) {
-      return;
+      return fail("Supabase belum terkonfigurasi.");
     }
-    if (!ensureSupabaseWriteConfigured(errorReturnTo ?? successReturnTo, "Gagal menyimpan data scraper.")) {
-      return;
+    if (!isSupabaseWriteConfigured) {
+      return fail(getSupabaseMutationErrorMessage("Gagal menyimpan data scraper."));
     }
 
     const saveExpensePromise = supabase.from("project_expenses").upsert(
@@ -1481,15 +1489,12 @@ export async function createScraperExpenseEntries(
       ? (await Promise.all([upsertSupabaseCategories(supabase, [basePayload.category]), saveExpensePromise]))[1]
       : await saveExpensePromise;
     if (expenseResult.error) {
-      if (errorReturnTo) {
-        redirect(withReturnMessage(errorReturnTo, "error", getSupabaseMutationErrorMessage("Gagal menyimpan data scraper. Silakan coba lagi.")));
-      }
-      return;
+      return fail(getSupabaseMutationErrorMessage("Gagal menyimpan data scraper. Silakan coba lagi."));
     }
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
     if (!firestore) {
-      return;
+      return fail("Firebase belum terkonfigurasi.");
     }
     await runFirebaseWriteSafely(async () => {
       const batch = firestore.batch();
@@ -1515,16 +1520,17 @@ export async function createScraperExpenseEntries(
       await batch.commit();
     });
   } else {
-    return;
+    return fail("Sumber data aktif belum mendukung penyimpanan scraper.");
   }
 
   if (basePayload.category === "material") {
     queueKmpCianjurProjectCompletionSync();
   }
-  revalidateProjectPages();
-  revalidateProjectCache();
-  revalidateExpenseCache();
-  revalidatePath("/logs");
+  if (options.deferCacheRevalidation) {
+    queueScraperExpenseViewRevalidation();
+  } else {
+    revalidateScraperExpenseViews();
+  }
   queueActivityLog({
     actor,
     actionType: "create",
@@ -1541,18 +1547,22 @@ export async function createScraperExpenseEntries(
       total_amount: rows.reduce((sum, row) => sum + row.amount, 0),
     },
   });
-  await clearExpenseInputDraftForActorWithinTimeout(actor.id);
+  if (!options.skipDraftClear) {
+    await clearExpenseInputDraftForActorWithinTimeout(actor.id);
+  }
+  const successMessage = `${rows.length} data scraper berhasil disimpan.`;
   if (successReturnTo) {
     redirect(
       withReturnParams(successReturnTo, (params) => {
         params.delete("error");
-        params.set("success", `${rows.length} data scraper berhasil disimpan.`);
+        params.set("success", successMessage);
         params.set("expense_draft_clear", randomUUID());
         params.set("expense_action_token", randomUUID());
         params.set("expense_saved_mode", "scraper");
       }),
     );
   }
+  return { ok: true, message: successMessage, savedCount: rows.length };
 }
 export type AttendanceRecapRowInput = {
   id: string;

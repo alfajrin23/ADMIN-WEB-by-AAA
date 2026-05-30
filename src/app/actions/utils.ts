@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath, updateTag } from "next/cache";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { queueActivityLog } from "@/lib/activity-logs";
 import { clearExpenseInputDraftForActorWithinTimeout } from "@/lib/input-drafts";
 import {
@@ -733,6 +734,20 @@ export async function completeKmpCianjurProjectsWithFullMaterialProgress() {
     await batch.commit();
   });
   return projectIdsToFinish;
+}
+
+export function queueKmpCianjurProjectCompletionSync() {
+  after(async () => {
+    try {
+      const completedProjectIds = await completeKmpCianjurProjectsWithFullMaterialProgress();
+      if (completedProjectIds.length > 0) {
+        revalidateProjectPages();
+        revalidateProjectCache();
+      }
+    } catch (error) {
+      console.warn("[kmp-material] sinkronisasi status project background gagal.", error);
+    }
+  });
 }
 
 export async function importTemplateDataToSupabase(parsed: ParsedTemplateImportData) {
@@ -1504,7 +1519,7 @@ export async function createScraperExpenseEntries(
   }
 
   if (basePayload.category === "material") {
-    await completeKmpCianjurProjectsWithFullMaterialProgress();
+    queueKmpCianjurProjectCompletionSync();
   }
   revalidateProjectPages();
   revalidateProjectCache();

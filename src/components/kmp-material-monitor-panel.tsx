@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { useFormStatus } from "react-dom";
+import { createPortal, useFormStatus } from "react-dom";
 import {
   createExpenseAction,
   syncKmpMaterialProjectStatusesAction,
@@ -840,8 +840,9 @@ export function KmpMaterialMonitorPanel({
         )}
       </form>
 
-      {activeDetectedMaterial ? (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+      {typeof document !== "undefined" && activeDetectedMaterial
+        ? createPortal(
+          <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
           <button
             type="button"
             aria-label="Tutup rincian material"
@@ -915,8 +916,10 @@ export function KmpMaterialMonitorPanel({
               ))}
             </div>
           </section>
-        </div>
-      ) : null}
+          </div>,
+          document.body,
+        )
+        : null}
     </div>
   );
 }

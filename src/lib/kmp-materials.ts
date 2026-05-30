@@ -9,6 +9,7 @@ export type KmpMaterialChecklistRule = {
   keywords: readonly string[];
   amountTargets?: readonly number[];
   amountOptions?: readonly KmpMaterialAmountOption[];
+  minimumDetectedAmount?: number;
 };
 
 export const KMP_CIANJUR_MATERIAL_CHECKLIST = [
@@ -100,9 +101,16 @@ export const KMP_CIANJUR_MATERIAL_CHECKLIST = [
     keywords: ["beton", "ready mix", "readymix"],
     amountTargets: [60000000],
   },
+  {
+    key: "cat",
+    label: "Cat",
+    keywords: ["cat", "paint"],
+    amountTargets: [5500000],
+    minimumDetectedAmount: 5500000,
+  },
 ] as const satisfies readonly KmpMaterialChecklistRule[];
 
-export function getKmpCianjurMaterialRule(key: string) {
+export function getKmpCianjurMaterialRule(key: string): KmpMaterialChecklistRule | null {
   return KMP_CIANJUR_MATERIAL_CHECKLIST.find((item) => item.key === key) ?? null;
 }
 

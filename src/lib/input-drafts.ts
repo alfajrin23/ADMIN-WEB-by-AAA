@@ -208,3 +208,22 @@ export async function clearInputDraftForActor(
 export async function clearExpenseInputDraftForActor(actorId: string) {
   return clearInputDraftForActor(actorId, EXPENSE_INPUT_DRAFT_KEY);
 }
+
+export async function clearExpenseInputDraftForActorWithinTimeout(
+  actorId: string,
+  timeoutMs = 1500,
+) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      clearExpenseInputDraftForActor(actorId),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}

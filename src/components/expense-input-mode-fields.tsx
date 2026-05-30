@@ -479,7 +479,7 @@ function ExpenseSubmitButton({
         : mode === HOK_MODE
           ? `Simpan HOK ${selectedHokRowCount > 0 ? `(${selectedHokRowCount} project)` : ""}`
           : mode === SCRAPER_MODE
-            ? `Simpan Scraper ${selectedScraperRowCount > 0 ? `(${selectedScraperRowCount} project)` : ""}`
+            ? `Simpan Scraper ${selectedScraperRowCount > 0 ? `(${selectedScraperRowCount} data)` : ""}`
             : mode === CONTINUE_MODE
               ? `Simpan Semua${continueEntryCount > 0 ? ` (${continueEntryCount} entry)` : ""}`
               : "Simpan Biaya"}
@@ -502,6 +502,7 @@ export function ExpenseInputModeFields({
   const searchParams = useSearchParams();
   const expenseSavedModeParam = searchParams.get("expense_saved_mode")?.trim() ?? "";
   const expenseSavedMode = expenseSavedModeParam ? resolveDraftMode(expenseSavedModeParam) : null;
+  const expenseActionToken = searchParams.get("expense_action_token")?.trim() ?? "";
   const rootRef = useRef<HTMLDivElement>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const hokExcelInputRef = useRef<HTMLInputElement>(null);
@@ -516,7 +517,7 @@ export function ExpenseInputModeFields({
   const draftServerUpdatedAtRef = useRef<string | null>(null);
   const serverDraftIsClearedRef = useRef(false);
   const hasUserEditedDraftRef = useRef(false);
-  const [submissionToken] = useState(createExpenseSubmissionToken);
+  const [submissionToken, setSubmissionToken] = useState(createExpenseSubmissionToken);
   const [mode, setMode] = useState<ExpenseInputMode>(() => expenseSavedMode ?? STANDARD_MODE);
   const [hokQuery, setHokQuery] = useState("");
   const [hokRows, setHokRows] = useState<HokProjectRow[]>(() => createInitialHokRows(hokProjectPresets));
@@ -577,6 +578,13 @@ export function ExpenseInputModeFields({
     setHokRows(createInitialHokRows(hokProjectPresets));
     setHokImportFeedback(null);
   }, [hokProjectPresets]);
+
+  useEffect(() => {
+    if (!expenseActionToken) {
+      return;
+    }
+    setSubmissionToken((current) => current === expenseActionToken ? current : expenseActionToken);
+  }, [expenseActionToken]);
 
   useEffect(() => {
     setScraperRows((prev) => {
@@ -704,7 +712,7 @@ export function ExpenseInputModeFields({
     setStandardQuantity("");
     setStandardUnitLabel("");
     setStandardUnitPriceRaw("");
-    setScraperRows(createInitialScraperRows(initialProjectId));
+    setScraperRows(createInitialScraperRows(nextMode === SCRAPER_MODE ? undefined : initialProjectId));
     setScraperCategory(defaultExpenseCategory);
     setScraperDate(today);
     setScraperRequester("");
@@ -720,6 +728,7 @@ export function ExpenseInputModeFields({
     setContinueError("");
     setContinueDraftSavedAt(null);
     setExpenseDraftSavedAt(null);
+    setSubmissionToken(createExpenseSubmissionToken());
     setContinueDraftNotice("");
     setExpenseDraftNotice("");
     setContinueDraftReady(true);
@@ -1464,6 +1473,18 @@ export function ExpenseInputModeFields({
 
     return () => window.cancelAnimationFrame(frameId);
   }, [focusProjectInput, successMessage]);
+
+  useEffect(() => {
+    if (!successMessage || expenseSavedMode !== SCRAPER_MODE) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      focusScraperRequesterInput();
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [expenseSavedMode, focusScraperRequesterInput, successMessage]);
 
   const normalizedHokQuery = normalizeText(hokQuery);
   const visibleHokRows = useMemo(() => {
@@ -2571,7 +2592,7 @@ export function ExpenseInputModeFields({
 
             <div className="mt-3 grid gap-3 sm:grid-cols-3">
               <p className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600">
-                {completedScraperRows.length} project siap disimpan
+                {completedScraperRows.length} data siap disimpan
               </p>
               <p className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600">
                 {scraperRowsInvalid.length} baris perlu dicek

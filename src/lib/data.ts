@@ -453,7 +453,7 @@ const SUPABASE_CACHE_REVALIDATE_SECONDS = 60;
 const SUPABASE_PROJECT_SELECT =
   "id, name, code, client_name, start_date, status, created_at";
 const SUPABASE_EXPENSE_METADATA_SELECT =
-  "project_id, requester_name, description, usage_info, recipient_name, category, amount";
+  "id, project_id, requester_name, description, usage_info, recipient_name, unit_label, category, amount, expense_date, created_at";
 const SUPABASE_EXPENSE_FULL_SELECT =
   "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at";
 
@@ -1475,9 +1475,25 @@ type KmpCianjurMissingMaterialProjectReport = {
   projectName: string;
   clientName: string | null;
   detectedMaterials: string[];
+  detectedMaterialDetails: KmpCianjurDetectedMaterialDetail[];
   missingMaterials: string[];
   detectedCount: number;
   missingCount: number;
+};
+
+type KmpCianjurDetectedMaterialExpense = {
+  id: string;
+  expenseDate: string;
+  requesterName: string | null;
+  description: string | null;
+  usageInfo: string | null;
+  amount: number;
+};
+
+type KmpCianjurDetectedMaterialDetail = {
+  materialKey: string;
+  materialLabel: string;
+  expenses: KmpCianjurDetectedMaterialExpense[];
 };
 
 type KmpCianjurMissingMaterialReport = {
@@ -1558,12 +1574,29 @@ function isGenericMaterialHaystack(value: string) {
   return specificTokens.length === 0;
 }
 
+function hasMaterialKeyword(haystack: string, keyword: string) {
+  return ` ${haystack} `.includes(` ${keyword} `);
+}
+
 function isMaterialChecklistExpense(expense: ExpenseEntry) {
   const category = toCategorySlug(expense.category);
   if (isHiddenCostCategory(category) || (category !== "material" && !category.includes("material"))) {
     return false;
   }
   return !hasNonMaterialSignal(buildExpenseMaterialScopeText(expense));
+}
+
+function isGeneratedKmpMaterialChecklistExpense(expense: Pick<ExpenseEntry, "usageInfo">) {
+  return normalizeLooseText(expense.usageInfo).startsWith("checklist material kmp cianjur");
+}
+
+function isGeneratedKmpMaterialChecklistForRule(
+  item: KmpMaterialChecklistRule,
+  expense: Pick<ExpenseEntry, "usageInfo">,
+) {
+  return normalizeLooseText(expense.usageInfo).startsWith(
+    normalizeLooseText(`Checklist Material KMP Cianjur - ${item.label}`),
+  );
 }
 
 function getAmountDistanceFromMaterialTarget(amount: number, target: number) {
@@ -1612,13 +1645,21 @@ function isMaterialRuleDetectedByExpense(
   haystack: string,
   allRules: KmpMaterialChecklistRule[],
 ) {
-  const hasKeywordMatch = item.keywords.some((keyword) => haystack.includes(keyword));
+  if (isGeneratedKmpMaterialChecklistForRule(item, expense)) {
+    return true;
+  }
+
+  if (item.minimumDetectedAmount && expense.amount < item.minimumDetectedAmount) {
+    return false;
+  }
+
+  const hasKeywordMatch = item.keywords.some((keyword) => hasMaterialKeyword(haystack, keyword));
   if (hasKeywordMatch) {
     return true;
   }
 
   const hasDifferentMaterialKeyword = allRules.some((rule) =>
-    rule.key !== item.key && rule.keywords.some((keyword) => haystack.includes(keyword)),
+    rule.key !== item.key && rule.keywords.some((keyword) => hasMaterialKeyword(haystack, keyword)),
   );
   if (hasDifferentMaterialKeyword) {
     return false;
@@ -1631,7 +1672,7 @@ function isMaterialRuleDetectedByExpense(
   return isClosestMaterialAmountRule(item, expense, allRules);
 }
 
-function buildKmpCianjurMissingMaterialReport(
+export function buildKmpCianjurMissingMaterialReport(
   projects: Project[],
   expenses: ExpenseEntry[],
 ): KmpCianjurMissingMaterialReport {
@@ -1664,14 +1705,32 @@ function buildKmpCianjurMissingMaterialReport(
     const haystacks = expenseHaystacksByProjectId.get(project.id) ?? [];
     const materialExpenses = materialExpensesByProjectId.get(project.id) ?? [];
     const detectedMaterials: string[] = [];
+    const detectedMaterialDetails: KmpCianjurDetectedMaterialDetail[] = [];
     const missingMaterials: string[] = [];
 
     for (const item of checklistWithTokens) {
-      const detected = materialExpenses.some((expense, index) =>
+      const detectedExpenses = materialExpenses.filter((expense, index) =>
         isMaterialRuleDetectedByExpense(item, expense, haystacks[index] ?? "", checklistWithTokens),
       );
-      if (detected) {
+      if (detectedExpenses.length > 0) {
         detectedMaterials.push(item.label);
+        detectedMaterialDetails.push({
+          materialKey: item.key,
+          materialLabel: item.label,
+          expenses: detectedExpenses
+            .map((expense) => ({
+              id: expense.id,
+              expenseDate: expense.expenseDate,
+              requesterName: expense.requesterName,
+              description: expense.description,
+              usageInfo: expense.usageInfo,
+              amount: expense.amount,
+            }))
+            .sort((a, b) => {
+              const dateDiff = b.expenseDate.localeCompare(a.expenseDate);
+              return dateDiff !== 0 ? dateDiff : b.id.localeCompare(a.id);
+            }),
+        });
       } else {
         missingMaterials.push(item.label);
       }
@@ -1682,6 +1741,7 @@ function buildKmpCianjurMissingMaterialReport(
       projectName: project.name,
       clientName: project.clientName,
       detectedMaterials,
+      detectedMaterialDetails,
       missingMaterials,
       detectedCount: detectedMaterials.length,
       missingCount: missingMaterials.length,
@@ -1697,6 +1757,32 @@ function buildKmpCianjurMissingMaterialReport(
     completeProjectCount,
     incompleteProjectCount: Math.max(projectReports.length - completeProjectCount, 0),
   };
+}
+
+export function buildKmpCianjurMaterialRequesterName(projects: Project[], expenses: ExpenseEntry[]) {
+  const kmpProjectIds = new Set(
+    projects
+      .filter((project) => isKmpCianjurClientName(project.clientName))
+      .map((project) => project.id),
+  );
+  const requesterCounts = new Map<string, number>();
+
+  for (const expense of expenses) {
+    if (
+      !kmpProjectIds.has(expense.projectId) ||
+      !isMaterialChecklistExpense(expense) ||
+      isGeneratedKmpMaterialChecklistExpense(expense)
+    ) {
+      continue;
+    }
+    const requesterName = normalizeRequesterName(expense.requesterName);
+    if (!requesterName || requesterName.toLowerCase() === "cek material kmp cianjur") {
+      continue;
+    }
+    incrementRequesterCounter(requesterCounts, requesterName);
+  }
+
+  return pickTopRequester(requesterCounts) || "MATERIAL KMP CIANJUR";
 }
 
 type KmpCianjurHokProjectPreset = {
@@ -1778,26 +1864,12 @@ const getSupabaseKmpCianjurMissingMaterialReportCached = unstable_cache(
     const projectNameMap = Object.fromEntries(
       projects.map((project) => [project.id, project.name] as const),
     );
-    const expenses = metadata.expenseRows.map((row) => ({
-      projectId: String(row.project_id ?? ""),
-      projectName: projectNameMap[String(row.project_id ?? "")],
-      category: toCategorySlug(String(row.category ?? "")) || "operasional",
-      specialistType: null,
-      requesterName: typeof row.requester_name === "string" ? row.requester_name : null,
-      description: typeof row.description === "string" ? row.description : null,
-      recipientName: typeof row.recipient_name === "string" ? row.recipient_name : null,
-      quantity: 0,
-      unitLabel: null,
-      usageInfo: typeof row.usage_info === "string" ? row.usage_info : null,
-      unitPrice: 0,
-      amount: Number(row.amount ?? 0),
-      expenseDate: "",
-      createdAt: "",
-      id: "",
-    } as ExpenseEntry));
+    const expenses = metadata.expenseRows.map((row) =>
+      mapExpense(row, projectNameMap[String(row.project_id ?? "")]),
+    );
     return buildKmpCianjurMissingMaterialReport(projects, expenses);
   },
-  ["supabase-kmp-missing-material-report-v3"],
+  ["supabase-kmp-missing-material-report-v4"],
   {
     revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
     tags: [CACHE_TAGS.projects, CACHE_TAGS.expenses],
@@ -1831,6 +1903,42 @@ export async function getKmpCianjurMissingMaterialReport(): Promise<KmpCianjurMi
   }
 
   return buildKmpCianjurMissingMaterialReport(sampleProjects, sampleExpenses);
+}
+
+export async function getKmpCianjurMaterialRequesterName() {
+  if (activeDataSource === "excel") {
+    const db = readExcelDatabase();
+    const projects = db.projects.map((row) => mapProject(row));
+    const expenses = db.project_expenses.map((row) => mapExpense(row));
+    return buildKmpCianjurMaterialRequesterName(projects, expenses);
+  }
+
+  if (activeDataSource === "supabase") {
+    const [projects, expenseRows] = await Promise.all([
+      getCachedSupabaseProjects(),
+      getAllSupabaseRows(
+        "project_expenses",
+        "project_id, requester_name, description, usage_info, recipient_name, unit_label, category, amount",
+      ),
+    ]);
+    return buildKmpCianjurMaterialRequesterName(
+      projects,
+      expenseRows.map((row) => mapExpense(row)),
+    );
+  }
+
+  if (activeDataSource === "firebase") {
+    const [projectRows, expenseRows] = await Promise.all([
+      getFirebaseCollectionRows("projects"),
+      getFirebaseCollectionRows("project_expenses"),
+    ]);
+    return buildKmpCianjurMaterialRequesterName(
+      projectRows.map((row) => mapProject(row)),
+      expenseRows.map((row) => mapExpense(row)),
+    );
+  }
+
+  return buildKmpCianjurMaterialRequesterName(sampleProjects, sampleExpenses);
 }
 
 export async function getExpenseCategories(): Promise<ExpenseCategoryOption[]> {

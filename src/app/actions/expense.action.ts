@@ -1,11 +1,12 @@
 "use server";
 import { createHash, randomUUID } from "node:crypto";
 import { getString, getStringList, getNumber, getStringValues, getNumberValues, getPositiveInteger, parseYearInput, replaceDateYearKeepingMonthDay, getReturnTo, withReturnMessage, withReturnParams, isChecked, revalidateProjectPages, revalidateProjectCache, revalidateExpenseCache, revalidateAttendanceCache, requireEditorActionUser, requireAttendanceActionUser, requireImportActionUser, requireLogsActionUser, createTimestamp, createDeterministicUuid, ensureSupabaseAttendanceDraftProjectId, resolveDraftAttendanceNotes, resolveFinalAttendanceNotes, parseAttendanceStatusValue, parseWorkerTeamValue, normalizeAttendanceIdentityText, createAttendanceMutationId, createPayrollResetMutationId, resolveAutoOvertimeWage, AttendanceDuplicateCheckInput, AttendanceDuplicateCheckRow, hasSameAttendanceIdentity, findDuplicateAttendanceRecord, getExpenseSubmissionToken, createExpenseMutationId, shouldSyncExpenseCategory, parseProjectInitialCategories, buildSupabaseCategoryRows, upsertSupabaseCategories, isFirebaseNotFoundError, hasWarnedFirebaseWriteDatabaseMissing, runFirebaseWriteSafely, deleteFirebaseDocsByField, ParsedTemplateImportData, normalizeImportText, normalizeImportNumber, buildImportExpenseSignature, chunkArray, importTemplateDataToSupabase, importTemplateDataToFirebase, getParsedCategory, getSpecialistType, getParsedWorkerTeam, getParsedReimburseType, resolveAmountByMode, getExpenseTargetProjectIds, parsePositiveAmount, createHokExpenseEntries, createScraperExpenseEntries, AttendanceRecapRowInput, resolveAttendanceExportRowId, buildAttendanceRecapRowsFromFormData, ensureSupabaseWriteConfigured, getSupabaseMutationErrorMessage } from "./utils";
+import { completeKmpCianjurProjectsWithFullMaterialProgress } from "./utils";
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { queueActivityLog } from "@/lib/activity-logs";
-import { clearExpenseInputDraftForActor } from "@/lib/input-drafts";
+import { clearExpenseInputDraftForActorWithinTimeout } from "@/lib/input-drafts";
 import {
   ATTENDANCE_DRAFT_PROJECT_CODE,
   ATTENDANCE_DRAFT_PROJECT_NAME,
@@ -202,7 +203,11 @@ export async function createExpenseAction(formData: FormData) {
     return;
   }
 
+  if (basePayload.category === "material") {
+    await completeKmpCianjurProjectsWithFullMaterialProgress();
+  }
   revalidateProjectPages();
+  revalidateProjectCache();
   revalidateExpenseCache();
   revalidatePath("/logs");
   queueActivityLog({
@@ -228,7 +233,7 @@ export async function createExpenseAction(formData: FormData) {
       expense_date: basePayload.expense_date,
     },
   });
-  await clearExpenseInputDraftForActor(actor.id);
+  await clearExpenseInputDraftForActorWithinTimeout(actor.id);
   const successMessage =
     projectIds.length > 1
       ? `Biaya berhasil disimpan ke ${projectIds.length} project.`
@@ -243,6 +248,31 @@ export async function createExpenseAction(formData: FormData) {
     }),
   );
 }
+
+export async function syncKmpMaterialProjectStatusesAction() {
+  const actor = await requireAuthUser();
+  const completedProjectIds = await completeKmpCianjurProjectsWithFullMaterialProgress();
+  if (completedProjectIds.length === 0) {
+    return { updatedCount: 0 };
+  }
+
+  revalidateProjectPages();
+  revalidateProjectCache();
+  revalidatePath("/logs");
+  queueActivityLog({
+    actor,
+    actionType: "update",
+    module: "project",
+    description: `Menyelesaikan otomatis ${completedProjectIds.length} project KMP Cianjur dengan progress material 100%.`,
+    payload: {
+      source: "kmp_material_progress",
+      project_ids: completedProjectIds,
+      status: "selesai",
+    },
+  });
+  return { updatedCount: completedProjectIds.length };
+}
+
 export async function updateExpenseAction(formData: FormData) {
   const actor = await requireEditorActionUser();
   const expenseId = getString(formData, "expense_id");
@@ -333,7 +363,11 @@ export async function updateExpenseAction(formData: FormData) {
     return;
   }
 
+  if (excelPayload.category === "material") {
+    await completeKmpCianjurProjectsWithFullMaterialProgress();
+  }
   revalidateProjectPages();
+  revalidateProjectCache();
   revalidateExpenseCache();
   revalidatePath("/logs");
   queueActivityLog({
@@ -546,7 +580,9 @@ export async function updateManyExpensesAction(formData: FormData) {
     return;
   }
 
+  await completeKmpCianjurProjectsWithFullMaterialProgress();
   revalidateProjectPages();
+  revalidateProjectCache();
   revalidateExpenseCache();
   revalidatePath("/logs");
   queueActivityLog({
@@ -800,7 +836,11 @@ async function createContinueExpenseEntries(
     return;
   }
 
+  if (rows.some((row) => row.category === "material")) {
+    await completeKmpCianjurProjectsWithFullMaterialProgress();
+  }
   revalidateProjectPages();
+  revalidateProjectCache();
   revalidateExpenseCache();
   revalidatePath("/logs");
   queueActivityLog({
@@ -817,7 +857,7 @@ async function createContinueExpenseEntries(
       project_ids: [...new Set(entries.map((e) => e.projectId))],
     },
   });
-  await clearExpenseInputDraftForActor(actor.id);
+  await clearExpenseInputDraftForActorWithinTimeout(actor.id);
   if (successReturnTo) {
     const clearToken = randomUUID();
     redirect(
@@ -1126,10 +1166,12 @@ async function createKmpMaterialChecklistEntries(
   }
 
   const expenseDate = resolveChecklistExpenseDate(getString(formData, "expense_date"));
+  const { getKmpCianjurMaterialRequesterName } = await import("@/lib/data");
+  const requesterName = await getKmpCianjurMaterialRequesterName();
   const basePayload = {
     category: "material",
     specialist_type: null,
-    requester_name: "CEK MATERIAL KMP CIANJUR",
+    requester_name: requesterName,
     recipient_name: null,
     quantity: 1,
     unit_label: null,
@@ -1288,7 +1330,9 @@ async function createKmpMaterialChecklistEntries(
     return;
   }
 
+  const completedProjectIds = await completeKmpCianjurProjectsWithFullMaterialProgress();
   revalidateProjectPages();
+  revalidateProjectCache();
   revalidateExpenseCache();
   revalidatePath("/logs");
   queueActivityLog({
@@ -1305,11 +1349,13 @@ async function createKmpMaterialChecklistEntries(
       project_names: rows.map((row) => row.projectName || row.projectId),
       material_keys: rows.map((row) => row.materialKey),
       material_names: rows.map((row) => row.materialName),
+      requester_name: requesterName,
       expense_date: expenseDate,
+      completed_project_ids: completedProjectIds,
       total_amount: savedMutationRows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0),
     },
   });
-  await clearExpenseInputDraftForActor(actor.id);
+  await clearExpenseInputDraftForActorWithinTimeout(actor.id);
   if (successReturnTo) {
     redirect(
       withReturnParams(successReturnTo, (params) => {

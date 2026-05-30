@@ -1,11 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { createExpenseAction } from "@/app/actions/expense.action";
-import { CheckIcon, EyeIcon, SaveIcon, SearchIcon } from "@/components/icons";
-import { formatCurrency } from "@/lib/format";
+import {
+  createExpenseAction,
+  syncKmpMaterialProjectStatusesAction,
+} from "@/app/actions/expense.action";
+import { CheckIcon, CloseIcon, EyeIcon, SaveIcon, SearchIcon } from "@/components/icons";
+import { formatCurrency, formatDate } from "@/lib/format";
 import {
   getKmpCianjurMaterialAmountOptions,
   KMP_CIANJUR_MATERIAL_CHECKLIST,
@@ -17,6 +21,18 @@ type KmpMaterialMonitorProject = {
   projectName: string;
   clientName: string | null;
   detectedMaterials: string[];
+  detectedMaterialDetails: Array<{
+    materialKey: string;
+    materialLabel: string;
+    expenses: Array<{
+      id: string;
+      expenseDate: string;
+      requesterName: string | null;
+      description: string | null;
+      usageInfo: string | null;
+      amount: number;
+    }>;
+  }>;
   missingMaterials: string[];
   detectedCount: number;
   missingCount: number;
@@ -154,16 +170,36 @@ export function KmpMaterialMonitorPanel({
   returnTo,
   today,
 }: KmpMaterialMonitorPanelProps) {
+  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("incomplete");
   const [expenseDate, setExpenseDate] = useState(today);
   const [materialDrafts, setMaterialDrafts] = useState<Record<string, MaterialDraft>>({});
+  const [selectedDetectedMaterial, setSelectedDetectedMaterial] = useState<{
+    projectId: string;
+    materialKey: string;
+  } | null>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearchQuery(searchQuery), 1000);
     return () => window.clearTimeout(timer);
   }, [searchQuery]);
+
+  useEffect(() => {
+    let isCancelled = false;
+    syncKmpMaterialProjectStatusesAction()
+      .then((result) => {
+        if (!isCancelled && result.updatedCount > 0) {
+          router.refresh();
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [router]);
 
   const getMaterialDraft = (projectId: string, label: string) => {
     const rule = materialRuleByLabel.get(label);
@@ -304,6 +340,51 @@ export function KmpMaterialMonitorPanel({
         (row) => row.amountMode === "manual" && normalizeDigits(row.manualAmount).length === 0,
       ).length,
     [selectedMaterialRows],
+  );
+  const activeDetectedMaterial = useMemo(() => {
+    if (!selectedDetectedMaterial) {
+      return null;
+    }
+    const project = projects.find((item) => item.projectId === selectedDetectedMaterial.projectId);
+    const detail = project?.detectedMaterialDetails.find(
+      (item) => item.materialKey === selectedDetectedMaterial.materialKey,
+    );
+    return project && detail ? { project, detail } : null;
+  }, [projects, selectedDetectedMaterial]);
+
+  const renderDetectedMaterials = (project: KmpMaterialMonitorProject) => (
+    <div className="rounded-2xl border border-slate-200 bg-white/78 p-3">
+      <p className="text-xs font-semibold text-slate-700">Sudah terdeteksi</p>
+      {project.detectedMaterialDetails.length === 0 ? (
+        <p className="mt-2 text-[11px] text-slate-500">
+          Belum ada material checklist yang cocok pada histori biaya project ini.
+        </p>
+      ) : (
+        <>
+          <p className="mt-1 text-[11px] text-slate-500">
+            Tekan nama material untuk membuka rincian rekapnya.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {project.detectedMaterialDetails.map((detail) => (
+              <button
+                key={`${project.projectId}-detected-${detail.materialKey}`}
+                type="button"
+                data-ui-button="true"
+                onClick={() =>
+                  setSelectedDetectedMaterial({
+                    projectId: project.projectId,
+                    materialKey: detail.materialKey,
+                  })
+                }
+                className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700 transition hover:border-emerald-400 hover:bg-emerald-100"
+              >
+                {detail.materialLabel}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 
   return (
@@ -576,13 +657,16 @@ export function KmpMaterialMonitorPanel({
                   </div>
 
                   {project.missingMaterials.length === 0 ? (
-                    <div className="relative mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm font-semibold text-emerald-700">
-                      <span className="inline-flex items-center gap-2">
-                        <span className="btn-icon bg-emerald-100 text-emerald-700">
-                          <CheckIcon />
+                    <div className="relative mt-4 space-y-3">
+                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm font-semibold text-emerald-700">
+                        <span className="inline-flex items-center gap-2">
+                          <span className="btn-icon bg-emerald-100 text-emerald-700">
+                            <CheckIcon />
+                          </span>
+                          Semua material checklist sudah pernah terdeteksi di project ini.
                         </span>
-                        Semua material checklist sudah pernah terdeteksi di project ini.
-                      </span>
+                      </div>
+                      {renderDetectedMaterials(project)}
                     </div>
                   ) : (
                     <div className="relative mt-4 grid gap-3 lg:grid-cols-[1.25fr_minmax(0,1fr)]">
@@ -681,6 +765,11 @@ export function KmpMaterialMonitorPanel({
                                         );
                                       })}
                                     </span>
+                                    {rule?.minimumDetectedAmount ? (
+                                      <span className="mt-2 block text-[11px] font-semibold text-amber-700">
+                                        Minimal terdeteksi sistem: {formatCurrency(rule.minimumDetectedAmount)}
+                                      </span>
+                                    ) : null}
                                     {draft.amountMode === "system" && amountOptions.length > 0 ? (
                                       amountOptions.length === 1 ? (
                                         <span className="mt-2 block text-[11px] font-semibold text-emerald-700">
@@ -741,30 +830,7 @@ export function KmpMaterialMonitorPanel({
                         </div>
                       </div>
 
-                      <div className="rounded-2xl border border-slate-200 bg-white/78 p-3">
-                        <p className="text-xs font-semibold text-slate-700">Sudah terdeteksi</p>
-                        {project.detectedMaterials.length === 0 ? (
-                          <p className="mt-2 text-[11px] text-slate-500">
-                            Belum ada material checklist yang cocok pada histori biaya project ini.
-                          </p>
-                        ) : (
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            {project.detectedMaterials.slice(0, 6).map((label) => (
-                              <span
-                                key={`${project.projectId}-detected-${label}`}
-                                className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700"
-                              >
-                                {label}
-                              </span>
-                            ))}
-                            {project.detectedMaterials.length > 6 ? (
-                              <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-600">
-                                +{project.detectedMaterials.length - 6} lainnya
-                              </span>
-                            ) : null}
-                          </div>
-                        )}
-                      </div>
+                      {renderDetectedMaterials(project)}
                     </div>
                   )}
                 </article>
@@ -773,6 +839,84 @@ export function KmpMaterialMonitorPanel({
           </div>
         )}
       </form>
+
+      {activeDetectedMaterial ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+          <button
+            type="button"
+            aria-label="Tutup rincian material"
+            onClick={() => setSelectedDetectedMaterial(null)}
+            className="absolute inset-0 bg-slate-950/55"
+          />
+          <section className="panel relative z-10 max-h-[calc(100vh-2rem)] w-full max-w-3xl overflow-y-auto p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700">
+                  Rincian Rekap Material
+                </p>
+                <h3 className="mt-1 text-lg font-black text-slate-950">
+                  {activeDetectedMaterial.detail.materialLabel}
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  {activeDetectedMaterial.project.projectName}
+                </p>
+              </div>
+              <button
+                type="button"
+                data-ui-button="true"
+                onClick={() => setSelectedDetectedMaterial(null)}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+              >
+                <span className="btn-icon bg-slate-100 text-slate-600">
+                  <CloseIcon />
+                </span>
+                Tutup
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {activeDetectedMaterial.detail.expenses.map((expense, index) => (
+                <article
+                  key={expense.id || `${activeDetectedMaterial.detail.materialKey}-${index}`}
+                  className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs font-semibold text-slate-500">
+                      {formatDate(expense.expenseDate)}
+                    </p>
+                    <p className="text-sm font-black text-emerald-700">
+                      {formatCurrency(expense.amount)}
+                    </p>
+                  </div>
+                  <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                        Nama Pengaju
+                      </dt>
+                      <dd className="mt-1 text-xs font-semibold text-slate-800">
+                        {expense.requesterName ?? "-"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                        Keterangan
+                      </dt>
+                      <dd className="mt-1 text-xs font-semibold text-slate-800">
+                        {expense.description ?? "-"}
+                      </dd>
+                    </div>
+                  </dl>
+                  {expense.usageInfo ? (
+                    <p className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-600">
+                      {expense.usageInfo}
+                    </p>
+                  ) : null}
+                </article>
+              ))}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

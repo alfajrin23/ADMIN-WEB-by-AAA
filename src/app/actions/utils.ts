@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath, updateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { queueActivityLog } from "@/lib/activity-logs";
-import { clearExpenseInputDraftForActor } from "@/lib/input-drafts";
+import { clearExpenseInputDraftForActorWithinTimeout } from "@/lib/input-drafts";
 import {
   ATTENDANCE_DRAFT_PROJECT_CODE,
   ATTENDANCE_DRAFT_PROJECT_NAME,
@@ -660,6 +660,81 @@ export function chunkArray<T>(rows: T[], size: number) {
   }
   return chunks;
 }
+
+export async function completeKmpCianjurProjectsWithFullMaterialProgress() {
+  if (activeDataSource === "demo") {
+    return [];
+  }
+
+  revalidateExpenseCache();
+  const { getKmpCianjurMissingMaterialReport } = await import("@/lib/data");
+  const report = await getKmpCianjurMissingMaterialReport();
+  const completedProjectIds = report.projects
+    .filter((project) => project.missingCount === 0)
+    .map((project) => project.projectId);
+  if (completedProjectIds.length === 0) {
+    return [];
+  }
+
+  if (activeDataSource === "excel") {
+    const activeProjectIds = new Set(
+      readExcelDatabase().projects
+        .filter((project) => project.status === "aktif")
+        .map((project) => project.id),
+    );
+    const projectIdsToFinish = completedProjectIds.filter((projectId) => activeProjectIds.has(projectId));
+    updateManyExcelProjects(projectIdsToFinish, { status: "selesai" });
+    return projectIdsToFinish;
+  }
+
+  if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return [];
+    }
+
+    const updatedProjectIds: string[] = [];
+    for (const projectIds of chunkArray(completedProjectIds, 100)) {
+      const { data, error } = await supabase
+        .from("projects")
+        .update({ status: "selesai" })
+        .in("id", projectIds)
+        .eq("status", "aktif")
+        .select("id");
+      if (error) {
+        console.warn("[kmp-material] gagal memperbarui status project lengkap.", error.message);
+        continue;
+      }
+      updatedProjectIds.push(...(data ?? []).map((project) => String(project.id ?? "")));
+    }
+    return updatedProjectIds.filter(Boolean);
+  }
+
+  const firestore = getFirestoreServerClient();
+  if (!firestore) {
+    return [];
+  }
+
+  const projectSnapshots = await Promise.all(
+    completedProjectIds.map((projectId) => firestore.collection("projects").doc(projectId).get()),
+  );
+  const projectIdsToFinish = projectSnapshots
+    .filter((snapshot) => snapshot.exists && snapshot.data()?.status === "aktif")
+    .map((snapshot) => snapshot.id);
+  if (projectIdsToFinish.length === 0) {
+    return [];
+  }
+
+  await runFirebaseWriteSafely(async () => {
+    const batch = firestore.batch();
+    for (const projectId of projectIdsToFinish) {
+      batch.set(firestore.collection("projects").doc(projectId), { status: "selesai" }, { merge: true });
+    }
+    await batch.commit();
+  });
+  return projectIdsToFinish;
+}
+
 export async function importTemplateDataToSupabase(parsed: ParsedTemplateImportData) {
   const supabase = getSupabaseServerClient();
   if (!supabase) {
@@ -1224,7 +1299,7 @@ export async function createHokExpenseEntries(
       total_amount: rows.reduce((sum, row) => sum + row.amount, 0),
     },
   });
-  await clearExpenseInputDraftForActor(actor.id);
+  await clearExpenseInputDraftForActorWithinTimeout(actor.id);
   if (successReturnTo) {
     redirect(
       withReturnParams(successReturnTo, (params) => {
@@ -1428,14 +1503,18 @@ export async function createScraperExpenseEntries(
     return;
   }
 
+  if (basePayload.category === "material") {
+    await completeKmpCianjurProjectsWithFullMaterialProgress();
+  }
   revalidateProjectPages();
+  revalidateProjectCache();
   revalidateExpenseCache();
   revalidatePath("/logs");
   queueActivityLog({
     actor,
     actionType: "create",
     module: "expense",
-    description: `Menambah data biaya mode scraper ke ${rows.length} project.`,
+    description: `Menambah ${rows.length} data biaya mode scraper.`,
     payload: {
       expense_mode: "scraper",
       project_ids: rows.map((row) => row.projectId),
@@ -1447,12 +1526,12 @@ export async function createScraperExpenseEntries(
       total_amount: rows.reduce((sum, row) => sum + row.amount, 0),
     },
   });
-  await clearExpenseInputDraftForActor(actor.id);
+  await clearExpenseInputDraftForActorWithinTimeout(actor.id);
   if (successReturnTo) {
     redirect(
       withReturnParams(successReturnTo, (params) => {
         params.delete("error");
-        params.set("success", `Data scraper berhasil disimpan ke ${rows.length} project.`);
+        params.set("success", `${rows.length} data scraper berhasil disimpan.`);
         params.set("expense_draft_clear", randomUUID());
         params.set("expense_action_token", randomUUID());
         params.set("expense_saved_mode", "scraper");

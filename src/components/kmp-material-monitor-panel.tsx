@@ -9,6 +9,7 @@ import {
   syncKmpMaterialProjectStatusesAction,
 } from "@/app/actions/expense.action";
 import { CheckIcon, CloseIcon, EyeIcon, SaveIcon, SearchIcon } from "@/components/icons";
+import { OptimisticExpenseCreateForm } from "@/components/optimistic-create-forms";
 import { formatCurrency, formatDate } from "@/lib/format";
 import {
   getKmpCianjurMaterialAmountOptions,
@@ -514,7 +515,7 @@ export function KmpMaterialMonitorPanel({
         </div>
       </div>
 
-      <form action={createExpenseAction} className="space-y-3">
+      <OptimisticExpenseCreateForm action={createExpenseAction} className="space-y-3">
         <input type="hidden" name="return_to" value={returnTo} />
         <input type="hidden" name="error_return_to" value={returnTo} />
         <input type="hidden" name="expense_input_mode" value="kmp_material_check" />
@@ -838,7 +839,7 @@ export function KmpMaterialMonitorPanel({
             })}
           </div>
         )}
-      </form>
+      </OptimisticExpenseCreateForm>
 
       {typeof document !== "undefined" && activeDetectedMaterial
         ? createPortal(

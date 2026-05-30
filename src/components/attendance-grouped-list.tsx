@@ -1,13 +1,19 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { deleteAttendanceAction } from "@/app/actions/attendance.action";
 import { AttendanceProjectSelectionToggle } from "@/components/attendance-project-selection-toggle";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { EditIcon, EyeIcon, TrashIcon } from "@/components/icons";
+import {
+  OptimisticMutationNotice,
+  useOptimisticMutation,
+} from "@/components/optimistic-mutation-notice";
 import { WORKER_TEAM_LABEL } from "@/lib/constants";
 import { formatCurrency } from "@/lib/format";
 import type { AttendanceRecord } from "@/lib/types";
+import { useOptimisticCreateStore } from "@/components/optimistic-create-store";
 
 type AttendanceGroup = {
   key: string;
@@ -54,6 +60,35 @@ function isRecapped(item: AttendanceRecord) {
   return item.projectId.trim().length > 0;
 }
 
+function getAttendanceFingerprint(item: AttendanceRecord) {
+  return [
+    item.workerName.trim().toLowerCase(),
+    item.teamType,
+    item.specialistTeamName?.trim().toLowerCase() ?? "",
+    item.attendanceDate,
+  ].join("|");
+}
+
+function getPendingGroup(item: AttendanceRecord): AttendanceGroup {
+  const teamLabel =
+    item.teamType === "spesialis"
+      ? `Tim Spesialis - ${item.specialistTeamName?.trim() || "Tim Spesialis"}`
+      : WORKER_TEAM_LABEL[item.teamType];
+  return {
+    key:
+      item.teamType === "spesialis"
+        ? `spesialis:${item.specialistTeamName?.trim().toLowerCase() || "tim spesialis"}`
+        : item.teamType,
+    label: teamLabel,
+    accent: item.teamType === "spesialis" ? "cyan" : item.teamType === "laden" ? "amber" : "slate",
+    rows: [item],
+  };
+}
+
+function isPendingAttendance(item: AttendanceRecord) {
+  return item.id.startsWith("pending-attendance-");
+}
+
 export function AttendanceGroupedList({
   groups,
   selectedIds,
@@ -62,18 +97,72 @@ export function AttendanceGroupedList({
   emptyAttendanceMessage,
 }: AttendanceGroupedListProps) {
   const selectedSet = new Set(selectedIds);
+  const { pendingAttendances } = useOptimisticCreateStore();
+  const mergedGroups = useMemo(() => {
+    const nextGroups = groups.map((group) => ({ ...group, rows: [...group.rows] }));
+    const storedFingerprints = new Set(
+      nextGroups.flatMap((group) => group.rows.map(getAttendanceFingerprint)),
+    );
+    for (const row of pendingAttendances) {
+      if (storedFingerprints.has(getAttendanceFingerprint(row))) {
+        continue;
+      }
+      const pendingGroup = getPendingGroup(row);
+      const existingGroup = nextGroups.find((group) => group.key === pendingGroup.key);
+      if (existingGroup) {
+        existingGroup.rows.push(row);
+      } else {
+        nextGroups.push(pendingGroup);
+      }
+    }
+    return nextGroups;
+  }, [groups, pendingAttendances]);
+  const [visibleGroups, setVisibleGroups] = useState(mergedGroups);
+  const { notice, runOptimisticMutation } = useOptimisticMutation();
 
-  if (groups.length === 0) {
+  useEffect(() => {
+    setVisibleGroups(mergedGroups);
+  }, [mergedGroups]);
+
+  const handleDeleteSubmit = (event: FormEvent<HTMLFormElement>, item: AttendanceRecord) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const snapshot = visibleGroups;
+    void runOptimisticMutation({
+      action: deleteAttendanceAction,
+      formData,
+      pendingMessage: `Menghapus absensi ${item.workerName}...`,
+      optimisticUpdate: () => {
+        setVisibleGroups((previous) =>
+          previous
+            .map((group) => ({
+              ...group,
+              rows: group.rows.filter((row) => row.id !== item.id),
+            }))
+            .filter((group) => group.rows.length > 0),
+        );
+      },
+      rollback: () => {
+        setVisibleGroups(snapshot);
+      },
+    });
+  };
+
+  if (visibleGroups.length === 0) {
     return (
-      <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-center text-xs text-slate-500">
-        {emptyAttendanceMessage}
-      </p>
+      <>
+        <OptimisticMutationNotice notice={notice} />
+        <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-center text-xs text-slate-500">
+          {emptyAttendanceMessage}
+        </p>
+      </>
     );
   }
 
   return (
     <>
-      {groups.map((group) => (
+      <OptimisticMutationNotice notice={notice} />
+      {visibleGroups.map((group) => (
         <article key={group.key} className="soft-card p-3.5 md:p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -121,6 +210,7 @@ export function AttendanceGroupedList({
                           data-attendance-selection="true"
                           data-attendance-scope={`team:${group.key}`}
                           defaultChecked={selectedSet.has(item.id)}
+                          disabled={isPendingAttendance(item)}
                           aria-label={`Pilih ${item.workerName}`}
                         />
                       </td>
@@ -183,7 +273,7 @@ export function AttendanceGroupedList({
                             </span>
                             Lihat
                           </Link>
-                          {canEdit ? (
+                          {canEdit && !isPendingAttendance(item) ? (
                             <>
                               <Link
                                 href={createAttendanceItemHref("/attendance/edit", item.id, returnToAttendance)}
@@ -194,7 +284,7 @@ export function AttendanceGroupedList({
                                 </span>
                                 Edit
                               </Link>
-                              <form action={deleteAttendanceAction}>
+                              <form onSubmit={(event) => handleDeleteSubmit(event, item)}>
                                 <input type="hidden" name="attendance_id" value={item.id} />
                                 <input type="hidden" name="return_to" value={returnToAttendance} />
                                 <ConfirmActionButton
@@ -208,6 +298,8 @@ export function AttendanceGroupedList({
                                 </ConfirmActionButton>
                               </form>
                             </>
+                          ) : isPendingAttendance(item) ? (
+                            <span className="text-[11px] font-semibold text-blue-600">Menyimpan...</span>
                           ) : null}
                         </div>
                       </td>

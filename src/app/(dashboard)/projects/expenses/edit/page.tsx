@@ -4,6 +4,7 @@ import { deleteExpenseAction } from "@/app/actions/expense.action";
 import { updateExpenseAction } from "@/app/actions/expense.action";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { SaveIcon, TrashIcon } from "@/components/icons";
+import { MutationSubmitButton } from "@/components/mutation-submit-button";
 import { RupiahInput } from "@/components/rupiah-input";
 import { requireProjectEditorUser } from "@/lib/auth";
 import { SPECIALIST_COST_PRESETS } from "@/lib/constants";
@@ -39,7 +40,7 @@ export default async function EditExpensePage({ searchParams }: EditExpensePageP
           </Link>
         </div>
 
-        <form action={updateExpenseAction} className="mt-4 space-y-3">
+        <form action={updateExpenseAction as (formData: FormData) => Promise<void>} className="mt-4 space-y-3">
           <input type="hidden" name="expense_id" value={expense.id} />
           <input
             type="hidden"
@@ -170,15 +171,18 @@ export default async function EditExpensePage({ searchParams }: EditExpensePageP
               <option value="kurangi">Kurangi</option>
             </select>
           </div>
-          <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600">
+          <MutationSubmitButton
+            pendingLabel="Menyimpan Biaya..."
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600"
+          >
             <span className="btn-icon icon-float-soft bg-white/20 text-white">
               <SaveIcon />
             </span>
             Simpan
-          </button>
+          </MutationSubmitButton>
         </form>
 
-        <form action={deleteExpenseAction} className="mt-3">
+        <form action={deleteExpenseAction as (formData: FormData) => Promise<void>} className="mt-3">
           <input type="hidden" name="expense_id" value={expense.id} />
           <input
             type="hidden"

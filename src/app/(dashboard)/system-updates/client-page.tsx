@@ -37,54 +37,57 @@ export function SystemUpdatesClient({ initialUpdates }: { initialUpdates: System
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
+    const featuresText = formData.get("features") as string;
+    const features = featuresText.split("\n").map((f) => f.trim()).filter((f) => f.length > 0);
+    const version = formData.get("version") as string;
+    const type = formData.get("type") as "update" | "announcement";
+    const id = formData.get("id") as string;
+    const snapshot = updates;
+    const optimisticId = id || `optimistic-${crypto.randomUUID()}`;
+    const optimisticEntry: SystemUpdate = {
+      id: optimisticId,
+      type,
+      version,
+      features,
+      releaseDate: editingData?.releaseDate ?? new Date().toISOString().slice(0, 10),
+      createdAt: editingData?.createdAt ?? new Date().toISOString(),
+    };
+
+    setUpdates((prev) =>
+      id
+        ? prev.map((update) => (update.id === id ? optimisticEntry : update))
+        : [optimisticEntry, ...prev],
+    );
+    setIsModalOpen(false);
+    setEditingData(null);
 
     startTransition(async () => {
       const res = await saveSystemUpdateAction(formData);
       if (res.error) {
+        setUpdates(snapshot);
         showFeedback(res.error, true);
       } else {
-        setIsModalOpen(false);
-        setEditingData(null);
-        showFeedback(editingData ? "Info sistem berhasil diperbarui." : "Info sistem baru berhasil dibuat.");
-        // Reload updates dari server (revalidatePath akan memperbarui data saat navigasi)
-        // Untuk sekarang optimistically update the list
-        const featuresText = formData.get("features") as string;
-        const features = featuresText.split("\n").map((f) => f.trim()).filter((f) => f.length > 0);
-        const version = formData.get("version") as string;
-        const type = formData.get("type") as "update" | "announcement";
-        const id = formData.get("id") as string;
-
-        if (id) {
+        if (res.update) {
+          const savedUpdate = res.update;
           setUpdates((prev) =>
-            prev.map((u) =>
-              u.id === id
-                ? { ...u, version, type, features }
-                : u,
-            ),
+            prev.map((update) => (update.id === optimisticId ? savedUpdate : update)),
           );
-        } else {
-          const newEntry: SystemUpdate = {
-            id: `optimistic-${Date.now()}`,
-            type,
-            version,
-            features,
-            releaseDate: new Date().toISOString().slice(0, 10),
-            createdAt: new Date().toISOString(),
-          };
-          setUpdates((prev) => [newEntry, ...prev]);
         }
+        showFeedback(id ? "Info sistem berhasil diperbarui." : "Info sistem baru berhasil dibuat.");
       }
     });
   }
 
   async function handleDelete(id: string, version: string) {
     if (!confirm(`Hapus info "${version}"? Aksi ini tidak bisa dibatalkan.`)) return;
+    const snapshot = updates;
+    setUpdates((prev) => prev.filter((u) => u.id !== id));
     startTransition(async () => {
       const res = await deleteSystemUpdateAction(id);
       if (res.error) {
+        setUpdates(snapshot);
         showFeedback(res.error, true);
       } else {
-        setUpdates((prev) => prev.filter((u) => u.id !== id));
         showFeedback(`Info "${version}" berhasil dihapus.`);
       }
     });

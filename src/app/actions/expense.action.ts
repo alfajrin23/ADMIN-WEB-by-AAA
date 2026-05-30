@@ -1,6 +1,6 @@
 "use server";
 import { createHash, randomUUID } from "node:crypto";
-import { getString, getStringList, getNumber, getStringValues, getNumberValues, getPositiveInteger, parseYearInput, replaceDateYearKeepingMonthDay, getReturnTo, withReturnMessage, withReturnParams, isChecked, revalidateProjectPages, revalidateProjectCache, revalidateExpenseCache, revalidateAttendanceCache, requireEditorActionUser, requireAttendanceActionUser, requireImportActionUser, requireLogsActionUser, createTimestamp, createDeterministicUuid, ensureSupabaseAttendanceDraftProjectId, resolveDraftAttendanceNotes, resolveFinalAttendanceNotes, parseAttendanceStatusValue, parseWorkerTeamValue, normalizeAttendanceIdentityText, createAttendanceMutationId, createPayrollResetMutationId, resolveAutoOvertimeWage, AttendanceDuplicateCheckInput, AttendanceDuplicateCheckRow, hasSameAttendanceIdentity, findDuplicateAttendanceRecord, getExpenseSubmissionToken, createExpenseMutationId, shouldSyncExpenseCategory, parseProjectInitialCategories, buildSupabaseCategoryRows, upsertSupabaseCategories, isFirebaseNotFoundError, hasWarnedFirebaseWriteDatabaseMissing, runFirebaseWriteSafely, deleteFirebaseDocsByField, ParsedTemplateImportData, normalizeImportText, normalizeImportNumber, buildImportExpenseSignature, chunkArray, importTemplateDataToSupabase, importTemplateDataToFirebase, getParsedCategory, getSpecialistType, getParsedWorkerTeam, getParsedReimburseType, resolveAmountByMode, getExpenseTargetProjectIds, parsePositiveAmount, createHokExpenseEntries, createScraperExpenseEntries, AttendanceRecapRowInput, resolveAttendanceExportRowId, buildAttendanceRecapRowsFromFormData, ensureSupabaseWriteConfigured, getSupabaseMutationErrorMessage } from "./utils";
+import { getString, getStringList, getNumber, getStringValues, getNumberValues, getPositiveInteger, parseYearInput, replaceDateYearKeepingMonthDay, getReturnTo, withReturnMessage, withReturnParams, isChecked, revalidateProjectPages, revalidateProjectCache, revalidateExpenseCache, revalidateAttendanceCache, requireEditorActionUser, requireAttendanceActionUser, requireImportActionUser, requireLogsActionUser, createTimestamp, createDeterministicUuid, ensureSupabaseAttendanceDraftProjectId, resolveDraftAttendanceNotes, resolveFinalAttendanceNotes, parseAttendanceStatusValue, parseWorkerTeamValue, normalizeAttendanceIdentityText, createAttendanceMutationId, createPayrollResetMutationId, resolveAutoOvertimeWage, AttendanceDuplicateCheckInput, AttendanceDuplicateCheckRow, hasSameAttendanceIdentity, findDuplicateAttendanceRecord, getExpenseSubmissionToken, createExpenseMutationId, shouldSyncExpenseCategory, parseProjectInitialCategories, buildSupabaseCategoryRows, upsertSupabaseCategories, isFirebaseNotFoundError, hasWarnedFirebaseWriteDatabaseMissing, runFirebaseWriteSafely, deleteFirebaseDocsByField, ParsedTemplateImportData, normalizeImportText, normalizeImportNumber, buildImportExpenseSignature, chunkArray, importTemplateDataToSupabase, importTemplateDataToFirebase, getParsedCategory, getSpecialistType, getParsedWorkerTeam, getParsedReimburseType, resolveAmountByMode, getExpenseTargetProjectIds, parsePositiveAmount, createHokExpenseEntries, createScraperExpenseEntries, AttendanceRecapRowInput, resolveAttendanceExportRowId, buildAttendanceRecapRowsFromFormData, ensureSupabaseWriteConfigured, getSupabaseMutationErrorMessage, returnOptimisticErrorOrRedirect } from "./utils";
 import { completeKmpCianjurProjectsWithFullMaterialProgress } from "./utils";
 
 import { revalidatePath } from "next/cache";
@@ -73,6 +73,11 @@ import {
   omitSpecialistTeamNameField,
   withSupabaseSpecialistTeamNameFallback,
 } from "@/lib/supabase";
+import {
+  isOptimisticUiRequest,
+  optimisticActionError,
+  optimisticActionSuccess,
+} from "@/lib/optimistic-ui";
 export async function createExpenseAction(formData: FormData) {
   const actor = await requireEditorActionUser();
   const successReturnTo = getReturnTo(formData) ?? "/projects";
@@ -298,8 +303,11 @@ export async function updateExpenseAction(formData: FormData) {
   const parsedCategory = getParsedCategory(formData);
   const returnTo = getReturnTo(formData) ?? "/projects";
   if (!expenseId || !projectId || !parsedCategory || !Number.isFinite(amount) || amount === 0) {
-    redirect(withReturnMessage(returnTo, "error", "Data biaya yang akan diperbarui tidak valid."));
-    return;
+    return returnOptimisticErrorOrRedirect(
+      formData,
+      returnTo,
+      "Data biaya yang akan diperbarui tidak valid.",
+    );
   }
   const specialistType = getSpecialistType(formData, parsedCategory);
 
@@ -324,10 +332,12 @@ export async function updateExpenseAction(formData: FormData) {
   } else if (activeDataSource === "supabase") {
     const supabase = getSupabaseServerClient();
     if (!supabase) {
-      return;
+      return isOptimisticUiRequest(formData)
+        ? optimisticActionError("Supabase belum terkonfigurasi.")
+        : undefined;
     }
-    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal memperbarui data biaya.")) {
-      return;
+    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal memperbarui data biaya.", formData)) {
+      return optimisticActionError(getSupabaseMutationErrorMessage("Gagal memperbarui data biaya."));
     }
     await upsertSupabaseCategories(supabase, [excelPayload.category]);
     const { error } = await supabase
@@ -348,7 +358,11 @@ export async function updateExpenseAction(formData: FormData) {
       })
       .eq("id", excelPayload.id);
     if (error) {
-      redirect(withReturnMessage(returnTo ?? "/projects", "error", getSupabaseMutationErrorMessage("Gagal memperbarui data biaya.")));
+      return returnOptimisticErrorOrRedirect(
+        formData,
+        returnTo ?? "/projects",
+        getSupabaseMutationErrorMessage("Gagal memperbarui data biaya."),
+      );
     }
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
@@ -400,6 +414,9 @@ export async function updateExpenseAction(formData: FormData) {
       expense_date: excelPayload.expense_date,
     },
   });
+  if (isOptimisticUiRequest(formData)) {
+    return optimisticActionSuccess("Data biaya berhasil diperbarui.");
+  }
   redirect(withReturnMessage(returnTo, "success", "Data biaya berhasil diperbarui."));
 }
 export async function updateManyExpensesAction(formData: FormData) {
@@ -499,10 +516,12 @@ export async function updateManyExpensesAction(formData: FormData) {
   } else if (activeDataSource === "supabase") {
     const supabase = getSupabaseServerClient();
     if (!supabase) {
-      return;
+      return isOptimisticUiRequest(formData)
+        ? optimisticActionError("Supabase belum terkonfigurasi.")
+        : undefined;
     }
-    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal memperbarui data biaya.")) {
-      return;
+    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal memperbarui data biaya.", formData)) {
+      return optimisticActionError(getSupabaseMutationErrorMessage("Gagal memperbarui data biaya."));
     }
     if (patch.category) {
       await upsertSupabaseCategories(supabase, [patch.category]);
@@ -514,36 +533,52 @@ export async function updateManyExpensesAction(formData: FormData) {
         .in("id", expenseIds);
       if (existingRowsError || !existingRows) {
         if (existingRowsError) {
-          redirect(withReturnMessage(returnTo ?? "/projects", "error", getSupabaseMutationErrorMessage("Gagal memperbarui data biaya.")));
+          return returnOptimisticErrorOrRedirect(
+            formData,
+            returnTo ?? "/projects",
+            getSupabaseMutationErrorMessage("Gagal memperbarui data biaya."),
+          );
         }
         return;
       }
 
-      for (const chunk of chunkArray(existingRows, 50)) {
-        await Promise.all(
-          chunk.map(async (row) => {
-            const id = String(row.id ?? "").trim();
-            if (!id) {
-              return;
-            }
-            const nextExpenseDate = getReplacedDate(row.expense_date);
-            const { error } = await supabase
-              .from("project_expenses")
-              .update({
-                ...patch,
-                expense_date: nextExpenseDate,
-              })
-              .eq("id", id);
-            if (error) {
-              throw error;
-            }
-          }),
+      try {
+        for (const chunk of chunkArray(existingRows, 50)) {
+          await Promise.all(
+            chunk.map(async (row) => {
+              const id = String(row.id ?? "").trim();
+              if (!id) {
+                return;
+              }
+              const nextExpenseDate = getReplacedDate(row.expense_date);
+              const { error } = await supabase
+                .from("project_expenses")
+                .update({
+                  ...patch,
+                  expense_date: nextExpenseDate,
+                })
+                .eq("id", id);
+              if (error) {
+                throw error;
+              }
+            }),
+          );
+        }
+      } catch {
+        return returnOptimisticErrorOrRedirect(
+          formData,
+          returnTo ?? "/projects",
+          getSupabaseMutationErrorMessage("Gagal memperbarui data biaya."),
         );
       }
     } else {
       const { error } = await supabase.from("project_expenses").update(patch).in("id", expenseIds);
       if (error) {
-        redirect(withReturnMessage(returnTo ?? "/projects", "error", getSupabaseMutationErrorMessage("Gagal memperbarui data biaya.")));
+        return returnOptimisticErrorOrRedirect(
+          formData,
+          returnTo ?? "/projects",
+          getSupabaseMutationErrorMessage("Gagal memperbarui data biaya."),
+        );
       }
     }
   } else if (activeDataSource === "firebase") {
@@ -611,6 +646,9 @@ export async function updateManyExpensesAction(formData: FormData) {
       fields: updateFields,
     },
   });
+  if (isOptimisticUiRequest(formData)) {
+    return optimisticActionSuccess(`${expenseIds.length} data biaya berhasil diperbarui.`);
+  }
   redirect(withReturnMessage(returnTo, "success", `${expenseIds.length} data biaya berhasil diperbarui.`));
 }
 export async function deleteManyExpensesAction(formData: FormData) {
@@ -627,14 +665,20 @@ export async function deleteManyExpensesAction(formData: FormData) {
   } else if (activeDataSource === "supabase") {
     const supabase = getSupabaseServerClient();
     if (!supabase) {
-      return;
+      return isOptimisticUiRequest(formData)
+        ? optimisticActionError("Supabase belum terkonfigurasi.")
+        : undefined;
     }
-    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal menghapus data biaya.")) {
-      return;
+    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal menghapus data biaya.", formData)) {
+      return optimisticActionError(getSupabaseMutationErrorMessage("Gagal menghapus data biaya."));
     }
     const { error } = await supabase.from("project_expenses").delete().in("id", expenseIds);
     if (error) {
-      redirect(withReturnMessage(returnTo ?? "/projects", "error", getSupabaseMutationErrorMessage("Gagal menghapus data biaya.")));
+      return returnOptimisticErrorOrRedirect(
+        formData,
+        returnTo ?? "/projects",
+        getSupabaseMutationErrorMessage("Gagal menghapus data biaya."),
+      );
     }
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
@@ -674,6 +718,9 @@ export async function deleteManyExpensesAction(formData: FormData) {
       expense_ids: expenseIds,
     },
   });
+  if (isOptimisticUiRequest(formData)) {
+    return optimisticActionSuccess(`${expenseIds.length} data biaya berhasil dihapus.`);
+  }
   redirect(withReturnMessage(returnTo, "success", `${expenseIds.length} data biaya berhasil dihapus.`));
 }
 export async function deleteExpenseAction(formData: FormData) {
@@ -689,14 +736,20 @@ export async function deleteExpenseAction(formData: FormData) {
   } else if (activeDataSource === "supabase") {
     const supabase = getSupabaseServerClient();
     if (!supabase) {
-      return;
+      return isOptimisticUiRequest(formData)
+        ? optimisticActionError("Supabase belum terkonfigurasi.")
+        : undefined;
     }
-    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal menghapus data biaya.")) {
-      return;
+    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal menghapus data biaya.", formData)) {
+      return optimisticActionError(getSupabaseMutationErrorMessage("Gagal menghapus data biaya."));
     }
     const { error } = await supabase.from("project_expenses").delete().eq("id", expenseId);
     if (error) {
-      redirect(withReturnMessage(returnTo ?? "/projects", "error", getSupabaseMutationErrorMessage("Gagal menghapus data biaya.")));
+      return returnOptimisticErrorOrRedirect(
+        formData,
+        returnTo ?? "/projects",
+        getSupabaseMutationErrorMessage("Gagal menghapus data biaya."),
+      );
     }
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
@@ -720,6 +773,9 @@ export async function deleteExpenseAction(formData: FormData) {
     entityId: expenseId,
     description: "Menghapus data biaya project.",
   });
+  if (isOptimisticUiRequest(formData)) {
+    return optimisticActionSuccess("Data biaya berhasil dihapus.");
+  }
   redirect(withReturnMessage(returnTo, "success", "Data biaya berhasil dihapus."));
 }
 

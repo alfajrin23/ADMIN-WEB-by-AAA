@@ -1,10 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { deleteExpenseAction } from "@/app/actions/expense.action";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { EditIcon, TrashIcon } from "@/components/icons";
+import {
+  OptimisticMutationNotice,
+  useOptimisticMutation,
+} from "@/components/optimistic-mutation-notice";
 import {
   getCostCategoryLabel,
   getCostCategoryStyle,
@@ -13,6 +17,7 @@ import {
 } from "@/lib/constants";
 import { formatCurrency, formatDate } from "@/lib/format";
 import type { ExpenseEntry } from "@/lib/types";
+import { useOptimisticCreateStore } from "@/components/optimistic-create-store";
 
 type ExpenseCategoryOption = {
   value: string;
@@ -99,6 +104,21 @@ function createProjectsHref(params: {
   return `/projects?${query.toString()}`;
 }
 
+function getExpenseFingerprint(item: ExpenseEntry) {
+  return [
+    item.projectId,
+    item.category,
+    item.requesterName ?? "",
+    item.description ?? "",
+    item.amount,
+    item.expenseDate,
+  ].join("|");
+}
+
+function isPendingExpense(item: ExpenseEntry) {
+  return item.id.startsWith("pending-expense-");
+}
+
 export function ProjectRecapExpenseList({
   projectId,
   expenses,
@@ -109,6 +129,22 @@ export function ProjectRecapExpenseList({
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
+  const { pendingExpenses } = useOptimisticCreateStore();
+  const mergedExpenses = useMemo(() => {
+    const storedFingerprints = new Set(expenses.map(getExpenseFingerprint));
+    return [
+      ...expenses,
+      ...pendingExpenses.filter(
+        (item) => item.projectId === projectId && !storedFingerprints.has(getExpenseFingerprint(item)),
+      ),
+    ];
+  }, [expenses, pendingExpenses, projectId]);
+  const [visibleExpenses, setVisibleExpenses] = useState(mergedExpenses);
+  const { notice, runOptimisticMutation } = useOptimisticMutation();
+
+  useEffect(() => {
+    setVisibleExpenses(mergedExpenses);
+  }, [mergedExpenses]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearchQuery(searchQuery), 1000);
@@ -117,14 +153,32 @@ export function ProjectRecapExpenseList({
 
   const sortedExpenses = useMemo(
     () =>
-      expenses.slice().sort((a, b) => {
+      visibleExpenses.slice().sort((a, b) => {
         if (a.expenseDate !== b.expenseDate) {
           return a.expenseDate.localeCompare(b.expenseDate);
         }
         return (a.requesterName ?? "").localeCompare(b.requesterName ?? "", "id-ID");
       }),
-    [expenses],
+    [visibleExpenses],
   );
+
+  const handleDeleteSubmit = (event: FormEvent<HTMLFormElement>, item: ExpenseEntry) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    void runOptimisticMutation({
+      action: deleteExpenseAction,
+      formData,
+      pendingMessage: "Menghapus data biaya...",
+      optimisticUpdate: () => {
+        setVisibleExpenses((previous) => previous.filter((expense) => expense.id !== item.id));
+      },
+      rollback: () => {
+        setVisibleExpenses((previous) =>
+          previous.some((expense) => expense.id === item.id) ? previous : [...previous, item],
+        );
+      },
+    });
+  };
 
   const categoryOptions = useMemo(
     () => mergeExpenseCategoryOptions(expenseCategories, sortedExpenses.map((item) => item.category)),
@@ -200,6 +254,7 @@ export function ProjectRecapExpenseList({
 
   return (
     <div className="space-y-4">
+      <OptimisticMutationNotice notice={notice} />
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px_auto]">
           <div>
@@ -317,7 +372,7 @@ export function ProjectRecapExpenseList({
             </p>
 
             <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-              {canEdit ? (
+              {canEdit && !isPendingExpense(item) ? (
                 <>
                   <Link
                     href={`/projects/expenses/edit?id=${item.id}`}
@@ -328,7 +383,7 @@ export function ProjectRecapExpenseList({
                     </span>
                     Edit
                   </Link>
-                  <form action={deleteExpenseAction}>
+                  <form onSubmit={(event) => handleDeleteSubmit(event, item)}>
                     <input type="hidden" name="expense_id" value={item.id} />
                     <input
                       type="hidden"
@@ -350,6 +405,8 @@ export function ProjectRecapExpenseList({
                     </ConfirmActionButton>
                   </form>
                 </>
+              ) : isPendingExpense(item) ? (
+                <span className="text-xs font-semibold text-blue-600">Menyimpan...</span>
               ) : (
                 <span className="text-xs font-medium text-slate-500">Viewer</span>
               )}
@@ -412,7 +469,7 @@ export function ProjectRecapExpenseList({
                   </td>
                   <td className="align-top">
                     <div className="flex flex-col items-end gap-1.5">
-                      {canEdit ? (
+                      {canEdit && !isPendingExpense(item) ? (
                         <>
                           <Link
                             href={`/projects/expenses/edit?id=${item.id}`}
@@ -423,7 +480,7 @@ export function ProjectRecapExpenseList({
                             </span>
                             Edit
                           </Link>
-                          <form action={deleteExpenseAction}>
+                          <form onSubmit={(event) => handleDeleteSubmit(event, item)}>
                             <input type="hidden" name="expense_id" value={item.id} />
                             <input
                               type="hidden"
@@ -445,6 +502,8 @@ export function ProjectRecapExpenseList({
                             </ConfirmActionButton>
                           </form>
                         </>
+                      ) : isPendingExpense(item) ? (
+                        <span className="text-xs font-semibold text-blue-600">Menyimpan...</span>
                       ) : (
                         <span className="text-xs font-medium text-slate-500">Viewer</span>
                       )}

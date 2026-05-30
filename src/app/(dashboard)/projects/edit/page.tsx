@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { updateProjectAction } from "@/app/actions/project.action";
 import { SaveIcon } from "@/components/icons";
+import { MutationSubmitButton } from "@/components/mutation-submit-button";
 import { requireProjectEditorUser } from "@/lib/auth";
 import { PROJECT_STATUSES } from "@/lib/constants";
 import { getProjectById } from "@/lib/data";
@@ -62,12 +63,15 @@ export default async function EditProjectPage({ searchParams }: EditProjectPageP
             <label className="mb-1 block text-xs font-medium text-slate-500">Tanggal mulai</label>
             <input type="date" name="start_date" defaultValue={project.startDate ?? ""} />
           </div>
-          <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600">
+          <MutationSubmitButton
+            pendingLabel="Menyimpan Perubahan..."
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600"
+          >
             <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
               <SaveIcon />
             </span>
             Simpan Perubahan
-          </button>
+          </MutationSubmitButton>
         </form>
       </section>
     </div>

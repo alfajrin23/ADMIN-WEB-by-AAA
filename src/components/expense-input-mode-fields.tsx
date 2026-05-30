@@ -19,6 +19,7 @@ import {
 } from "@/app/actions/expense-draft.action";
 import { createScraperExpenseQuickAction } from "@/app/actions/expense.action";
 import { EnterToNextField } from "@/components/enter-to-next-field";
+import { useOptimisticCreateStore } from "@/components/optimistic-create-store";
 import { ProjectAutocomplete, PROJECT_AUTOCOMPLETE_SELECT_EVENT } from "@/components/project-autocomplete";
 import { ProjectChecklistSearch } from "@/components/project-checklist-search";
 import { ProjectScopedAutocompleteInput } from "@/components/project-scoped-autocomplete-input";
@@ -28,6 +29,7 @@ import { ClipboardIcon, ExcelIcon, SaveIcon } from "@/components/icons";
 import { SuccessToast } from "@/components/success-toast";
 import { parseHokClipboardText, parseHokImportRows, type HokImportResult } from "@/lib/hok-import";
 import { SPECIALIST_COST_PRESETS } from "@/lib/constants";
+import type { ExpenseEntry } from "@/lib/types";
 
 type ProjectOption = {
   id: string;
@@ -511,6 +513,7 @@ export function ExpenseInputModeFields({
   formId = "expense-modal-form",
 }: ExpenseInputModeFieldsProps) {
   const router = useRouter();
+  const { addPendingExpenses, removePendingExpenseIds } = useOptimisticCreateStore();
   const searchParams = useSearchParams();
   const expenseSavedModeParam = searchParams.get("expense_saved_mode")?.trim() ?? "";
   const expenseSavedMode = expenseSavedModeParam ? resolveDraftMode(expenseSavedModeParam) : null;
@@ -1414,6 +1417,31 @@ export function ExpenseInputModeFields({
     setContinueError("");
     setScraperSuccessMessage("");
     setIsScraperSaving(true);
+    const pendingExpenses = scraperRows.flatMap<ExpenseEntry>((row) => {
+      const amount = Number(normalizeDigits(row.amountRaw));
+      if (!row.projectId.trim() || !Number.isFinite(amount) || amount <= 0) {
+        return [];
+      }
+      return [{
+        id: `pending-expense-${crypto.randomUUID()}`,
+        projectId: row.projectId,
+        projectName: projects.find((project) => project.id === row.projectId)?.name,
+        category: scraperCategory,
+        specialistType: null,
+        requesterName: scraperRequester || null,
+        description: scraperDescription || null,
+        recipientName: null,
+        quantity: 0,
+        unitLabel: null,
+        usageInfo: "Menyimpan data scraper ke database...",
+        unitPrice: 0,
+        amount,
+        expenseDate: scraperDate,
+        createdAt: new Date().toISOString(),
+      }];
+    });
+    const pendingExpenseIds = pendingExpenses.map((row) => row.id);
+    addPendingExpenses(pendingExpenses);
     let timeoutId: number | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timeoutId = window.setTimeout(
@@ -1427,6 +1455,7 @@ export function ExpenseInputModeFields({
     ])
       .then((result) => {
         if (!result.ok) {
+          removePendingExpenseIds(pendingExpenseIds);
           setScraperError(result.message);
           return;
         }
@@ -1437,6 +1466,9 @@ export function ExpenseInputModeFields({
         router.refresh();
       })
       .catch((error: unknown) => {
+        if (!(error instanceof Error && error.message === "SCRAPER_SAVE_TIMEOUT")) {
+          removePendingExpenseIds(pendingExpenseIds);
+        }
         setScraperError(
           error instanceof Error && error.message === "SCRAPER_SAVE_TIMEOUT"
             ? "Respons server terlalu lama. Data mungkin sudah tersimpan. Periksa rekap sebelum mencoba simpan ulang."
@@ -1449,7 +1481,20 @@ export function ExpenseInputModeFields({
         }
         setIsScraperSaving(false);
       });
-  }, [isScraperSaving, resetExpenseDraftAfterSave, router, validateScraperRows]);
+  }, [
+    addPendingExpenses,
+    isScraperSaving,
+    projects,
+    removePendingExpenseIds,
+    resetExpenseDraftAfterSave,
+    router,
+    scraperCategory,
+    scraperDate,
+    scraperDescription,
+    scraperRequester,
+    scraperRows,
+    validateScraperRows,
+  ]);
 
   useEffect(() => {
     if (!hokError || mode !== HOK_MODE) {

@@ -30,6 +30,12 @@ import {
 } from "@/lib/roles";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import { checkRateLimit, LOGIN_RATE_LIMIT, REGISTER_RATE_LIMIT } from "@/lib/rate-limit";
+import {
+  isOptimisticUiRequest,
+  optimisticActionError,
+  optimisticActionSuccess,
+  type OptimisticActionResult,
+} from "@/lib/optimistic-ui";
 
 function getString(formData: FormData, key: string) {
   const value = formData.get(key);
@@ -49,6 +55,17 @@ function toErrorRedirect(pathname: string, message: string) {
 function toSuccessRedirect(pathname: string, message: string) {
   const params = new URLSearchParams({ success: message });
   return `${pathname}?${params.toString()}`;
+}
+
+function returnOptimisticAuthErrorOrRedirect(
+  formData: FormData,
+  pathname: string,
+  message: string,
+): OptimisticActionResult {
+  if (isOptimisticUiRequest(formData)) {
+    return optimisticActionError(message);
+  }
+  redirect(toErrorRedirect(pathname, message));
 }
 
 function revalidateRolePages() {
@@ -608,29 +625,41 @@ export async function deleteRoleAction(formData: FormData) {
   const roleKey = normalizeRoleKey(getString(formData, "role_key"));
 
   if (!roleKey) {
-    redirect(toErrorRedirect(returnTo, "Role tidak valid."));
+    return returnOptimisticAuthErrorOrRedirect(formData, returnTo, "Role tidak valid.");
   }
   if (isBuiltInRoleKey(roleKey)) {
-    redirect(toErrorRedirect(returnTo, "Role bawaan sistem tidak dapat dihapus."));
+    return returnOptimisticAuthErrorOrRedirect(
+      formData,
+      returnTo,
+      "Role bawaan sistem tidak dapat dihapus.",
+    );
   }
 
   const supabase = getSupabaseServerClient();
   if (!supabase) {
-    redirect(toErrorRedirect(returnTo, "Supabase belum terkonfigurasi."));
+    return returnOptimisticAuthErrorOrRedirect(
+      formData,
+      returnTo,
+      "Supabase belum terkonfigurasi.",
+    );
   }
 
   const roleCatalog = await getRoleCatalog();
   const targetRole = roleCatalog.find((role) => role.key === roleKey);
   if (!targetRole) {
-    redirect(toErrorRedirect(returnTo, "Role tidak ditemukan."));
+    return returnOptimisticAuthErrorOrRedirect(formData, returnTo, "Role tidak ditemukan.");
   }
   if ((targetRole.userCount ?? 0) > 0) {
-    redirect(toErrorRedirect(returnTo, "Role masih dipakai user dan tidak bisa dihapus."));
+    return returnOptimisticAuthErrorOrRedirect(
+      formData,
+      returnTo,
+      "Role masih dipakai user dan tidak bisa dihapus.",
+    );
   }
 
   const deleteResult = await supabase.from("app_roles").delete().eq("role_key", roleKey);
   if (deleteResult.error) {
-    redirect(toErrorRedirect(returnTo, "Gagal menghapus role."));
+    return returnOptimisticAuthErrorOrRedirect(formData, returnTo, "Gagal menghapus role.");
   }
 
   queueActivityLog({
@@ -643,6 +672,9 @@ export async function deleteRoleAction(formData: FormData) {
   });
 
   revalidateRolePages();
+  if (isOptimisticUiRequest(formData)) {
+    return optimisticActionSuccess("Role berhasil dihapus.");
+  }
   redirect(toSuccessRedirect(returnTo, "Role berhasil dihapus."));
 }
 

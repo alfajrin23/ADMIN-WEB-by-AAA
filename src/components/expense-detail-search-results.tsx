@@ -1,12 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
-import { deleteManyExpensesAction, deleteExpenseAction } from "@/app/actions/expense.action";
-import { updateManyExpensesAction } from "@/app/actions/expense.action";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  deleteManyExpensesAction,
+  deleteExpenseAction,
+  updateExpenseAction,
+  updateManyExpensesAction,
+} from "@/app/actions/expense.action";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { CloseIcon, EditIcon, EyeIcon, SaveIcon, TrashIcon } from "@/components/icons";
 import { EditExpenseModal } from "@/components/edit-expense-modal";
+import {
+  OptimisticMutationNotice,
+  useOptimisticMutation,
+} from "@/components/optimistic-mutation-notice";
 import {
   getCostCategoryLabel,
   getCostCategoryStyle,
@@ -111,6 +119,7 @@ type ExpenseResultActionsProps = {
   bulkEditReturnTo: string;
   projectSearchText?: string;
   onEdit: (expenseId: string) => void;
+  onDeleteSubmit: (event: FormEvent<HTMLFormElement>, item: ProjectExpenseSearchResult) => void;
 };
 
 function ExpenseResultActions({
@@ -119,6 +128,7 @@ function ExpenseResultActions({
   bulkEditReturnTo,
   projectSearchText,
   onEdit,
+  onDeleteSubmit,
 }: ExpenseResultActionsProps) {
   return (
     <div className="flex min-w-0 flex-col gap-2">
@@ -143,7 +153,7 @@ function ExpenseResultActions({
             </span>
             Edit
           </button>
-          <form action={deleteExpenseAction} className="w-full">
+          <form onSubmit={(event) => onDeleteSubmit(event, item)} className="w-full">
             <input type="hidden" name="expense_id" value={item.expenseId} />
             <input type="hidden" name="return_to" value={bulkEditReturnTo} />
             <ConfirmActionButton
@@ -191,13 +201,15 @@ export function ExpenseDetailSearchResults({
   const [applyUsageInfo, setApplyUsageInfo] = useState(false);
   const [applyRecipientName, setApplyRecipientName] = useState(false);
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
+  const [visibleResults, setVisibleResults] = useState(results);
+  const { notice, runOptimisticMutation } = useOptimisticMutation();
   const currentYear = useMemo(() => String(new Date().getFullYear()), []);
   const currentMonth = useMemo(() => new Date().getMonth() + 1, []);
   const currentDate = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const projectOptions = useMemo(
     () =>
       Array.from(
-        results.reduce((map, item) => {
+        visibleResults.reduce((map, item) => {
           if (!map.has(item.projectId)) {
             map.set(item.projectId, item.projectName);
           }
@@ -206,14 +218,14 @@ export function ExpenseDetailSearchResults({
       )
         .map(([value, label]) => ({ value, label }))
         .sort((a, b) => a.label.localeCompare(b.label, "id-ID")),
-    [results],
+    [visibleResults],
   );
   const categoryOptions = useMemo(() => {
     const categoryMap = new Map<string, string>();
     for (const item of expenseCategories) {
       categoryMap.set(item.value, item.label);
     }
-    for (const item of results) {
+    for (const item of visibleResults) {
       if (!categoryMap.has(item.category)) {
         categoryMap.set(item.category, getCostCategoryLabel(item.category));
       }
@@ -221,11 +233,11 @@ export function ExpenseDetailSearchResults({
     return Array.from(categoryMap.entries())
       .map(([value, label]) => ({ value, label }))
       .sort((a, b) => a.label.localeCompare(b.label, "id-ID"));
-  }, [expenseCategories, results]);
+  }, [expenseCategories, visibleResults]);
 
   const filteredResults = useMemo(() => {
     const normalizedFilterQuery = normalizeFilterQuery(filterQuery);
-    return results.filter((item) => {
+    return visibleResults.filter((item) => {
       if (filterProjectId && item.projectId !== filterProjectId) {
         return false;
       }
@@ -258,7 +270,7 @@ export function ExpenseDetailSearchResults({
       const amountDigits = getDigits(String(Math.round(Math.abs(item.amount))));
       return amountDigits.includes(queryDigits);
     });
-  }, [filterCategory, filterDate, filterProjectId, filterQuery, results]);
+  }, [filterCategory, filterDate, filterProjectId, filterQuery, visibleResults]);
   const filteredExpenseIds = useMemo(
     () => Array.from(new Set(filteredResults.map((item) => item.expenseId))),
     [filteredResults],
@@ -274,8 +286,132 @@ export function ExpenseDetailSearchResults({
   const isBulkActionDisabled = filteredExpenseIds.length === 0;
   const hasLocalFilters = Boolean(filterQuery || filterProjectId || filterCategory || filterDate);
 
+  useEffect(() => {
+    setVisibleResults(results);
+  }, [results]);
+
+  const handleDeleteSubmit = (
+    event: FormEvent<HTMLFormElement>,
+    item: ProjectExpenseSearchResult,
+  ) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    void runOptimisticMutation({
+      action: deleteExpenseAction,
+      formData,
+      pendingMessage: "Menghapus data biaya...",
+      optimisticUpdate: () => {
+        setVisibleResults((previous) =>
+          previous.filter((result) => result.expenseId !== item.expenseId),
+        );
+      },
+      rollback: () => {
+        setVisibleResults((previous) =>
+          previous.some((result) => result.expenseId === item.expenseId)
+            ? previous
+            : [...previous, item],
+        );
+      },
+    });
+  };
+
+  const handleDeleteManySubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const deletedIds = new Set(filteredExpenseIds);
+    const snapshot = visibleResults.filter((item) => deletedIds.has(item.expenseId));
+    void runOptimisticMutation({
+      action: deleteManyExpensesAction,
+      formData,
+      pendingMessage: `Menghapus ${deletedIds.size} data biaya...`,
+      optimisticUpdate: () => {
+        setVisibleResults((previous) =>
+          previous.filter((item) => !deletedIds.has(item.expenseId)),
+        );
+      },
+      rollback: () => {
+        setVisibleResults((previous) => {
+          const existingIds = new Set(previous.map((item) => item.expenseId));
+          return [...previous, ...snapshot.filter((item) => !existingIds.has(item.expenseId))];
+        });
+      },
+    });
+  };
+
+  const handleUpdateManySubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const updatedIds = new Set(filteredExpenseIds);
+    const snapshot = visibleResults;
+    const has = (key: string) => formData.get(key) === "1";
+    const text = (key: string) => String(formData.get(key) ?? "").trim();
+    const nextCategory = text("category_custom") || text("category");
+    const nextDate = text("expense_date");
+    const nextMonth = text("expense_month").padStart(2, "0");
+    const nextYear = text("expense_year").padStart(4, "0");
+
+    void runOptimisticMutation({
+      action: updateManyExpensesAction,
+      formData,
+      pendingMessage: `Memperbarui ${updatedIds.size} data biaya...`,
+      optimisticUpdate: () => {
+        setVisibleResults((previous) =>
+          previous.map((item) => {
+            if (!updatedIds.has(item.expenseId)) {
+              return item;
+            }
+            let expenseDate = item.expenseDate;
+            if (has("apply_expense_year") || has("apply_expense_month")) {
+              const [year, month, day] = item.expenseDate.split("-");
+              expenseDate = `${has("apply_expense_year") ? nextYear : year}-${
+                has("apply_expense_month") ? nextMonth : month
+              }-${day}`;
+            } else if (has("apply_expense_date") && nextDate) {
+              expenseDate = nextDate;
+            }
+            return {
+              ...item,
+              ...(has("apply_category") && nextCategory ? { category: nextCategory } : {}),
+              ...(has("apply_requester_name") ? { requesterName: text("requester_name") || null } : {}),
+              ...(has("apply_description") ? { description: text("description") || null } : {}),
+              ...(has("apply_usage_info") ? { usageInfo: text("usage_info") || null } : {}),
+              ...(has("apply_recipient_name") ? { recipientName: text("recipient_name") || null } : {}),
+              expenseDate,
+            };
+          }),
+        );
+        setIsBulkEditorOpen(false);
+      },
+      rollback: () => {
+        setVisibleResults(snapshot);
+      },
+    });
+  };
+
+  const handleOptimisticExpenseSave = (
+    formData: FormData,
+    nextValue: ProjectExpenseSearchResult,
+  ) => {
+    const snapshot = visibleResults;
+    setEditingExpenseId(null);
+    void runOptimisticMutation({
+      action: updateExpenseAction,
+      formData,
+      pendingMessage: "Memperbarui data biaya...",
+      optimisticUpdate: () => {
+        setVisibleResults((previous) =>
+          previous.map((item) => (item.expenseId === nextValue.expenseId ? nextValue : item)),
+        );
+      },
+      rollback: () => {
+        setVisibleResults(snapshot);
+      },
+    });
+  };
+
   return (
     <div className="space-y-2">
+      <OptimisticMutationNotice notice={notice} />
       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
         <label className="mb-1 block text-xs font-semibold text-slate-600">Filter hasil pencarian</label>
         <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
@@ -331,7 +467,7 @@ export function ExpenseDetailSearchResults({
           />
         </div>
         <p className="mt-2 text-xs text-slate-500">
-          Menampilkan {filteredResults.length} dari {results.length} data.
+          Menampilkan {filteredResults.length} dari {visibleResults.length} data.
         </p>
       </div>
 
@@ -354,7 +490,7 @@ export function ExpenseDetailSearchResults({
               >
                 Buka Edit All
               </button>
-              <form action={deleteManyExpensesAction}>
+              <form onSubmit={handleDeleteManySubmit}>
                 <input type="hidden" name="return_to" value={bulkEditReturnTo} />
                 {filteredExpenseIds.map((expenseId) => (
                   <input
@@ -411,7 +547,7 @@ export function ExpenseDetailSearchResults({
               </button>
             </div>
 
-            <form action={updateManyExpensesAction} className="mt-4 space-y-3">
+            <form onSubmit={handleUpdateManySubmit} className="mt-4 space-y-3">
               <input type="hidden" name="return_to" value={bulkEditReturnTo} />
               {filteredExpenseIds.map((expenseId) => (
                 <input key={`bulk-expense-${expenseId}`} type="hidden" name="expense_id" value={expenseId} />
@@ -705,6 +841,7 @@ export function ExpenseDetailSearchResults({
                 bulkEditReturnTo={bulkEditReturnTo}
                 projectSearchText={projectSearchText}
                 onEdit={setEditingExpenseId}
+                onDeleteSubmit={handleDeleteSubmit}
               />
             </div>
           </article>
@@ -769,6 +906,7 @@ export function ExpenseDetailSearchResults({
                       bulkEditReturnTo={bulkEditReturnTo}
                       projectSearchText={projectSearchText}
                       onEdit={setEditingExpenseId}
+                      onDeleteSubmit={handleDeleteSubmit}
                     />
                   </td>
                 </tr>
@@ -789,6 +927,7 @@ export function ExpenseDetailSearchResults({
         <EditExpenseModal
           expenseId={editingExpenseId}
           onClose={() => setEditingExpenseId(null)}
+          onOptimisticSave={handleOptimisticExpenseSave}
         />
       ) : null}
     </div>

@@ -1,6 +1,6 @@
 "use server";
 import { createHash, randomUUID } from "node:crypto";
-import { getString, getStringList, getNumber, getStringValues, getNumberValues, getPositiveInteger, parseYearInput, replaceDateYearKeepingMonthDay, getReturnTo, withReturnMessage, withReturnParams, isChecked, revalidateProjectPages, revalidateProjectCache, revalidateExpenseCache, revalidateAttendanceCache, requireEditorActionUser, requireAttendanceActionUser, requireImportActionUser, requireLogsActionUser, createTimestamp, createDeterministicUuid, ensureSupabaseAttendanceDraftProjectId, resolveDraftAttendanceNotes, resolveFinalAttendanceNotes, parseAttendanceStatusValue, parseWorkerTeamValue, normalizeAttendanceIdentityText, createAttendanceMutationId, createPayrollResetMutationId, resolveAutoOvertimeWage, AttendanceDuplicateCheckInput, AttendanceDuplicateCheckRow, hasSameAttendanceIdentity, findDuplicateAttendanceRecord, getExpenseSubmissionToken, createExpenseMutationId, shouldSyncExpenseCategory, parseProjectInitialCategories, buildSupabaseCategoryRows, upsertSupabaseCategories, isFirebaseNotFoundError, hasWarnedFirebaseWriteDatabaseMissing, runFirebaseWriteSafely, deleteFirebaseDocsByField, ParsedTemplateImportData, normalizeImportText, normalizeImportNumber, buildImportExpenseSignature, chunkArray, importTemplateDataToSupabase, importTemplateDataToFirebase, getParsedCategory, getSpecialistType, getParsedWorkerTeam, getParsedReimburseType, resolveAmountByMode, getExpenseTargetProjectIds, parsePositiveAmount, createHokExpenseEntries, createScraperExpenseEntries, AttendanceRecapRowInput, resolveAttendanceExportRowId, buildAttendanceRecapRowsFromFormData, ensureSupabaseWriteConfigured, getSupabaseMutationErrorMessage } from "./utils";
+import { getString, getStringList, getNumber, getStringValues, getNumberValues, getPositiveInteger, parseYearInput, replaceDateYearKeepingMonthDay, getReturnTo, withReturnMessage, withReturnParams, isChecked, revalidateProjectPages, revalidateProjectCache, revalidateExpenseCache, revalidateAttendanceCache, requireEditorActionUser, requireAttendanceActionUser, requireImportActionUser, requireLogsActionUser, createTimestamp, createDeterministicUuid, ensureSupabaseAttendanceDraftProjectId, resolveDraftAttendanceNotes, resolveFinalAttendanceNotes, parseAttendanceStatusValue, parseWorkerTeamValue, normalizeAttendanceIdentityText, createAttendanceMutationId, createPayrollResetMutationId, resolveAutoOvertimeWage, AttendanceDuplicateCheckInput, AttendanceDuplicateCheckRow, hasSameAttendanceIdentity, findDuplicateAttendanceRecord, getExpenseSubmissionToken, createExpenseMutationId, shouldSyncExpenseCategory, parseProjectInitialCategories, buildSupabaseCategoryRows, upsertSupabaseCategories, isFirebaseNotFoundError, hasWarnedFirebaseWriteDatabaseMissing, runFirebaseWriteSafely, deleteFirebaseDocsByField, ParsedTemplateImportData, normalizeImportText, normalizeImportNumber, buildImportExpenseSignature, chunkArray, importTemplateDataToSupabase, importTemplateDataToFirebase, getParsedCategory, getSpecialistType, getParsedWorkerTeam, getParsedReimburseType, resolveAmountByMode, getExpenseTargetProjectIds, parsePositiveAmount, createHokExpenseEntries, createScraperExpenseEntries, AttendanceRecapRowInput, resolveAttendanceExportRowId, buildAttendanceRecapRowsFromFormData, ensureSupabaseWriteConfigured, getSupabaseMutationErrorMessage, returnOptimisticErrorOrRedirect } from "./utils";
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -68,6 +68,11 @@ import {
   omitSpecialistTeamNameField,
   withSupabaseSpecialistTeamNameFallback,
 } from "@/lib/supabase";
+import {
+  isOptimisticUiRequest,
+  optimisticActionError,
+  optimisticActionSuccess,
+} from "@/lib/optimistic-ui";
 
 function toRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -266,15 +271,15 @@ export async function deleteExpenseDataFromActivityLogAction(formData: FormData)
   const returnTo = getReturnTo(formData) ?? "/logs";
 
   if (!logId) {
-    redirect(withReturnMessage(returnTo, "error", "ID log wajib diisi."));
+    return returnOptimisticErrorOrRedirect(formData, returnTo, "ID log wajib diisi.");
   }
 
   const supabase = getSupabaseServerClient();
   if (!supabase) {
-    redirect(withReturnMessage(returnTo, "error", "Supabase belum terkonfigurasi."));
+    return returnOptimisticErrorOrRedirect(formData, returnTo, "Supabase belum terkonfigurasi.");
   }
-  if (!ensureSupabaseWriteConfigured(returnTo, "Gagal menghapus data biaya dari database.")) {
-    return;
+  if (!ensureSupabaseWriteConfigured(returnTo, "Gagal menghapus data biaya dari database.", formData)) {
+    return optimisticActionError(getSupabaseMutationErrorMessage("Gagal menghapus data biaya dari database."));
   }
 
   const { data: logRow, error: logError } = await supabase
@@ -284,10 +289,14 @@ export async function deleteExpenseDataFromActivityLogAction(formData: FormData)
     .maybeSingle();
 
   if (logError || !logRow) {
-    redirect(withReturnMessage(returnTo, "error", "Log aktivitas tidak ditemukan."));
+    return returnOptimisticErrorOrRedirect(formData, returnTo, "Log aktivitas tidak ditemukan.");
   }
   if (String(logRow.action_type ?? "").toLowerCase().startsWith("delete")) {
-    redirect(withReturnMessage(returnTo, "error", "Data pada log hapus sudah diproses sebelumnya."));
+    return returnOptimisticErrorOrRedirect(
+      formData,
+      returnTo,
+      "Data pada log hapus sudah diproses sebelumnya.",
+    );
   }
 
   const payload = toRecord(logRow.payload);
@@ -299,7 +308,11 @@ export async function deleteExpenseDataFromActivityLogAction(formData: FormData)
   });
 
   if (errorMessage || expenseIds.length === 0) {
-    redirect(withReturnMessage(returnTo, "error", errorMessage || "Tidak ada data biaya yang bisa dihapus."));
+    return returnOptimisticErrorOrRedirect(
+      formData,
+      returnTo,
+      errorMessage || "Tidak ada data biaya yang bisa dihapus.",
+    );
   }
 
   if (activeDataSource === "excel") {
@@ -307,12 +320,16 @@ export async function deleteExpenseDataFromActivityLogAction(formData: FormData)
   } else if (activeDataSource === "supabase") {
     const { error } = await supabase.from("project_expenses").delete().in("id", expenseIds);
     if (error) {
-      redirect(withReturnMessage(returnTo, "error", getSupabaseMutationErrorMessage("Gagal menghapus data biaya dari database.")));
+      return returnOptimisticErrorOrRedirect(
+        formData,
+        returnTo,
+        getSupabaseMutationErrorMessage("Gagal menghapus data biaya dari database."),
+      );
     }
   } else if (activeDataSource === "firebase") {
     const firestore = getFirestoreServerClient();
     if (!firestore) {
-      redirect(withReturnMessage(returnTo, "error", "Firebase belum terkonfigurasi."));
+      return returnOptimisticErrorOrRedirect(formData, returnTo, "Firebase belum terkonfigurasi.");
     }
     await runFirebaseWriteSafely(async () => {
       let batch = firestore.batch();
@@ -331,7 +348,7 @@ export async function deleteExpenseDataFromActivityLogAction(formData: FormData)
       }
     });
   } else {
-    redirect(withReturnMessage(returnTo, "error", "Sumber data aktif tidak dikenali."));
+    return returnOptimisticErrorOrRedirect(formData, returnTo, "Sumber data aktif tidak dikenali.");
   }
 
   revalidateProjectPages();
@@ -348,6 +365,9 @@ export async function deleteExpenseDataFromActivityLogAction(formData: FormData)
     },
   });
 
+  if (isOptimisticUiRequest(formData)) {
+    return optimisticActionSuccess(`${expenseIds.length} data biaya dari log input berhasil dihapus.`);
+  }
   redirect(
     withReturnMessage(
       returnTo,

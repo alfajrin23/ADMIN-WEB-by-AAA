@@ -7,6 +7,8 @@ import { updateUserRoleAction } from "@/app/auth-actions";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { CloseIcon, EditIcon, EyeIcon, FilterIcon, RolesIcon, SaveIcon, TrashIcon } from "@/components/icons";
 import { SuccessToast } from "@/components/success-toast";
+import { MutationSubmitButton } from "@/components/mutation-submit-button";
+import { OptimisticDomMutationForm } from "@/components/optimistic-mutation-notice";
 import { type ActivityLog, getActivityLogReadResult } from "@/lib/activity-logs";
 import {
   canEditRoles,
@@ -380,12 +382,12 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
                               </option>
                             ))}
                           </select>
-                          <button className="button-secondary button-sm">
+                          <MutationSubmitButton className="button-secondary button-sm" pendingLabel="Menyimpan...">
                             <span className="btn-icon bg-blue-100 text-blue-700">
                               <SaveIcon />
                             </span>
                             Simpan
-                          </button>
+                          </MutationSubmitButton>
                         </form>
                       </td>
                     </tr>
@@ -516,7 +518,10 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
                             </Link>
                           ) : null}
                           {canDeleteExpenseData ? (
-                            <form action={deleteExpenseDataFromActivityLogAction}>
+                            <OptimisticDomMutationForm
+                              action={deleteExpenseDataFromActivityLogAction}
+                              pendingMessage="Menghapus data biaya dari log..."
+                            >
                               <input type="hidden" name="log_id" value={log.id} />
                               <input
                                 type="hidden"
@@ -534,7 +539,7 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
                                 </span>
                                 Hapus Data
                               </ConfirmActionButton>
-                            </form>
+                            </OptimisticDomMutationForm>
                           ) : null}
                         </div>
                       </td>
@@ -667,12 +672,12 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
                       Edit Data Asli
                     </Link>
                   ) : null}
-                  <button className="button-primary button-sm">
+                  <MutationSubmitButton className="button-primary button-sm" pendingLabel="Menyimpan Log...">
                     <span className="btn-icon bg-white/15 text-white">
                       <SaveIcon />
                     </span>
                     Simpan Perubahan Log
-                  </button>
+                  </MutationSubmitButton>
                 </div>
               </form>
             ) : (
@@ -728,7 +733,10 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
                     </Link>
                   ) : null}
                   {canDeleteSelectedExpenseData ? (
-                    <form action={deleteExpenseDataFromActivityLogAction}>
+                    <OptimisticDomMutationForm
+                      action={deleteExpenseDataFromActivityLogAction}
+                      pendingMessage="Menghapus data biaya dari log..."
+                    >
                       <input type="hidden" name="log_id" value={selectedLog.id} />
                       <input type="hidden" name="return_to" value={closeModalHref} />
                       <ConfirmActionButton
@@ -742,7 +750,7 @@ export default async function LogsPage({ searchParams }: LogsPageProps) {
                         </span>
                         Hapus Data Asli
                       </ConfirmActionButton>
-                    </form>
+                    </OptimisticDomMutationForm>
                   ) : null}
                   {canEditLogs ? (
                     <Link

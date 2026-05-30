@@ -6,6 +6,8 @@ import {
 } from "@/app/auth-actions";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { PermissionMatrix } from "@/components/permission-matrix";
+import { MutationSubmitButton } from "@/components/mutation-submit-button";
+import { OptimisticDomMutationForm } from "@/components/optimistic-mutation-notice";
 import { SuccessToast } from "@/components/success-toast";
 import {
   RolesIcon,
@@ -135,19 +137,19 @@ export default async function RolesPage({ searchParams }: RolesPageProps) {
           <PermissionMatrix permissions={emptyPermissions} editable />
 
           <div className="button-stack justify-end">
-            <button className="button-primary">
+            <MutationSubmitButton className="button-primary" pendingLabel="Menyimpan Role...">
               <span className="btn-icon bg-white/15 text-white">
                 <SaveIcon />
               </span>
               Simpan Role Baru
-            </button>
+            </MutationSubmitButton>
           </div>
         </form>
       </section>
 
       <section className="grid gap-4">
         {roles.map((role) => (
-          <article key={role.key} className="role-card">
+          <article key={role.key} className="role-card" data-optimistic-role-key={role.key}>
             <div className="role-card__header">
               <div>
                 <div className="pill-group">
@@ -209,15 +211,20 @@ export default async function RolesPage({ searchParams }: RolesPageProps) {
                   <PermissionMatrix permissions={role.permissions} editable />
 
                   <div className="button-stack justify-end">
-                    <button className="button-primary">
+                    <MutationSubmitButton className="button-primary" pendingLabel="Menyimpan Permission...">
                       <span className="btn-icon bg-white/15 text-white">
                         <SaveIcon />
                       </span>
                       Simpan Permission
-                    </button>
+                    </MutationSubmitButton>
                   </div>
                 </form>
-                <form action={deleteRoleAction}>
+                <OptimisticDomMutationForm
+                  action={deleteRoleAction}
+                  pendingMessage={`Menghapus role "${role.name}"...`}
+                  targetAttribute="data-optimistic-role-key"
+                  targetField="role_key"
+                >
                   <input type="hidden" name="role_key" value={role.key} />
                   <input type="hidden" name="return_to" value="/roles" />
                   <div className="button-stack justify-end">
@@ -231,7 +238,7 @@ export default async function RolesPage({ searchParams }: RolesPageProps) {
                       Hapus Role
                     </ConfirmActionButton>
                   </div>
-                </form>
+                </OptimisticDomMutationForm>
               </>
             )}
           </article>
@@ -295,12 +302,12 @@ export default async function RolesPage({ searchParams }: RolesPageProps) {
                             </option>
                           ))}
                         </select>
-                        <button className="button-secondary button-sm">
+                        <MutationSubmitButton className="button-secondary button-sm" pendingLabel="Menyimpan...">
                           <span className="btn-icon bg-blue-100 text-blue-700">
                             <SaveIcon />
                           </span>
                           Simpan
-                        </button>
+                        </MutationSubmitButton>
                       </form>
                     </td>
                   </tr>

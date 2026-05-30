@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { OptimisticCreateStoreProvider } from "@/components/optimistic-create-store";
 
 export function DashboardShell({
   sidebar,
@@ -12,6 +13,7 @@ export function DashboardShell({
   const [isOpen, setIsOpen] = useState(true);
 
   return (
+    <OptimisticCreateStoreProvider>
     <div
       className={`mx-auto grid min-h-screen max-w-[1480px] grid-cols-1 p-4 lg:p-5 transition-[grid-template-columns] duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${
         isOpen ? "gap-4 lg:grid-cols-[272px_minmax(0,1fr)]" : "gap-0 lg:grid-cols-[0px_minmax(0,1fr)]"
@@ -51,5 +53,6 @@ export function DashboardShell({
         {children}
       </div>
     </div>
+    </OptimisticCreateStoreProvider>
   );
 }

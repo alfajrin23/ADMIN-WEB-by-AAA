@@ -2,9 +2,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   createExpenseAction } from "@/app/actions/expense.action";
-import { createProjectAction, deleteProjectAction, deleteSelectedProjectsAction, updateManyProjectsAction } from "@/app/actions/project.action";
+import { createProjectAction, deleteProjectAction, deleteSelectedProjectsAction } from "@/app/actions/project.action";
 import { importExcelTemplateAction } from "@/app/actions/import.action";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
+import { OptimisticDomMutationForm } from "@/components/optimistic-mutation-notice";
 import { ExpenseInputModeFields } from "@/components/expense-input-mode-fields";
 import { ExpenseDetailSearchForm } from "@/components/expense-detail-search-form";
 import { ExpenseDetailSearchResults } from "@/components/expense-detail-search-results";
@@ -27,6 +28,13 @@ import { ExcelDropInput } from "@/components/excel-drop-input";
 import { ReportCopyButton } from "@/components/report-copy-button";
 import { ReportDownloadPreviewButton } from "@/components/report-download-preview-button";
 import { ProjectsSelectionToggle } from "@/components/projects-selection-toggle";
+import { OptimisticProjectsBulkEditButton } from "@/components/optimistic-projects-bulk-edit-button";
+import { MutationSubmitButton } from "@/components/mutation-submit-button";
+import {
+  OptimisticExpenseCreateForm,
+  OptimisticProjectCreateForm,
+} from "@/components/optimistic-create-forms";
+import { OptimisticPendingProjectRows } from "@/components/optimistic-pending-project-rows";
 import { ProjectsSearchInput } from "@/components/projects-search-input";
 import { SuccessToast } from "@/components/success-toast";
 import {
@@ -632,10 +640,13 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 Cari Rincian Semua Project
               </Link>
             </div>
-            <form
+            <OptimisticDomMutationForm
               id="selected-projects-report-form"
               action={deleteSelectedProjectsAction}
               className="grid w-full gap-2 sm:grid-cols-2 xl:grid-cols-6"
+              pendingMessage="Menghapus project terpilih..."
+              targetAttribute="data-optimistic-project-id"
+              targetField="project"
             >
               <input
                 type="hidden"
@@ -745,15 +756,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                       <input type="date" name="start_date" />
                     </label>
                   </div>
-                  <button
-                    formAction={updateManyProjectsAction}
-                    className="button-primary button-sm mt-3"
-                  >
-                    <span className="btn-icon bg-white/20 text-white">
-                      <EditIcon />
-                    </span>
-                    Simpan Edit Project Terpilih
-                  </button>
+                  <OptimisticProjectsBulkEditButton formId="selected-projects-report-form" />
                 </details>
               ) : null}
               {canEdit ? (
@@ -768,7 +771,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                   Hapus Project Terpilih
                 </ConfirmActionButton>
               ) : null}
-            </form>
+            </OptimisticDomMutationForm>
           </div>
           </div>
 
@@ -787,20 +790,21 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
               </thead>
               <tbody>
                 {filteredProjects.map((project) => (
-                  <tr key={project.id}>
+                  <tr key={project.id} data-optimistic-project-id={project.id}>
                     <td className="font-medium text-slate-900">
                       <p>{project.name}</p>
                       <p className="mt-1 text-xs text-slate-500">{project.code ?? "-"}</p>
                     </td>
-                    <td>{project.clientName ?? "-"}</td>
+                    <td data-project-field="client_name">{project.clientName ?? "-"}</td>
                     <td>
                       <span
+                        data-project-field="status"
                         className={`rounded-full px-2 py-1 text-xs font-semibold capitalize ${PROJECT_STATUS_STYLE[project.status]}`}
                       >
                         {project.status}
                       </span>
                     </td>
-                    <td>{project.startDate ? formatDate(project.startDate) : "-"}</td>
+                    <td data-project-field="start_date">{project.startDate ? formatDate(project.startDate) : "-"}</td>
                     <td className="text-center">
                       <input
                         type="checkbox"
@@ -837,7 +841,12 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                               </span>
                               Edit
                             </Link>
-                            <form action={deleteProjectAction}>
+                            <OptimisticDomMutationForm
+                              action={deleteProjectAction}
+                              pendingMessage={`Menghapus project "${project.name}"...`}
+                              targetAttribute="data-optimistic-project-id"
+                              targetField="project_id"
+                            >
                               <input type="hidden" name="project_id" value={project.id} />
                               <input
                                 type="hidden"
@@ -860,13 +869,14 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                                 </span>
                                 Hapus
                               </ConfirmActionButton>
-                            </form>
+                            </OptimisticDomMutationForm>
                           </>
                         ) : null}
                       </div>
                     </td>
                   </tr>
                 ))}
+                <OptimisticPendingProjectRows storedProjects={projects} searchText={searchText} />
                 {filteredProjects.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="px-4 py-6 text-center text-slate-500">
@@ -1017,7 +1027,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 />
               )
             ) : activeModal === "project-new" ? (
-              <form action={createProjectAction} className="mt-4 space-y-3">
+              <OptimisticProjectCreateForm action={createProjectAction} className="mt-4 space-y-3">
                 <input type="hidden" name="return_to" value={closeModalHref} />
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-500">Nama project</label>
@@ -1056,13 +1066,16 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                     placeholder="Pisah dengan koma, contoh: transport, akomodasi"
                   />
                 </div>
-                <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-700">
+                <MutationSubmitButton
+                  pendingLabel="Menyimpan Project..."
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-700"
+                >
                   <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
                     <SaveIcon />
                   </span>
                   Simpan Project
-                </button>
-              </form>
+                </MutationSubmitButton>
+              </OptimisticProjectCreateForm>
             ) : activeModal === "excel-import" ? (
               activeDataSource === "demo" ? (
                 <p className="mt-4 text-sm text-slate-500">
@@ -1086,7 +1099,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
             ) : projects.length === 0 ? (
               <p className="mt-4 text-sm text-slate-500">Belum ada project. Buat project dulu.</p>
             ) : (
-              <form
+              <OptimisticExpenseCreateForm
                 key={`expense-modal-form-${expenseActionToken || success || error || "idle"}`}
                 id="expense-modal-form"
                 action={createExpenseAction}
@@ -1105,7 +1118,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                   descriptionSuggestionsForProjects={descriptionSuggestionsForProjects}
                   hokProjectPresets={hokProjectPresets}
                 />
-              </form>
+              </OptimisticExpenseCreateForm>
             )}
           </section>
         </div>

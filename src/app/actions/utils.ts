@@ -69,6 +69,11 @@ import {
   omitSpecialistTeamNameField,
   withSupabaseSpecialistTeamNameFallback,
 } from "@/lib/supabase";
+import {
+  isOptimisticUiRequest,
+  optimisticActionError,
+  type OptimisticActionResult,
+} from "@/lib/optimistic-ui";
 export function getString(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" ? value.trim() : "";
@@ -180,11 +185,28 @@ export function getSupabaseMutationErrorMessage(fallbackMessage: string) {
   return isSupabaseWriteConfigured ? fallbackMessage : SUPABASE_WRITE_CONFIG_ERROR;
 }
 
-export function ensureSupabaseWriteConfigured(returnTo: string | null, fallbackMessage: string): boolean {
+export function ensureSupabaseWriteConfigured(
+  returnTo: string | null,
+  fallbackMessage: string,
+  formData?: FormData,
+): boolean {
   if (isSupabaseWriteConfigured) {
     return true;
   }
+  if (formData && isOptimisticUiRequest(formData)) {
+    return false;
+  }
   redirect(withReturnMessage(returnTo ?? "/", "error", getSupabaseMutationErrorMessage(fallbackMessage)));
+}
+export function returnOptimisticErrorOrRedirect(
+  formData: FormData,
+  returnTo: string,
+  message: string,
+): OptimisticActionResult {
+  if (isOptimisticUiRequest(formData)) {
+    return optimisticActionError(message);
+  }
+  redirect(withReturnMessage(returnTo, "error", message));
 }
 export async function requireEditorActionUser() {
   const user = await requireAuthUser();

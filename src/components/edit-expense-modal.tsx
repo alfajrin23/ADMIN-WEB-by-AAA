@@ -1,18 +1,30 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { updateExpenseAction, getEditExpenseModalDataAction } from "@/app/actions/expense.action";
 import { CloseIcon, SaveIcon } from "@/components/icons";
 import { RupiahInput } from "@/components/rupiah-input";
-import { SPECIALIST_COST_PRESETS } from "@/lib/constants";
+import { SPECIALIST_COST_PRESETS, toCategorySlug } from "@/lib/constants";
+import type { ProjectExpenseSearchResult } from "@/lib/types";
 
 type EditExpenseModalProps = {
   expenseId: string;
   onClose: () => void;
+  onOptimisticSave?: (formData: FormData, nextValue: ProjectExpenseSearchResult) => void;
 };
 
-export function EditExpenseModal({ expenseId, onClose }: EditExpenseModalProps) {
+function getFormText(formData: FormData, key: string) {
+  return String(formData.get(key) ?? "").trim();
+}
+
+function getFormAmount(formData: FormData, key: string) {
+  const value = getFormText(formData, key).replace(/\./g, "").replace(",", ".");
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+export function EditExpenseModal({ expenseId, onClose, onOptimisticSave }: EditExpenseModalProps) {
   const [data, setData] = useState<Awaited<ReturnType<typeof getEditExpenseModalDataAction>> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const pathname = usePathname();
@@ -57,6 +69,31 @@ export function EditExpenseModal({ expenseId, onClose }: EditExpenseModalProps) 
   }
 
   const { expense, projects, expenseCategories } = data;
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    if (!onOptimisticSave) {
+      return;
+    }
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const projectId = getFormText(formData, "project_id");
+    const selectedCategory = toCategorySlug(
+      getFormText(formData, "category_custom") || getFormText(formData, "category"),
+    );
+    const rawAmount = Math.abs(getFormAmount(formData, "amount"));
+    const amount = getFormText(formData, "amount_mode") === "kurangi" ? -rawAmount : rawAmount;
+    onOptimisticSave(formData, {
+      expenseId: expense.id,
+      projectId,
+      projectName: projects.find((project) => project.id === projectId)?.name ?? "Project",
+      expenseDate: getFormText(formData, "expense_date"),
+      requesterName: getFormText(formData, "requester_name") || null,
+      description: getFormText(formData, "description") || null,
+      usageInfo: getFormText(formData, "usage_info") || null,
+      recipientName: getFormText(formData, "recipient_name") || null,
+      category: selectedCategory || expense.category,
+      amount,
+    });
+  };
 
   return (
     <div className="modal-overlay fixed inset-0 z-[80] flex items-center justify-center p-4">
@@ -81,7 +118,7 @@ export function EditExpenseModal({ expenseId, onClose }: EditExpenseModalProps) 
           </button>
         </div>
 
-        <form action={updateExpenseAction} className="mt-4 space-y-3">
+        <form action={onOptimisticSave ? undefined : updateExpenseAction as (formData: FormData) => Promise<void>} onSubmit={handleSubmit} className="mt-4 space-y-3">
           <input type="hidden" name="expense_id" value={expense.id} />
           <input type="hidden" name="return_to" value={returnTo} />
           <div>

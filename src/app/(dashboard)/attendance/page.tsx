@@ -20,6 +20,7 @@ import {
 import { ReimburseLinesInput } from "@/components/reimburse-lines-input";
 import { RupiahInput } from "@/components/rupiah-input";
 import { SuccessToast } from "@/components/success-toast";
+import { OptimisticAttendanceCreateForm } from "@/components/optimistic-create-forms";
 import { ensureDailyAttendanceDrafts } from "@/lib/attendance-daily-reset";
 import { getAttendanceWorkerPresets } from "@/lib/attendance-worker-presets";
 import { SPECIALIST_TEAM_PRESETS, WORKER_TEAM_LABEL, WORKER_TEAMS } from "@/lib/constants";
@@ -656,7 +657,11 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
             </div>
 
             {activeModal === "attendance-new" ? (
-              <form action={createAttendanceAction} className="mt-4 space-y-3">
+              <OptimisticAttendanceCreateForm
+                action={createAttendanceAction}
+                attendanceDate={today}
+                className="mt-4 space-y-3"
+              >
                 <input type="hidden" name="return_to" value={closeModalHref} />
                 <input type="hidden" name="project_id" value="" />
                 <input type="hidden" name="status" value="hadir" />
@@ -734,7 +739,7 @@ export default async function AttendancePage({ searchParams }: AttendancePagePro
                   pendingLabel="Menyimpan Absensi..."
                   className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-300"
                 />
-              </form>
+              </OptimisticAttendanceCreateForm>
             ) : activeModal === "rekap-export" ? (
               selectedRows.length === 0 ? (
                 <p className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">

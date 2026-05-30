@@ -37,12 +37,31 @@ export async function saveSystemUpdateAction(formData: FormData) {
   };
 
   let error;
+  let savedRow: {
+    id: string;
+    type: "update" | "announcement";
+    version: string;
+    features: string[];
+    release_date: string;
+    created_at: string;
+  } | null = null;
   if (id) {
-    const res = await supabase.from("system_updates").update(payload).eq("id", id);
+    const res = await supabase
+      .from("system_updates")
+      .update(payload)
+      .eq("id", id)
+      .select("id, type, version, features, release_date, created_at")
+      .single();
     error = res.error;
+    savedRow = res.data;
   } else {
-    const res = await supabase.from("system_updates").insert(payload);
+    const res = await supabase
+      .from("system_updates")
+      .insert(payload)
+      .select("id, type, version, features, release_date, created_at")
+      .single();
     error = res.error;
+    savedRow = res.data;
   }
 
   if (error) {
@@ -52,7 +71,19 @@ export async function saveSystemUpdateAction(formData: FormData) {
 
   revalidatePath("/");
   revalidatePath("/system-updates");
-  return { success: true };
+  return {
+    success: true,
+    update: savedRow
+      ? {
+          id: savedRow.id,
+          type: savedRow.type,
+          version: savedRow.version,
+          features: savedRow.features,
+          releaseDate: savedRow.release_date,
+          createdAt: savedRow.created_at,
+        }
+      : null,
+  };
 }
 
 export async function deleteSystemUpdateAction(id: string) {

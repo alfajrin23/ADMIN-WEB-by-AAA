@@ -109,7 +109,7 @@ export default async function EditAttendancePage({ searchParams }: EditAttendanc
           />
         </form>
 
-        <form action={deleteAttendanceAction} className="mt-3">
+        <form action={deleteAttendanceAction as (formData: FormData) => Promise<void>} className="mt-3">
           <input type="hidden" name="attendance_id" value={attendance.id} />
           <input type="hidden" name="return_to" value={returnTo} />
           <ConfirmActionButton

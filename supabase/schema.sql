@@ -1,4 +1,5 @@
 create extension if not exists pgcrypto;
+create extension if not exists pg_trgm;
 
 create table if not exists public.kmp_client_materials (
   id uuid primary key default gen_random_uuid(),
@@ -71,5 +72,28 @@ begin
       checklist_type = excluded.checklist_type,
       checklist_status = excluded.checklist_status,
       updated_at = now();
+  end if;
+end $$;
+
+do $$
+begin
+  if to_regclass('public.project_expenses') is not null then
+    create index if not exists project_expenses_project_category_date_idx
+      on public.project_expenses (project_id, category, expense_date desc);
+
+    create index if not exists project_expenses_amount_idx
+      on public.project_expenses (amount);
+
+    create index if not exists project_expenses_requester_trgm_idx
+      on public.project_expenses using gin (requester_name gin_trgm_ops);
+
+    create index if not exists project_expenses_description_trgm_idx
+      on public.project_expenses using gin (description gin_trgm_ops);
+
+    create index if not exists project_expenses_usage_trgm_idx
+      on public.project_expenses using gin (usage_info gin_trgm_ops);
+
+    create index if not exists project_expenses_recipient_trgm_idx
+      on public.project_expenses using gin (recipient_name gin_trgm_ops);
   end if;
 end $$;

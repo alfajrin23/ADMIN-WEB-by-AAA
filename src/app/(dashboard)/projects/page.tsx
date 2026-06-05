@@ -808,12 +808,10 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
         closeModalHref={closeModalHref}
         openExpenseModalHref={openExpenseModalHref}
         expenseModalErrorReturnHref={expenseModalErrorReturnHref}
-        openDetailSearchModalHref={openDetailSearchModalHref}
         openKmpMaterialReportHref={openKmpMaterialReportHref}
         detailSearchReturnHref={detailSearchReturnHref}
         currentProjectQueryId={currentProjectQueryId}
         searchText={searchText}
-        activeView={activeView}
         detailSearchQuery={detailSearchQuery}
         detailDateFrom={detailDateFrom}
         detailDateTo={detailDateTo}

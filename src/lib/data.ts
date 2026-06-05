@@ -381,6 +381,10 @@ async function getFirebaseDocRow(
 
 type SupabasePagedRowsQuery = {
   eq(column: string, value: unknown): SupabasePagedRowsQuery;
+  in(column: string, values: unknown[]): SupabasePagedRowsQuery;
+  ilike(column: string, pattern: string): SupabasePagedRowsQuery;
+  gte(column: string, value: unknown): SupabasePagedRowsQuery;
+  lte(column: string, value: unknown): SupabasePagedRowsQuery;
   order(column: string, options?: { ascending?: boolean }): SupabasePagedRowsQuery;
   range(
     from: number,
@@ -489,6 +493,26 @@ const getCachedSupabaseProjectRows = unstable_cache(
   },
 );
 
+const getCachedSupabaseExpenseCategoryRows = unstable_cache(
+  async (): Promise<Record<string, unknown>[]> => {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return [];
+    }
+
+    const { data, error } = await supabase
+      .from("expense_categories")
+      .select("slug, label")
+      .order("created_at", { ascending: true });
+    return !error && Array.isArray(data) ? data : [];
+  },
+  ["supabase-expense-category-rows"],
+  {
+    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
+    tags: [CACHE_TAGS.expenseCategories],
+  },
+);
+
 // Expense collections can exceed Next.js's 2 MB unstable_cache limit.
 // Use request memoization so repeated reads in one render still share the same fetch.
 const getCachedSupabaseExpenseMetadata = cache(
@@ -501,8 +525,8 @@ const getCachedSupabaseExpenseMetadata = cache(
       };
     }
 
-    const [{ data: categoryRows, error: categoryError }, expenseRows] = await Promise.all([
-      supabase.from("expense_categories").select("slug, label").order("created_at", { ascending: true }),
+    const [categoryRows, expenseRows] = await Promise.all([
+      getCachedSupabaseExpenseCategoryRows(),
       getAllSupabaseRows(
         "project_expenses",
         SUPABASE_EXPENSE_METADATA_SELECT,
@@ -511,7 +535,7 @@ const getCachedSupabaseExpenseMetadata = cache(
     ]);
 
     return {
-      categoryRows: !categoryError && Array.isArray(categoryRows) ? categoryRows : [],
+      categoryRows,
       expenseRows,
     };
   },
@@ -557,6 +581,24 @@ const getCachedSupabaseProjectExpenseRows = cache(
       "project_expenses",
       SUPABASE_EXPENSE_FULL_SELECT,
       (query) => query.eq("project_id", projectId).order("expense_date", { ascending: true }),
+    );
+  },
+);
+
+const getCachedSupabaseProjectMaterialExpenseRows = cache(
+  async (projectId: string): Promise<Record<string, unknown>[]> => {
+    if (!projectId) {
+      return [];
+    }
+
+    return getAllSupabaseRows(
+      "project_expenses",
+      SUPABASE_EXPENSE_METADATA_SELECT,
+      (query) =>
+        query
+          .eq("project_id", projectId)
+          .ilike("category", "%material%")
+          .order("expense_date", { ascending: true }),
     );
   },
 );
@@ -1660,6 +1702,14 @@ function createMaterialKey(value: string) {
   return normalized || "material";
 }
 
+function chunkValues<T>(rows: T[], size: number) {
+  const chunks: T[][] = [];
+  for (let index = 0; index < rows.length; index += size) {
+    chunks.push(rows.slice(index, index + size));
+  }
+  return chunks;
+}
+
 function getMaterialNameKeywords(materialName: string) {
   const normalized = normalizeLooseText(materialName);
   if (!normalized) {
@@ -2218,6 +2268,34 @@ const getCachedSupabaseKmpClientMaterialConfigs = unstable_cache(
   },
 );
 
+const getCachedSupabaseKmpProjectMaterialExpenseRows = cache(
+  async (projectIdsKey: string): Promise<Record<string, unknown>[]> => {
+    const projectIds = projectIdsKey
+      .split("|")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+    if (projectIds.length === 0) {
+      return [];
+    }
+
+    const chunks = chunkValues(Array.from(new Set(projectIds)), 100);
+    const rowsByChunk = await Promise.all(
+      chunks.map((chunk) =>
+        getAllSupabaseRows(
+          "project_expenses",
+          SUPABASE_EXPENSE_METADATA_SELECT,
+          (query) =>
+            query
+              .in("project_id", chunk)
+              .ilike("category", "%material%")
+              .order("expense_date", { ascending: false }),
+        ),
+      ),
+    );
+    return rowsByChunk.flat();
+  },
+);
+
 export async function getKmpClientMaterialConfigs(
   clientKeys?: string[],
 ): Promise<KmpClientMaterialConfig[]> {
@@ -2241,18 +2319,20 @@ export async function getKmpClientMaterialConfigs(
 
 const getSupabaseKmpCianjurMissingMaterialReportCached = unstable_cache(
   async (): Promise<KmpCianjurMissingMaterialReport> => {
-    const [projects, metadata, materialConfigs] = await Promise.all([
+    const [projects, materialConfigs] = await Promise.all([
       getCachedSupabaseProjects(),
-      getCachedSupabaseExpenseMetadata(),
       getCachedSupabaseKmpClientMaterialConfigs(),
     ]);
+    const kmpProjects = projects.filter((project) => isKmpCianjurClientName(project.clientName));
+    const kmpProjectIdsKey = kmpProjects.map((project) => project.id).sort().join("|");
+    const materialExpenseRows = await getCachedSupabaseKmpProjectMaterialExpenseRows(kmpProjectIdsKey);
     const projectNameMap = Object.fromEntries(
-      projects.map((project) => [project.id, project.name] as const),
+      kmpProjects.map((project) => [project.id, project.name] as const),
     );
-    const expenses = metadata.expenseRows.map((row) =>
+    const expenses = materialExpenseRows.map((row) =>
       mapExpense(row, projectNameMap[String(row.project_id ?? "")]),
     );
-    return buildKmpCianjurMissingMaterialReport(projects, expenses, materialConfigs);
+    return buildKmpCianjurMissingMaterialReport(kmpProjects, expenses, materialConfigs);
   },
   ["supabase-kmp-missing-material-report-v6"],
   {
@@ -2330,7 +2410,7 @@ async function getProjectExpensesForKmpDetection(projectId: string) {
   }
 
   if (activeDataSource === "supabase") {
-    const rows = await getCachedSupabaseProjectExpenseRows(projectId);
+    const rows = await getCachedSupabaseProjectMaterialExpenseRows(projectId);
     return rows.map((row) => mapExpense(row));
   }
 
@@ -2426,8 +2506,7 @@ export async function getExpenseCategories(): Promise<ExpenseCategoryOption[]> {
   }
 
   if (activeDataSource === "supabase") {
-    const { expenseCategories } = await getCachedSupabaseExpenseDerivedData();
-    return expenseCategories;
+    return mergeExpenseCategoryOptions(mapSupabaseExpenseCategoryRows(await getCachedSupabaseExpenseCategoryRows()));
   }
 
   if (activeDataSource === "firebase") {
@@ -2492,12 +2571,8 @@ type CachedSupabaseExpenseDerivedData = {
   descriptionSuggestionsByProject: Record<string, string[]>;
 };
 
-function buildSupabaseExpenseDerivedData(
-  metadata: CachedSupabaseExpenseMetadata,
-): CachedSupabaseExpenseDerivedData {
-  const registeredOptions =
-    Array.isArray(metadata.categoryRows)
-      ? metadata.categoryRows
+function mapSupabaseExpenseCategoryRows(rows: Record<string, unknown>[]) {
+  return rows
         .map((row) => {
           const value = toCategorySlug(String(row.slug ?? ""));
           if (!value) {
@@ -2509,8 +2584,13 @@ function buildSupabaseExpenseDerivedData(
             label: labelRaw || getCostCategoryLabel(value),
           };
         })
-        .filter((row): row is ExpenseCategoryOption => Boolean(row))
-      : [];
+        .filter((row): row is ExpenseCategoryOption => Boolean(row));
+}
+
+function buildSupabaseExpenseDerivedData(
+  metadata: CachedSupabaseExpenseMetadata,
+): CachedSupabaseExpenseDerivedData {
+  const registeredOptions = mapSupabaseExpenseCategoryRows(metadata.categoryRows);
 
   const expenseValues: string[] = [];
   const requesterRows: ProjectTextSuggestionRow[] = [];
@@ -3075,6 +3155,17 @@ type ExpenseDetailSearchFilters = {
   year?: number;
 };
 
+type SupabaseExpenseSearchQuery = PromiseLike<{
+  data: Record<string, unknown>[] | null;
+  error: { message?: string } | null;
+}> & {
+  eq(column: string, value: unknown): SupabaseExpenseSearchQuery;
+  in(column: string, values: unknown[]): SupabaseExpenseSearchQuery;
+  or(filters: string): SupabaseExpenseSearchQuery;
+  gte(column: string, value: unknown): SupabaseExpenseSearchQuery;
+  lte(column: string, value: unknown): SupabaseExpenseSearchQuery;
+};
+
 type NormalizedExpenseDetailDateFilters = {
   from: string | null;
   to: string | null;
@@ -3141,6 +3232,13 @@ function applyExpenseDetailSearchLimit<T>(rows: T[], limit: number) {
   return rows.slice(0, limit);
 }
 
+function getSupabaseExpenseSearchTerm(value: string) {
+  return value
+    .trim()
+    .replace(/[%_,()]/g, " ")
+    .replace(/\s+/g, "%");
+}
+
 export async function searchExpenseDetails(
   queryText: string,
   limit = 200,
@@ -3173,16 +3271,89 @@ export async function searchExpenseDetails(
   }
 
   if (activeDataSource === "supabase") {
-    const [projects, expenseRows] = await Promise.all([
-      getCachedSupabaseProjects(),
-      getCachedSupabaseAllExpenseRows(),
-    ]);
+    const projects = await getCachedSupabaseProjects();
     const projectNameMap = Object.fromEntries(
       projects.map((project) => [project.id, project.name] as const),
     );
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return [];
+    }
+    const supabaseClient = supabase;
+
+    const runExpenseQuery = async (
+      configure?: (query: SupabaseExpenseSearchQuery) => SupabaseExpenseSearchQuery,
+    ) => {
+      let query = supabaseClient
+        .from("project_expenses")
+        .select(SUPABASE_EXPENSE_FULL_SELECT)
+        .order("expense_date", { ascending: false })
+        .limit(limit) as unknown as SupabaseExpenseSearchQuery;
+      if (dateFilters.from) {
+        query = query.gte("expense_date", dateFilters.from);
+      }
+      if (dateFilters.to) {
+        query = query.lte("expense_date", dateFilters.to);
+      }
+      const configuredQuery = configure ? configure(query) : query;
+      const { data, error } = await configuredQuery;
+      if (error) {
+        console.warn("[expense-search] query rincian gagal.", error.message);
+        return [];
+      }
+      return data ?? [];
+    };
+
+    const queryPromises: Array<Promise<Record<string, unknown>[]>> = [];
+    if (normalizedQuery) {
+      const searchTerm = getSupabaseExpenseSearchTerm(normalizedQuery);
+      if (searchTerm) {
+        queryPromises.push(
+          runExpenseQuery((query) =>
+            query.or(
+              [
+                `requester_name.ilike.%${searchTerm}%`,
+                `description.ilike.%${searchTerm}%`,
+                `usage_info.ilike.%${searchTerm}%`,
+                `recipient_name.ilike.%${searchTerm}%`,
+                `category.ilike.%${searchTerm}%`,
+              ].join(","),
+            ),
+          ),
+        );
+      }
+
+      const projectIds = projects
+        .filter((project) =>
+          normalizeLooseText([project.name, project.code, project.clientName].join(" ")).includes(
+            normalizeLooseText(normalizedQuery),
+          ),
+        )
+        .map((project) => project.id);
+      for (const chunk of chunkValues(projectIds, 100)) {
+        if (chunk.length > 0) {
+          queryPromises.push(runExpenseQuery((query) => query.in("project_id", chunk)));
+        }
+      }
+
+      const amountSearch = Number(queryDigits);
+      if (queryDigits && Number.isFinite(amountSearch)) {
+        queryPromises.push(runExpenseQuery((query) => query.eq("amount", amountSearch)));
+      }
+    } else {
+      queryPromises.push(runExpenseQuery());
+    }
+
+    const rowMap = new Map<string, Record<string, unknown>>();
+    for (const row of (await Promise.all(queryPromises)).flat()) {
+      const id = String(row.id ?? "");
+      if (id && !rowMap.has(id)) {
+        rowMap.set(id, row);
+      }
+    }
 
     return applyExpenseDetailSearchLimit(
-      expenseRows
+      Array.from(rowMap.values())
       .map((row) => mapExpense(row, projectNameMap[String(row.project_id)]))
       .filter((row) => matchesExpenseDetailDateFilter(row.expenseDate, dateFilters))
       .filter((row) =>

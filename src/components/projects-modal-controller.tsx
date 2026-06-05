@@ -10,10 +10,9 @@ import {
 import { importExcelTemplateAction } from "@/app/actions/import.action";
 import { createProjectAction } from "@/app/actions/project.action";
 import { ExcelDropInput } from "@/components/excel-drop-input";
-import { ExpenseDetailSearchForm } from "@/components/expense-detail-search-form";
 import { ExpenseDetailSearchResults } from "@/components/expense-detail-search-results";
 import { ExpenseInputModeFields } from "@/components/expense-input-mode-fields";
-import { CloseIcon, ImportIcon, SaveIcon } from "@/components/icons";
+import { CloseIcon, ImportIcon, SaveIcon, SearchIcon } from "@/components/icons";
 import { KmpMaterialMonitorPanel } from "@/components/kmp-material-monitor-panel";
 import { MutationSubmitButton } from "@/components/mutation-submit-button";
 import {
@@ -21,6 +20,7 @@ import {
   OptimisticProjectCreateForm,
 } from "@/components/optimistic-create-forms";
 import { COST_CATEGORIES, mergeExpenseCategoryOptions, PROJECT_STATUSES } from "@/lib/constants";
+import { KMP_CIANJUR_MATERIAL_CHECKLIST } from "@/lib/kmp-materials";
 import type { Project } from "@/lib/types";
 
 type ModalType =
@@ -40,12 +40,10 @@ type ProjectsModalControllerProps = {
   closeModalHref: string;
   openExpenseModalHref: string;
   expenseModalErrorReturnHref: string;
-  openDetailSearchModalHref: string;
   openKmpMaterialReportHref: string;
   detailSearchReturnHref: string;
   currentProjectQueryId?: string;
   searchText: string;
-  activeView: ProjectView;
   detailSearchQuery: string;
   detailDateFrom: string;
   detailDateTo: string;
@@ -125,19 +123,8 @@ function buildDetailStateFromUrl(href: string, fallback: DetailSearchState): Det
   };
 }
 
-function ModalDataLoading({ label }: { label: string }) {
-  return (
-    <div className="mt-4 space-y-3" aria-live="polite">
-      <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-semibold text-slate-600">
-        {label}
-      </p>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <div key={index} className="h-16 animate-pulse rounded-xl bg-slate-200/80" />
-        ))}
-      </div>
-    </div>
-  );
+function hasDetailCriteria(state: DetailSearchState) {
+  return Boolean(state.query.trim() || state.from || state.to || state.year);
 }
 
 function ModalDataError({ message, onRetry }: { message: string; onRetry: () => void }) {
@@ -156,6 +143,29 @@ function ModalDataError({ message, onRetry }: { message: string; onRetry: () => 
   );
 }
 
+function KmpMaterialQuickPreview() {
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+        <p className="text-sm font-semibold text-amber-900">Master material KMP Cianjur</p>
+        <p className="mt-1 text-xs text-amber-800">
+          Daftar material tampil dulu. Status nominal per project sedang dihitung di background.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {KMP_CIANJUR_MATERIAL_CHECKLIST.map((item) => (
+          <span
+            key={item.key}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
+          >
+            {item.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ProjectsModalController({
   initialModal,
   projects,
@@ -165,12 +175,10 @@ export function ProjectsModalController({
   closeModalHref,
   openExpenseModalHref,
   expenseModalErrorReturnHref,
-  openDetailSearchModalHref,
   openKmpMaterialReportHref,
   detailSearchReturnHref,
   currentProjectQueryId,
   searchText,
-  activeView,
   detailSearchQuery,
   detailDateFrom,
   detailDateTo,
@@ -193,6 +201,7 @@ export function ProjectsModalController({
   );
   const [activeModal, setActiveModal] = useState<ModalType | null>(initialModal);
   const [detailState, setDetailState] = useState<DetailSearchState>(initialDetailState);
+  const [detailDraft, setDetailDraft] = useState<DetailSearchState>(initialDetailState);
   const [expenseData, setExpenseData] = useState<ExpenseCreateModalData | null>(null);
   const [expenseError, setExpenseError] = useState("");
   const [isExpenseLoading, setIsExpenseLoading] = useState(false);
@@ -201,17 +210,19 @@ export function ProjectsModalController({
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [kmpReport, setKmpReport] = useState<KmpMaterialReport | null>(null);
   const [kmpError, setKmpError] = useState("");
-  const [isKmpLoading, setIsKmpLoading] = useState(false);
   const expenseRequestRef = useRef(0);
   const detailRequestRef = useRef(0);
   const kmpRequestRef = useRef(0);
+  const detailDebounceRef = useRef<number | null>(null);
 
   const openModal = useCallback((modal: ModalType, href?: string) => {
     setActiveModal(modal);
     if (modal === "detail-search" && href) {
-      setDetailState((current) => buildDetailStateFromUrl(href, current));
+      const next = buildDetailStateFromUrl(href, detailDraft);
+      setDetailDraft(next);
+      setDetailState(next);
     }
-  }, []);
+  }, [detailDraft]);
 
   const closeModal = useCallback(() => {
     setActiveModal(null);
@@ -234,7 +245,9 @@ export function ProjectsModalController({
       const modal = parseModalFromHref(window.location.href);
       setActiveModal(modal);
       if (modal === "detail-search") {
-        setDetailState((current) => buildDetailStateFromUrl(window.location.href, current));
+        const next = buildDetailStateFromUrl(window.location.href, detailDraft);
+        setDetailDraft(next);
+        setDetailState(next);
       }
     };
 
@@ -244,7 +257,7 @@ export function ProjectsModalController({
       window.removeEventListener(EVENT_NAME, handleOpen);
       window.removeEventListener("popstate", handlePopState);
     };
-  }, [openModal]);
+  }, [detailDraft, openModal]);
 
   const loadExpenseData = useCallback((force = false) => {
     if (expenseData && !force) {
@@ -284,7 +297,56 @@ export function ProjectsModalController({
     [detailState],
   );
 
+  const commitDetailSearch = useCallback((nextState: DetailSearchState) => {
+    const normalizedState = {
+      ...nextState,
+      query: nextState.query.trim(),
+      hasCriteria: hasDetailCriteria(nextState),
+    };
+    setDetailState(normalizedState);
+  }, []);
+
+  const updateDetailDraft = useCallback(
+    (patch: Partial<DetailSearchState>) => {
+      setDetailDraft((current) => {
+        const nextState = {
+          ...current,
+          ...patch,
+        };
+        nextState.hasCriteria = hasDetailCriteria(nextState);
+        if (detailDebounceRef.current) {
+          window.clearTimeout(detailDebounceRef.current);
+        }
+        detailDebounceRef.current = window.setTimeout(() => {
+          commitDetailSearch(nextState);
+        }, 650);
+        return nextState;
+      });
+    },
+    [commitDetailSearch],
+  );
+
+  const resetDetailSearch = useCallback(() => {
+    if (detailDebounceRef.current) {
+      window.clearTimeout(detailDebounceRef.current);
+    }
+    const emptyState: DetailSearchState = {
+      query: "",
+      from: "",
+      to: "",
+      year: null,
+      hasCriteria: false,
+    };
+    setDetailDraft(emptyState);
+    setDetailState(emptyState);
+  }, []);
+
   const loadDetailData = useCallback((force = false) => {
+    if (!hasDetailCriteria(detailState)) {
+      setIsDetailLoading(false);
+      setDetailError("");
+      return;
+    }
     if (detailDataCache[detailCacheKey] && !force) {
       return;
     }
@@ -319,13 +381,21 @@ export function ProjectsModalController({
       });
   }, [detailCacheKey, detailDataCache, detailState]);
 
+  useEffect(
+    () => () => {
+      if (detailDebounceRef.current) {
+        window.clearTimeout(detailDebounceRef.current);
+      }
+    },
+    [],
+  );
+
   const loadKmpReport = useCallback((force = false) => {
     if (kmpReport && !force) {
       return;
     }
     const requestId = kmpRequestRef.current + 1;
     kmpRequestRef.current = requestId;
-    setIsKmpLoading(true);
     setKmpError("");
     getKmpMaterialReportModalDataAction()
       .then((data) => {
@@ -337,11 +407,6 @@ export function ProjectsModalController({
         if (kmpRequestRef.current === requestId) {
           setKmpError("Gagal memuat monitoring material KMP.");
         }
-      })
-      .finally(() => {
-        if (kmpRequestRef.current === requestId) {
-          setIsKmpLoading(false);
-        }
       });
   }, [kmpReport]);
 
@@ -350,7 +415,7 @@ export function ProjectsModalController({
       if (activeModal === "expense-new") {
         loadExpenseData();
       }
-      if (activeModal === "detail-search") {
+      if (activeModal === "detail-search" && hasDetailCriteria(detailState)) {
         loadDetailData();
       }
       if (activeModal === "kmp-material-check") {
@@ -359,7 +424,12 @@ export function ProjectsModalController({
     }, 0);
 
     return () => window.clearTimeout(timer);
-  }, [activeModal, loadDetailData, loadExpenseData, loadKmpReport]);
+  }, [activeModal, detailState, loadDetailData, loadExpenseData, loadKmpReport]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => loadExpenseData(), 1200);
+    return () => window.clearTimeout(timer);
+  }, [loadExpenseData]);
 
   const projectClientNameById = useMemo(
     () => Object.fromEntries(projects.map((project) => [project.id, project.clientName ?? null] as const)),
@@ -385,19 +455,17 @@ export function ProjectsModalController({
     if (projects.length === 0) {
       return <p className="mt-4 text-sm text-slate-500">Belum ada project. Buat project dulu.</p>;
     }
-    if (expenseError) {
-      return <ModalDataError message={expenseError} onRetry={() => loadExpenseData(true)} />;
-    }
-    if (!expenseData) {
-      return <ModalDataLoading label="Memuat data form input biaya..." />;
-    }
 
-    const defaultExpenseCategory = expenseData.expenseCategories[0]?.value ?? COST_CATEGORIES[0].value;
+    const expenseCategories =
+      expenseData?.expenseCategories && expenseData.expenseCategories.length > 0
+        ? expenseData.expenseCategories
+        : mergeExpenseCategoryOptions();
+    const defaultExpenseCategory = expenseCategories[0]?.value ?? COST_CATEGORIES[0].value;
     const projectInfoById = new Map(projects.map((project) => [project.id, project] as const));
     const projectClientScopeKeyById = new Map(
       projects.map((project) => [project.id, (project.clientName ?? "Tanpa Klien").trim().toLowerCase()] as const),
     );
-    const requesterHistorySuggestions = Object.entries(expenseData.requesterSuggestionsByProject)
+    const requesterHistorySuggestions = Object.entries(expenseData?.requesterSuggestionsByProject ?? {})
       .flatMap(([projectId, requesterNames]) => {
         const project = projectInfoById.get(projectId);
         return requesterNames.map((requesterName) => ({
@@ -413,9 +481,9 @@ export function ProjectsModalController({
           return a.requesterName.localeCompare(b.requesterName, "id-ID");
         }
         return a.projectName.localeCompare(b.projectName, "id-ID");
-      });
+    });
     const descriptionSuggestionsByClientScope = new Map<string, Set<string>>();
-    for (const [projectId, suggestionRows] of Object.entries(expenseData.descriptionSuggestionsByProject)) {
+    for (const [projectId, suggestionRows] of Object.entries(expenseData?.descriptionSuggestionsByProject ?? {})) {
       const scopeKey = projectClientScopeKeyById.get(projectId) ?? `project:${projectId.toLowerCase()}`;
       const current = descriptionSuggestionsByClientScope.get(scopeKey) ?? new Set<string>();
       for (const item of suggestionRows) {
@@ -441,6 +509,7 @@ export function ProjectsModalController({
     );
 
     return (
+      <>
       <OptimisticExpenseCreateForm
         key={`expense-modal-form-${expenseActionToken || success || error || "idle"}`}
         id="expense-modal-form"
@@ -454,35 +523,138 @@ export function ProjectsModalController({
           initialProjectId={currentProjectQueryId}
           today={today}
           defaultExpenseCategory={defaultExpenseCategory}
-          expenseCategories={expenseData.expenseCategories}
+          expenseCategories={expenseCategories}
           requesterHistorySuggestions={requesterHistorySuggestions}
           projectClientNameById={projectClientNameById}
           descriptionSuggestionsForProjects={descriptionSuggestionsForProjects}
-          hokProjectPresets={expenseData.hokProjectPresets}
+          hokProjectPresets={expenseData?.hokProjectPresets ?? []}
         />
       </OptimisticExpenseCreateForm>
+      {isExpenseLoading && !expenseData ? (
+        <p className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold text-slate-600">
+          Data saran sedang dimuat di background. Form tetap bisa digunakan.
+        </p>
+      ) : expenseError ? (
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
+          <p>{expenseError} Form tetap bisa dipakai tanpa data saran.</p>
+          <button
+            type="button"
+            data-ui-button="true"
+            onClick={() => loadExpenseData(true)}
+            className="mt-2 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+          >
+            Muat Ulang Data Saran
+          </button>
+        </div>
+      ) : null}
+      </>
     );
   };
 
   const renderDetailContent = () => {
     const detailData = detailDataCache[detailCacheKey];
+    const isSearching = hasDetailCriteria(detailState) && isDetailLoading && !detailData;
     return (
       <div className="mt-4 space-y-4">
-        <ExpenseDetailSearchForm
-          currentProjectId={currentProjectQueryId}
-          projectSearchText={searchText}
-          activeView={activeView}
-          initialQuery={detailState.query}
-          initialFrom={detailState.from}
-          initialTo={detailState.to}
-          initialYear={detailState.year}
-          hasCriteria={detailState.hasCriteria}
-          resetHref={openDetailSearchModalHref}
-        />
+        <form
+          className="space-y-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (detailDebounceRef.current) {
+              window.clearTimeout(detailDebounceRef.current);
+            }
+            commitDetailSearch(detailDraft);
+          }}
+        >
+          <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+            <input
+              value={detailDraft.query}
+              onChange={(event) => updateDetailDraft({ query: event.currentTarget.value })}
+              placeholder="Contoh: hebel, proyek gudang, 1.500.000, 13/04/2026"
+              autoFocus
+              autoComplete="off"
+            />
+            <button
+              type="submit"
+              data-ui-button="true"
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800"
+            >
+              <span className="btn-icon bg-white/15 text-white">
+                <SearchIcon />
+              </span>
+              Search
+            </button>
+            {hasDetailCriteria(detailDraft) ? (
+              <button
+                type="button"
+                data-ui-button="true"
+                onClick={resetDetailSearch}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
+              >
+                <span className="btn-icon bg-slate-100 text-slate-600">
+                  <CloseIcon />
+                </span>
+                Reset Filter
+              </button>
+            ) : null}
+          </div>
+          <p className="text-[11px] text-slate-500">
+            Pencarian berjalan setelah kata kunci atau filter diisi. Data besar tidak dimuat saat modal pertama dibuka.
+          </p>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">Dari tanggal</label>
+              <input
+                type="date"
+                value={detailDraft.from}
+                onChange={(event) => updateDetailDraft({ from: event.currentTarget.value })}
+                autoComplete="off"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">Sampai tanggal</label>
+              <input
+                type="date"
+                value={detailDraft.to}
+                onChange={(event) => updateDetailDraft({ to: event.currentTarget.value })}
+                autoComplete="off"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">Tahun</label>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1900}
+                max={9999}
+                step={1}
+                value={detailDraft.year ? String(detailDraft.year) : ""}
+                onChange={(event) => {
+                  const value = event.currentTarget.value.trim();
+                  updateDetailDraft({
+                    year: /^\d{4}$/.test(value) ? Number(value) : null,
+                  });
+                }}
+                placeholder="Contoh: 2026"
+                autoComplete="off"
+              />
+            </div>
+          </div>
+        </form>
         {detailError ? (
           <ModalDataError message={detailError} onRetry={() => loadDetailData(true)} />
+        ) : !hasDetailCriteria(detailState) ? (
+          <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600">
+            Isi kata kunci rincian atau gunakan filter tanggal/tahun untuk mulai mencari.
+          </p>
+        ) : isSearching ? (
+          <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-semibold text-slate-600">
+            Mencari rincian...
+          </p>
         ) : !detailData ? (
-          <ModalDataLoading label="Memuat data pencarian rincian..." />
+          <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600">
+            Ketik kata kunci lalu tekan Search untuk mencari rincian.
+          </p>
         ) : !detailState.hasCriteria ? (
           <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600">
             Isi kata kunci rincian atau gunakan filter tanggal/tahun untuk mencari data di semua project.
@@ -514,7 +686,7 @@ export function ProjectsModalController({
       return <ModalDataError message={kmpError} onRetry={() => loadKmpReport(true)} />;
     }
     if (!kmpReport) {
-      return <ModalDataLoading label="Memuat monitoring material KMP..." />;
+      return <KmpMaterialQuickPreview />;
     }
     if (kmpReport.projects.length === 0) {
       return (

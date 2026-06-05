@@ -17,7 +17,10 @@ import {
   getExpenseInputDraftAction,
   saveExpenseInputDraftAction,
 } from "@/app/actions/expense-draft.action";
-import { createScraperExpenseQuickAction } from "@/app/actions/expense.action";
+import {
+  createScraperExpenseQuickAction,
+  getKmpMaterialDuplicateDetectionAction,
+} from "@/app/actions/expense.action";
 import { EnterToNextField } from "@/components/enter-to-next-field";
 import { useOptimisticCreateStore } from "@/components/optimistic-create-store";
 import { ProjectAutocomplete, PROJECT_AUTOCOMPLETE_SELECT_EVENT } from "@/components/project-autocomplete";
@@ -27,6 +30,7 @@ import { RequesterProjectAutocompleteInput } from "@/components/requester-projec
 import { RupiahInput } from "@/components/rupiah-input";
 import { ClipboardIcon, ExcelIcon, SaveIcon } from "@/components/icons";
 import { SuccessToast } from "@/components/success-toast";
+import { formatCurrency } from "@/lib/format";
 import { parseHokClipboardText, parseHokImportRows, type HokImportResult } from "@/lib/hok-import";
 import { SPECIALIST_COST_PRESETS } from "@/lib/constants";
 import type { ExpenseEntry } from "@/lib/types";
@@ -164,6 +168,8 @@ type ExpenseInputModeFieldsProps = {
   hokProjectPresets: HokProjectPreset[];
   formId?: string;
 };
+
+type KmpMaterialDuplicateInfo = Awaited<ReturnType<typeof getKmpMaterialDuplicateDetectionAction>>;
 
 const STANDARD_MODE = "standard";
 const HOK_MODE = "hok_kmp_cianjur";
@@ -562,6 +568,9 @@ export function ExpenseInputModeFields({
   const [standardQuantity, setStandardQuantity] = useState("");
   const [standardUnitLabel, setStandardUnitLabel] = useState("");
   const [standardUnitPriceRaw, setStandardUnitPriceRaw] = useState("");
+  const [kmpDuplicateInfo, setKmpDuplicateInfo] = useState<KmpMaterialDuplicateInfo>(null);
+  const [isCheckingKmpDuplicate, setIsCheckingKmpDuplicate] = useState(false);
+  const [kmpDuplicateError, setKmpDuplicateError] = useState("");
   const [scraperCategory, setScraperCategory] = useState(defaultExpenseCategory);
   const [scraperDate, setScraperDate] = useState(today);
   const [scraperRequester, setScraperRequester] = useState("");
@@ -585,11 +594,55 @@ export function ExpenseInputModeFields({
   const [expenseDraftReady, setExpenseDraftReady] = useState(false);
   const [expenseDraftSavedAt, setExpenseDraftSavedAt] = useState<string | null>(null);
   const [expenseDraftNotice, setExpenseDraftNotice] = useState("");
+  const kmpDuplicateRequestIdRef = useRef(0);
 
   const expenseCategoryValues = useMemo(
     () => new Set(expenseCategories.map((item) => item.value)),
     [expenseCategories],
   );
+
+  useEffect(() => {
+    const projectId = standardProjectId.trim();
+    const description = standardDescription.trim();
+    if (mode !== STANDARD_MODE || !projectId || description.length < 2) {
+      kmpDuplicateRequestIdRef.current += 1;
+      setKmpDuplicateInfo(null);
+      setKmpDuplicateError("");
+      setIsCheckingKmpDuplicate(false);
+      return;
+    }
+
+    const requestId = kmpDuplicateRequestIdRef.current + 1;
+    kmpDuplicateRequestIdRef.current = requestId;
+    setIsCheckingKmpDuplicate(true);
+    setKmpDuplicateError("");
+
+    const timer = window.setTimeout(() => {
+      getKmpMaterialDuplicateDetectionAction(projectId, description)
+        .then((result) => {
+          if (kmpDuplicateRequestIdRef.current !== requestId) {
+            return;
+          }
+          setKmpDuplicateInfo(result);
+        })
+        .catch(() => {
+          if (kmpDuplicateRequestIdRef.current !== requestId) {
+            return;
+          }
+          setKmpDuplicateInfo(null);
+          setKmpDuplicateError("Gagal memeriksa histori material KMP.");
+        })
+        .finally(() => {
+          if (kmpDuplicateRequestIdRef.current === requestId) {
+            setIsCheckingKmpDuplicate(false);
+          }
+        });
+    }, 650);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [mode, standardDescription, standardProjectId]);
 
   useEffect(() => {
     setHokRows(createInitialHokRows(hokProjectPresets));
@@ -2034,6 +2087,26 @@ export function ExpenseInputModeFields({
     () => continueEntries.reduce((sum, e) => sum + Number(e.amountRaw), 0),
     [continueEntries],
   );
+  const kmpDuplicateMessage = useMemo(() => {
+    if (!kmpDuplicateInfo) {
+      return "";
+    }
+    if (kmpDuplicateInfo.detectedAmount <= 0) {
+      return `Material ${kmpDuplicateInfo.materialName} belum pernah diinput pada project ini.`;
+    }
+    if (kmpDuplicateInfo.minimumAmount > 0 && kmpDuplicateInfo.isFulfilled) {
+      return `Material ${kmpDuplicateInfo.materialName} sudah pernah diinput pada project ini dan nominalnya sudah memenuhi minimal deteksi ${formatCurrency(kmpDuplicateInfo.minimumAmount)}.`;
+    }
+    if (kmpDuplicateInfo.minimumAmount > 0) {
+      return `Material ${kmpDuplicateInfo.materialName} sudah pernah diinput, tetapi total nominal saat ini baru ${formatCurrency(kmpDuplicateInfo.detectedAmount)} dari minimal ${formatCurrency(kmpDuplicateInfo.minimumAmount)}.`;
+    }
+    return `Material ${kmpDuplicateInfo.materialName} sudah pernah diinput pada project ini dengan total ${formatCurrency(kmpDuplicateInfo.detectedAmount)}.`;
+  }, [kmpDuplicateInfo]);
+  const kmpDuplicateToneClass = kmpDuplicateInfo?.detectedAmount
+    ? kmpDuplicateInfo.isFulfilled
+      ? "border-amber-200 bg-amber-50 text-amber-800"
+      : "border-blue-200 bg-blue-50 text-blue-700"
+    : "border-emerald-200 bg-emerald-50 text-emerald-700";
   const hasActiveContinueDraft = hasContinueDraftContent({
     entries: continueEntries,
     projectId: continueProjectId,
@@ -2246,6 +2319,19 @@ export function ExpenseInputModeFields({
               value={standardDescription}
               onValueChange={setStandardDescription}
             />
+            {isCheckingKmpDuplicate ? (
+              <p className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold text-slate-600">
+                Memeriksa histori material KMP...
+              </p>
+            ) : kmpDuplicateMessage ? (
+              <p className={`mt-2 rounded-xl border px-3 py-2 text-[11px] font-semibold ${kmpDuplicateToneClass}`}>
+                {kmpDuplicateMessage}
+              </p>
+            ) : kmpDuplicateError ? (
+              <p className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-semibold text-rose-700">
+                {kmpDuplicateError}
+              </p>
+            ) : null}
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 import {
   createExpenseAction } from "@/app/actions/expense.action";
 import { createProjectAction, deleteProjectAction, deleteSelectedProjectsAction } from "@/app/actions/project.action";
@@ -10,6 +11,7 @@ import { ExpenseInputModeFields } from "@/components/expense-input-mode-fields";
 import { ExpenseDetailSearchForm } from "@/components/expense-detail-search-form";
 import { ExpenseDetailSearchResults } from "@/components/expense-detail-search-results";
 import { KmpMaterialMonitorPanel } from "@/components/kmp-material-monitor-panel";
+import { InstantModalLink } from "@/components/instant-modal-link";
 import { ProjectRecapExpenseList } from "@/components/project-recap-expense-list";
 import {
   CashInIcon,
@@ -158,6 +160,250 @@ function createProjectsHref(params: {
   return queryText ? `/projects?${queryText}` : "/projects";
 }
 
+function ModalContentLoading({ label = "Memuat data..." }: { label?: string }) {
+  return (
+    <div className="mt-4 space-y-3" aria-live="polite">
+      <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700">
+        {label}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index} className="h-16 animate-pulse rounded-xl bg-slate-200/80" />
+        ))}
+      </div>
+      <div className="h-32 animate-pulse rounded-xl bg-slate-200/80" />
+    </div>
+  );
+}
+
+async function ExpenseModalContent({
+  projects,
+  currentProjectQueryId,
+  openExpenseModalHref,
+  expenseModalErrorReturnHref,
+  today,
+  expenseActionToken,
+  success,
+  error,
+}: {
+  projects: Awaited<ReturnType<typeof getProjects>>;
+  currentProjectQueryId?: string;
+  openExpenseModalHref: string;
+  expenseModalErrorReturnHref: string;
+  today: string;
+  expenseActionToken: string;
+  success: string;
+  error: string;
+}) {
+  if (projects.length === 0) {
+    return <p className="mt-4 text-sm text-slate-500">Belum ada project. Buat project dulu.</p>;
+  }
+
+  const [
+    expenseCategories,
+    requesterSuggestionsByProject,
+    descriptionSuggestionsByProject,
+    hokProjectPresets,
+  ] = await Promise.all([
+    getExpenseCategories(),
+    getRequesterSuggestionsByProject(),
+    getDescriptionSuggestionsByProject(),
+    getKmpCianjurHokProjectPresets(),
+  ]);
+  const defaultExpenseCategory = expenseCategories[0]?.value ?? COST_CATEGORIES[0].value;
+  const projectInfoById = new Map(projects.map((project) => [project.id, project] as const));
+  const projectClientNameById = Object.fromEntries(
+    projects.map((project) => [project.id, project.clientName ?? null] as const),
+  );
+  const projectClientScopeKeyById = new Map(
+    projects.map((project) => [project.id, resolveClientScopeKey(project.clientName)] as const),
+  );
+  const requesterHistorySuggestions = Object.entries(requesterSuggestionsByProject)
+    .flatMap(([projectId, requesterNames]) => {
+      const project = projectInfoById.get(projectId);
+      return requesterNames.map((requesterName) => ({
+        requesterName,
+        projectId,
+        projectName: project?.name ?? "Project",
+        projectCode: project?.code ?? null,
+        clientName: project?.clientName ?? null,
+      }));
+    })
+    .sort((a, b) => {
+      if (a.requesterName !== b.requesterName) {
+        return a.requesterName.localeCompare(b.requesterName, "id-ID");
+      }
+      return a.projectName.localeCompare(b.projectName, "id-ID");
+    });
+  const descriptionSuggestionsByClientScope = new Map<string, Set<string>>();
+  for (const [projectId, suggestionRows] of Object.entries(descriptionSuggestionsByProject)) {
+    const scopeKey = projectClientScopeKeyById.get(projectId) ?? `project:${projectId.toLowerCase()}`;
+    const current = descriptionSuggestionsByClientScope.get(scopeKey) ?? new Set<string>();
+    for (const item of suggestionRows) {
+      const trimmedValue = item.trim();
+      if (trimmedValue) {
+        current.add(trimmedValue);
+      }
+    }
+    descriptionSuggestionsByClientScope.set(scopeKey, current);
+  }
+  const sortedDescriptionsByScopeKey = new Map<string, string[]>();
+  for (const [scopeKey, set] of descriptionSuggestionsByClientScope.entries()) {
+    sortedDescriptionsByScopeKey.set(
+      scopeKey,
+      Array.from(set).sort((a, b) => a.localeCompare(b, "id-ID")),
+    );
+  }
+  const descriptionSuggestionsForProjects = Object.fromEntries(
+    projects.map((project) => {
+      const scopeKey = projectClientScopeKeyById.get(project.id) ?? `project:${project.id.toLowerCase()}`;
+      return [project.id, sortedDescriptionsByScopeKey.get(scopeKey) ?? []] as const;
+    }),
+  );
+
+  return (
+    <OptimisticExpenseCreateForm
+      key={`expense-modal-form-${expenseActionToken || success || error || "idle"}`}
+      id="expense-modal-form"
+      action={createExpenseAction}
+      className="mt-4 space-y-3"
+    >
+      <input type="hidden" name="return_to" value={openExpenseModalHref} />
+      <input type="hidden" name="error_return_to" value={expenseModalErrorReturnHref} />
+      <ExpenseInputModeFields
+        projects={projects}
+        initialProjectId={currentProjectQueryId}
+        today={today}
+        defaultExpenseCategory={defaultExpenseCategory}
+        expenseCategories={expenseCategories}
+        requesterHistorySuggestions={requesterHistorySuggestions}
+        projectClientNameById={projectClientNameById}
+        descriptionSuggestionsForProjects={descriptionSuggestionsForProjects}
+        hokProjectPresets={hokProjectPresets}
+      />
+    </OptimisticExpenseCreateForm>
+  );
+}
+
+async function DetailSearchModalContent({
+  currentProjectQueryId,
+  searchText,
+  activeView,
+  detailSearchQuery,
+  detailDateFrom,
+  detailDateTo,
+  detailYear,
+  hasDetailSearchCriteria,
+  openDetailSearchModalHref,
+  detailSearchReturnHref,
+  canEdit,
+}: {
+  currentProjectQueryId?: string;
+  searchText: string;
+  activeView: ProjectView;
+  detailSearchQuery: string;
+  detailDateFrom: string;
+  detailDateTo: string;
+  detailYear: number | null;
+  hasDetailSearchCriteria: boolean;
+  openDetailSearchModalHref: string;
+  detailSearchReturnHref: string;
+  canEdit: boolean;
+}) {
+  const [expenseCategories, detailSearchResults] = await Promise.all([
+    getExpenseCategories(),
+    hasDetailSearchCriteria
+      ? searchExpenseDetails(detailSearchQuery, 200, {
+          from: detailDateFrom || undefined,
+          to: detailDateTo || undefined,
+          year: detailYear ?? undefined,
+        })
+      : Promise.resolve([]),
+  ]);
+
+  return (
+    <div className="mt-4 space-y-4">
+      <ExpenseDetailSearchForm
+        currentProjectId={currentProjectQueryId}
+        projectSearchText={searchText}
+        activeView={activeView}
+        initialQuery={detailSearchQuery}
+        initialFrom={detailDateFrom}
+        initialTo={detailDateTo}
+        initialYear={detailYear}
+        hasCriteria={hasDetailSearchCriteria}
+        resetHref={openDetailSearchModalHref}
+      />
+
+      {!hasDetailSearchCriteria ? (
+        <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600">
+          Isi kata kunci rincian atau gunakan filter tanggal/tahun untuk mencari data di semua project.
+        </p>
+      ) : detailSearchResults.length === 0 ? (
+        <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-4 text-sm text-amber-700">
+          Data tidak ditemukan untuk filter rincian yang dipilih.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-xs text-slate-500">
+            Ditemukan {detailSearchResults.length} data sesuai filter rincian.
+          </p>
+          <ExpenseDetailSearchResults
+            results={detailSearchResults}
+            projectSearchText={searchText}
+            canEdit={canEdit}
+            expenseCategories={expenseCategories}
+            bulkEditReturnTo={detailSearchReturnHref}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+async function KmpMaterialModalContent({
+  canEdit,
+  returnTo,
+  today,
+  searchText,
+}: {
+  canEdit: boolean;
+  returnTo: string;
+  today: string;
+  searchText: string;
+}) {
+  const kmpMaterialReport = await getKmpCianjurMissingMaterialReport();
+  const kmpMaterialMonitorProjects = kmpMaterialReport.projects.map((project) => ({
+    ...project,
+    recapHref: createProjectsHref({
+      projectId: project.projectId,
+      searchText,
+      view: "rekap",
+    }),
+  }));
+
+  if (kmpMaterialReport.projects.length === 0) {
+    return (
+      <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-4 text-sm text-amber-700">
+        Belum ada project klien KMP Cianjur yang bisa dimonitor.
+      </p>
+    );
+  }
+
+  return (
+    <KmpMaterialMonitorPanel
+      checklistLabels={kmpMaterialReport.checklistLabels}
+      totalProjects={kmpMaterialReport.totalProjects}
+      completeProjectCount={kmpMaterialReport.completeProjectCount}
+      incompleteProjectCount={kmpMaterialReport.incompleteProjectCount}
+      projects={kmpMaterialMonitorProjects}
+      canEdit={canEdit}
+      returnTo={returnTo}
+      today={today}
+    />
+  );
+}
+
 export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
   const user = await requireAuthUser();
   const canEdit = canManageProjects(user);
@@ -207,64 +453,13 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
     projects.some((item) => item.id === requestedProjectId);
   const currentProjectQueryId = hasRequestedProjectId ? requestedProjectId : undefined;
   const selectedProjectId = currentProjectQueryId ?? projects[0]?.id;
-  const shouldLoadExpenseCategories = activeModal === "expense-new" || activeModal === "detail-search";
-  const shouldLoadExpenseSuggestions = activeModal === "expense-new";
-  const shouldLoadKmpMaterialReport = activeModal === "kmp-material-check";
-  const emptyProjectSuggestions: Record<string, string[]> = {};
-  const emptyExpenseSearchResults: Awaited<ReturnType<typeof searchExpenseDetails>> = [];
-  const emptyHokProjectPresets: Awaited<ReturnType<typeof getKmpCianjurHokProjectPresets>> = [];
-  const emptyKmpMaterialReport: Awaited<ReturnType<typeof getKmpCianjurMissingMaterialReport>> = {
-    checklistLabels: [],
-    projects: [],
-    totalProjects: 0,
-    completeProjectCount: 0,
-    incompleteProjectCount: 0,
-  };
-  const [
-    expenseCategories,
-    requesterSuggestionsByProject,
-    descriptionSuggestionsByProject,
-    selectedProject,
-    detailSearchResults,
-    hokProjectPresets,
-    kmpMaterialReport,
-  ] = await Promise.all([
-    shouldLoadExpenseCategories ? getExpenseCategories() : Promise.resolve(mergeExpenseCategoryOptions()),
-    shouldLoadExpenseSuggestions
-      ? getRequesterSuggestionsByProject()
-      : Promise.resolve(emptyProjectSuggestions),
-    shouldLoadExpenseSuggestions
-      ? getDescriptionSuggestionsByProject()
-      : Promise.resolve(emptyProjectSuggestions),
-    activeView === "rekap" && selectedProjectId ? getProjectDetail(selectedProjectId) : Promise.resolve(null),
-    activeModal === "detail-search" && hasDetailSearchCriteria
-      ? searchExpenseDetails(detailSearchQuery, 0, {
-          from: detailDateFrom || undefined,
-          to: detailDateTo || undefined,
-          year: detailYear ?? undefined,
-        })
-      : Promise.resolve(emptyExpenseSearchResults),
-    activeModal === "expense-new"
-      ? getKmpCianjurHokProjectPresets()
-      : Promise.resolve(emptyHokProjectPresets),
-    shouldLoadKmpMaterialReport
-      ? getKmpCianjurMissingMaterialReport()
-      : Promise.resolve(emptyKmpMaterialReport),
-  ]);
+  const selectedProject =
+    activeView === "rekap" && selectedProjectId ? await getProjectDetail(selectedProjectId) : null;
   const recapExpenseCategories =
     activeView === "rekap" && selectedProject
       ? mergeExpenseCategoryOptions(selectedProject.expenses.map((item) => item.category))
-      : expenseCategories;
-  const kmpMaterialMonitorProjects = kmpMaterialReport.projects.map((project) => ({
-    ...project,
-    recapHref: createProjectsHref({
-      projectId: project.projectId,
-      searchText,
-      view: "rekap",
-    }),
-  }));
+      : mergeExpenseCategoryOptions();
   const today = new Date().toISOString().slice(0, 10);
-  const defaultExpenseCategory = expenseCategories[0]?.value ?? COST_CATEGORIES[0].value;
   const scopedReportProjectIds =
     activeView === "rekap" && selectedProject?.project.id && currentProjectQueryId
       ? [selectedProject.project.id]
@@ -292,63 +487,6 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
         return haystack.includes(searchKeyword);
       })
     : projects;
-  const projectInfoById = new Map(
-    projects.map((project) => [project.id, project] as const),
-  );
-  const projectClientNameById = Object.fromEntries(
-    projects.map((project) => [project.id, project.clientName ?? null] as const),
-  );
-  const projectClientScopeKeyById = new Map(
-    projects.map((project) => [project.id, resolveClientScopeKey(project.clientName)] as const),
-  );
-  const requesterHistorySuggestions = Object.entries(requesterSuggestionsByProject)
-    .flatMap(([projectId, requesterNames]) => {
-      const project = projectInfoById.get(projectId);
-      return requesterNames.map((requesterName) => ({
-        requesterName,
-        projectId,
-        projectName: project?.name ?? "Project",
-        projectCode: project?.code ?? null,
-        clientName: project?.clientName ?? null,
-      }));
-    })
-    .sort((a, b) => {
-      if (a.requesterName !== b.requesterName) {
-        return a.requesterName.localeCompare(b.requesterName, "id-ID");
-      }
-      return a.projectName.localeCompare(b.projectName, "id-ID");
-    });
-  const descriptionSuggestionsByClientScope = new Map<string, Set<string>>();
-  for (const [projectId, suggestionRows] of Object.entries(descriptionSuggestionsByProject)) {
-    const scopeKey = projectClientScopeKeyById.get(projectId) ?? `project:${projectId.toLowerCase()}`;
-    const current = descriptionSuggestionsByClientScope.get(scopeKey) ?? new Set<string>();
-    for (const item of suggestionRows) {
-      const trimmedValue = item.trim();
-      if (!trimmedValue) {
-        continue;
-      }
-      current.add(trimmedValue);
-    }
-    descriptionSuggestionsByClientScope.set(scopeKey, current);
-  }
-  const sortedDescriptionsByScopeKey = new Map<string, string[]>();
-  for (const [scopeKey, set] of descriptionSuggestionsByClientScope.entries()) {
-    sortedDescriptionsByScopeKey.set(
-      scopeKey,
-      Array.from(set).sort((a, b) => a.localeCompare(b, "id-ID")),
-    );
-  }
-
-  const descriptionSuggestionsForProjects = Object.fromEntries(
-    projects.map((project) => {
-      const scopeKey =
-        projectClientScopeKeyById.get(project.id) ?? `project:${project.id.toLowerCase()}`;
-      return [
-        project.id,
-        sortedDescriptionsByScopeKey.get(scopeKey) ?? [],
-      ] as const;
-    }),
-  );
 
   const closeModalHref = createProjectsHref({
     projectId: currentProjectQueryId,
@@ -450,57 +588,61 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
           <div className="section-actions xl:justify-end">
             {canEdit ? (
               <>
-                <Link
+                <InstantModalLink
                   href={openProjectModalHref}
                   prefetch
                   scroll={false}
                   data-ui-button="true"
                   className="button-primary button-sm"
+                  loadingLabel="Membuka modal tambah project..."
                 >
                   <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
                     <PlusIcon />
                   </span>
                   Tambah Project
-                </Link>
-                <Link
+                </InstantModalLink>
+                <InstantModalLink
                   href={openExpenseModalHref}
                   prefetch
                   scroll={false}
                   data-ui-button="true"
                   className="button-sm inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                  loadingLabel="Membuka modal input biaya..."
                 >
                   <span className="btn-icon icon-float-soft bg-emerald-100 text-emerald-700">
                     <CashInIcon />
                   </span>
                   Input Biaya
-                </Link>
+                </InstantModalLink>
               </>
             ) : null}
-            <Link
+            <InstantModalLink
               href={openDetailSearchModalHref}
               prefetch
               scroll={false}
               data-ui-button="true"
               className="button-soft button-sm"
+              loadingLabel="Membuka modal cari rincian..."
             >
               <span className="btn-icon bg-slate-100 text-slate-700">
                 <SearchIcon />
               </span>
               Cari Rincian
-            </Link>
+            </InstantModalLink>
             {activeDataSource !== "demo" && canImport ? (
-              <Link
+              <InstantModalLink
                 href={openImportModalHref}
                 prefetch
                 scroll={false}
                 data-ui-button="true"
                 className="button-sm inline-flex items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 hover:bg-amber-100"
+                loadingLabel="Membuka modal import..."
               >
                 <span className="btn-icon icon-wiggle-soft bg-amber-100 text-amber-700">
                   <ImportIcon />
                 </span>
                 Import Data Excel
-              </Link>
+              </InstantModalLink>
             ) : null}
           </div>
 
@@ -598,18 +740,19 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
             Rekap Biaya
           </Link>
           {kmpProjectCount > 0 ? (
-            <Link
+            <InstantModalLink
               href={openKmpMaterialReportHref}
               prefetch
               scroll={false}
               data-ui-button="true"
               className="button-soft button-sm"
+              loadingLabel="Membuka monitoring material KMP..."
             >
               <span className="btn-icon bg-amber-100 text-amber-700">
                 <SearchIcon />
               </span>
               Cek Material KMP
-            </Link>
+            </InstantModalLink>
           ) : null}
         </div>
       </section>
@@ -627,18 +770,19 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
             <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <ProjectsSelectionToggle formId="selected-projects-report-form" />
-              <Link
+              <InstantModalLink
                 href={openDetailSearchModalHref}
                 prefetch
                 scroll={false}
                 data-ui-button="true"
                 className="button-soft button-sm"
+                loadingLabel="Membuka modal cari rincian..."
               >
                 <span className="btn-icon bg-slate-100 text-slate-700">
                   <SearchIcon />
                 </span>
                 Cari Rincian Semua Project
-              </Link>
+              </InstantModalLink>
             </div>
             <OptimisticDomMutationForm
               id="selected-projects-report-form"
@@ -972,60 +1116,30 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
             </div>
 
             {activeModal === "detail-search" ? (
-              <div className="mt-4 space-y-4">
-                <ExpenseDetailSearchForm
-                  currentProjectId={currentProjectQueryId}
-                  projectSearchText={searchText}
+              <Suspense fallback={<ModalContentLoading label="Memuat pencarian rincian..." />}>
+                <DetailSearchModalContent
+                  currentProjectQueryId={currentProjectQueryId}
+                  searchText={searchText}
                   activeView={activeView}
-                  initialQuery={detailSearchQuery}
-                  initialFrom={detailDateFrom}
-                  initialTo={detailDateTo}
-                  initialYear={detailYear}
-                  hasCriteria={hasDetailSearchCriteria}
-                  resetHref={openDetailSearchModalHref}
+                  detailSearchQuery={detailSearchQuery}
+                  detailDateFrom={detailDateFrom}
+                  detailDateTo={detailDateTo}
+                  detailYear={detailYear}
+                  hasDetailSearchCriteria={hasDetailSearchCriteria}
+                  openDetailSearchModalHref={openDetailSearchModalHref}
+                  detailSearchReturnHref={detailSearchReturnHref}
+                  canEdit={canEdit}
                 />
-
-                {!hasDetailSearchCriteria ? (
-                  <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600">
-                    Isi kata kunci rincian atau gunakan filter tanggal/tahun untuk mencari data di semua
-                    project.
-                  </p>
-                ) : detailSearchResults.length === 0 ? (
-                  <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-4 text-sm text-amber-700">
-                    Data tidak ditemukan untuk filter rincian yang dipilih.
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    <p className="text-xs text-slate-500">
-                      Ditemukan {detailSearchResults.length} data sesuai filter rincian.
-                    </p>
-                    <ExpenseDetailSearchResults
-                      results={detailSearchResults}
-                      projectSearchText={searchText}
-                      canEdit={canEdit}
-                      expenseCategories={expenseCategories}
-                      bulkEditReturnTo={detailSearchReturnHref}
-                    />
-                  </div>
-                )}
-              </div>
+              </Suspense>
             ) : activeModal === "kmp-material-check" ? (
-              kmpMaterialReport.projects.length === 0 ? (
-                <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-4 text-sm text-amber-700">
-                  Belum ada project klien KMP Cianjur yang bisa dimonitor.
-                </p>
-              ) : (
-                <KmpMaterialMonitorPanel
-                  checklistLabels={kmpMaterialReport.checklistLabels}
-                  totalProjects={kmpMaterialReport.totalProjects}
-                  completeProjectCount={kmpMaterialReport.completeProjectCount}
-                  incompleteProjectCount={kmpMaterialReport.incompleteProjectCount}
-                  projects={kmpMaterialMonitorProjects}
+              <Suspense fallback={<ModalContentLoading label="Memuat monitoring material KMP..." />}>
+                <KmpMaterialModalContent
                   canEdit={canEdit}
                   returnTo={openKmpMaterialReportHref}
                   today={today}
+                  searchText={searchText}
                 />
-              )
+              </Suspense>
             ) : activeModal === "project-new" ? (
               <OptimisticProjectCreateForm action={createProjectAction} className="mt-4 space-y-3">
                 <input type="hidden" name="return_to" value={closeModalHref} />
@@ -1096,29 +1210,19 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                   </button>
                 </form>
               )
-            ) : projects.length === 0 ? (
-              <p className="mt-4 text-sm text-slate-500">Belum ada project. Buat project dulu.</p>
             ) : (
-              <OptimisticExpenseCreateForm
-                key={`expense-modal-form-${expenseActionToken || success || error || "idle"}`}
-                id="expense-modal-form"
-                action={createExpenseAction}
-                className="mt-4 space-y-3"
-              >
-                <input type="hidden" name="return_to" value={openExpenseModalHref} />
-                <input type="hidden" name="error_return_to" value={expenseModalErrorReturnHref} />
-                <ExpenseInputModeFields
+              <Suspense fallback={<ModalContentLoading label="Menyiapkan form input biaya..." />}>
+                <ExpenseModalContent
                   projects={projects}
-                  initialProjectId={currentProjectQueryId}
+                  currentProjectQueryId={currentProjectQueryId}
+                  openExpenseModalHref={openExpenseModalHref}
+                  expenseModalErrorReturnHref={expenseModalErrorReturnHref}
                   today={today}
-                  defaultExpenseCategory={defaultExpenseCategory}
-                  expenseCategories={expenseCategories}
-                  requesterHistorySuggestions={requesterHistorySuggestions}
-                  projectClientNameById={projectClientNameById}
-                  descriptionSuggestionsForProjects={descriptionSuggestionsForProjects}
-                  hokProjectPresets={hokProjectPresets}
+                  expenseActionToken={expenseActionToken}
+                  success={success}
+                  error={error}
                 />
-              </OptimisticExpenseCreateForm>
+              </Suspense>
             )}
           </section>
         </div>

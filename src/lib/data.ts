@@ -456,6 +456,8 @@ const SUPABASE_EXPENSE_METADATA_SELECT =
   "id, project_id, requester_name, description, usage_info, recipient_name, unit_label, category, amount, expense_date, created_at";
 const SUPABASE_EXPENSE_FULL_SELECT =
   "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at";
+const SUPABASE_ATTENDANCE_DASHBOARD_SELECT =
+  "worker_name, status, kasbon_amount, attendance_date, notes";
 
 type CachedSupabaseExpenseMetadata = {
   categoryRows: Record<string, unknown>[];
@@ -568,6 +570,16 @@ const getCachedSupabaseAllExpenseRows = cache(
 // Keep them request-memoized instead of persisting the whole payload in the data cache.
 const getCachedSupabaseAllAttendanceRows = cache(
   async (): Promise<Record<string, unknown>[]> => getFreshSupabaseAllAttendanceRows(),
+);
+
+const getCachedSupabaseDashboardAttendanceRows = cache(
+  async (): Promise<Record<string, unknown>[]> => {
+    const rows = await getAllSupabaseRows(
+      "attendance_records",
+      SUPABASE_ATTENDANCE_DASHBOARD_SELECT,
+    );
+    return rows.filter((row) => !isAttendanceWorkerPresetRow(row));
+  },
 );
 
 async function getFreshSupabaseAllAttendanceRows() {
@@ -1476,9 +1488,12 @@ type KmpCianjurMissingMaterialProjectReport = {
   clientName: string | null;
   detectedMaterials: string[];
   detectedMaterialDetails: KmpCianjurDetectedMaterialDetail[];
+  missingMaterialDetails: KmpCianjurMaterialProgress[];
+  materialProgress: KmpCianjurMaterialProgress[];
   missingMaterials: string[];
   detectedCount: number;
   missingCount: number;
+  totalChecklistCount: number;
 };
 
 type KmpCianjurDetectedMaterialExpense = {
@@ -1491,8 +1506,17 @@ type KmpCianjurDetectedMaterialExpense = {
 };
 
 type KmpCianjurDetectedMaterialDetail = {
+  configId: string | null;
   materialKey: string;
   materialLabel: string;
+  materialName: string;
+  submissionName: string | null;
+  minimumAmount: number;
+  detectedAmount: number;
+  checklistType: KmpChecklistType;
+  checklistStatus: KmpChecklistStatus;
+  isCustom: boolean;
+  isFulfilled: boolean;
   expenses: KmpCianjurDetectedMaterialExpense[];
 };
 
@@ -1502,6 +1526,52 @@ type KmpCianjurMissingMaterialReport = {
   totalProjects: number;
   completeProjectCount: number;
   incompleteProjectCount: number;
+};
+
+export type KmpChecklistType = "none" | "system" | "manual";
+export type KmpChecklistStatus = "auto" | "pending" | "fulfilled";
+
+export type KmpProjectMaterialConfig = {
+  id: string;
+  projectId: string;
+  materialKey: string;
+  materialName: string;
+  submissionName: string | null;
+  minimumAmount: number;
+  checklistType: KmpChecklistType;
+  checklistStatus: KmpChecklistStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type KmpCianjurMaterialProgress = {
+  configId: string | null;
+  materialKey: string;
+  materialLabel: string;
+  materialName: string;
+  submissionName: string | null;
+  minimumAmount: number;
+  detectedAmount: number;
+  checklistType: KmpChecklistType;
+  checklistStatus: KmpChecklistStatus;
+  isCustom: boolean;
+  isFulfilled: boolean;
+  expenses: KmpCianjurDetectedMaterialExpense[];
+};
+
+type KmpMaterialDetectionRule = {
+  configId: string | null;
+  materialKey: string;
+  materialLabel: string;
+  materialName: string;
+  submissionName: string | null;
+  keywords: string[];
+  amountTargets?: readonly number[];
+  amountOptions?: readonly { label: string; amount: number }[];
+  minimumAmount: number;
+  checklistType: KmpChecklistType;
+  checklistStatus: KmpChecklistStatus;
+  isCustom: boolean;
 };
 
 const KMP_CIANJUR_MATERIAL_AMOUNT_TOLERANCE = 0.2;
@@ -1532,6 +1602,47 @@ const KMP_CIANJUR_GENERIC_MATERIAL_TOKENS = new Set([
   "kas",
 ]);
 
+function parseKmpChecklistType(value: unknown): KmpChecklistType {
+  return value === "none" || value === "system" || value === "manual" ? value : "manual";
+}
+
+function parseKmpChecklistStatus(value: unknown): KmpChecklistStatus {
+  return value === "pending" || value === "fulfilled" || value === "auto" ? value : "auto";
+}
+
+function mapKmpProjectMaterialConfig(row: Record<string, unknown>): KmpProjectMaterialConfig {
+  const rawMinimumAmount = Number(row.minimum_amount ?? 0);
+  return {
+    id: String(row.id ?? ""),
+    projectId: String(row.project_id ?? ""),
+    materialKey: String(row.material_key ?? ""),
+    materialName: String(row.material_name ?? ""),
+    submissionName: typeof row.submission_name === "string" ? row.submission_name : null,
+    minimumAmount: Number.isFinite(rawMinimumAmount) ? Math.max(rawMinimumAmount, 0) : 0,
+    checklistType: parseKmpChecklistType(row.checklist_type),
+    checklistStatus: parseKmpChecklistStatus(row.checklist_status),
+    createdAt: String(row.created_at ?? new Date().toISOString()),
+    updatedAt: String(row.updated_at ?? row.created_at ?? new Date().toISOString()),
+  };
+}
+
+function isMissingKmpProjectMaterialsTableError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const withError = error as { code?: unknown; message?: unknown; details?: unknown };
+  const code = typeof withError.code === "string" ? withError.code : "";
+  const text = [withError.message, withError.details]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toLowerCase();
+  return (
+    code === "42P01" ||
+    code === "PGRST205" ||
+    (text.includes("kmp_project_materials") && (text.includes("does not exist") || text.includes("schema cache")))
+  );
+}
+
 function normalizeLooseText(value: string | null | undefined) {
   return (value ?? "")
     .normalize("NFKD")
@@ -1539,6 +1650,102 @@ function normalizeLooseText(value: string | null | undefined) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+function createMaterialKey(value: string) {
+  const normalized = normalizeLooseText(value).replace(/\s+/g, "_");
+  return normalized || "material";
+}
+
+function getMaterialNameKeywords(materialName: string) {
+  const normalized = normalizeLooseText(materialName);
+  if (!normalized) {
+    return [];
+  }
+
+  const keywords = new Set<string>([normalized]);
+  const tokens = normalized
+    .split(/\s+/)
+    .filter((token) => token.length >= 3 && !KMP_CIANJUR_GENERIC_MATERIAL_TOKENS.has(token));
+  if (tokens.length === 1) {
+    keywords.add(tokens[0]);
+  }
+  return Array.from(keywords);
+}
+
+function getConfigByMaterialKey(configs: KmpProjectMaterialConfig[]) {
+  return new Map(
+    configs
+      .filter((config) => config.projectId && config.materialKey)
+      .map((config) => [config.materialKey, config] as const),
+  );
+}
+
+function getProjectMaterialConfigs(
+  configs: KmpProjectMaterialConfig[],
+  projectId: string,
+) {
+  return configs.filter((config) => config.projectId === projectId);
+}
+
+function buildKmpMaterialRuleFromChecklist(
+  item: KmpMaterialChecklistRule,
+  config: KmpProjectMaterialConfig | undefined,
+): KmpMaterialDetectionRule {
+  const materialName = config?.materialName.trim() || item.label;
+  return {
+    configId: config?.id ?? null,
+    materialKey: item.key,
+    materialLabel: materialName,
+    materialName,
+    submissionName: config?.submissionName ?? null,
+    keywords: Array.from(
+      new Set([
+        ...item.keywords.map((keyword) => normalizeLooseText(keyword)),
+        ...getMaterialNameKeywords(materialName),
+      ]),
+    ).filter((keyword) => keyword.length > 0),
+    amountTargets: item.amountTargets,
+    amountOptions: item.amountOptions,
+    minimumAmount: config?.minimumAmount ?? item.minimumDetectedAmount ?? 0,
+    checklistType: config?.checklistType ?? "system",
+    checklistStatus: config?.checklistStatus ?? "auto",
+    isCustom: Boolean(config),
+  };
+}
+
+function buildKmpMaterialRuleFromConfig(config: KmpProjectMaterialConfig): KmpMaterialDetectionRule {
+  const materialName = config.materialName.trim() || "Material";
+  return {
+    configId: config.id,
+    materialKey: config.materialKey || createMaterialKey(materialName),
+    materialLabel: materialName,
+    materialName,
+    submissionName: config.submissionName,
+    keywords: getMaterialNameKeywords(materialName),
+    minimumAmount: config.minimumAmount,
+    checklistType: config.checklistType,
+    checklistStatus: config.checklistStatus,
+    isCustom: true,
+  };
+}
+
+function buildKmpMaterialRulesForProject(
+  project: Project,
+  configs: KmpProjectMaterialConfig[],
+) {
+  const projectConfigs = getProjectMaterialConfigs(configs, project.id);
+  const configByMaterialKey = getConfigByMaterialKey(projectConfigs);
+  const checklistRules = isKmpCianjurClientName(project.clientName)
+    ? KMP_CIANJUR_MATERIAL_CHECKLIST.map((item) =>
+        buildKmpMaterialRuleFromChecklist(item, configByMaterialKey.get(item.key)),
+      )
+    : [];
+  const checklistKeys = new Set<string>(KMP_CIANJUR_MATERIAL_CHECKLIST.map((item) => item.key));
+  const customRules = projectConfigs
+    .filter((config) => !checklistKeys.has(config.materialKey))
+    .map((config) => buildKmpMaterialRuleFromConfig(config));
+  return [...checklistRules, ...customRules];
 }
 
 function buildExpenseMaterialHaystack(expense: ExpenseEntry) {
@@ -1599,6 +1806,20 @@ function isGeneratedKmpMaterialChecklistForRule(
   );
 }
 
+function isGeneratedKmpMaterialChecklistForDetectionRule(
+  item: KmpMaterialDetectionRule,
+  expense: Pick<ExpenseEntry, "usageInfo">,
+) {
+  const usageInfo = normalizeLooseText(expense.usageInfo);
+  if (!usageInfo.startsWith("checklist material kmp cianjur")) {
+    return false;
+  }
+
+  return [item.materialLabel, item.materialName]
+    .map((label) => normalizeLooseText(`Checklist Material KMP Cianjur - ${label}`))
+    .some((prefix) => usageInfo.startsWith(prefix));
+}
+
 function getAmountDistanceFromMaterialTarget(amount: number, target: number) {
   if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(target) || target <= 0) {
     return null;
@@ -1621,6 +1842,16 @@ function getMaterialRuleAmountDistance(item: KmpMaterialChecklistRule, amount: n
   return Math.min(...distances);
 }
 
+function getDetectionRuleAmountDistance(item: KmpMaterialDetectionRule, amount: number) {
+  const distances = (item.amountTargets ?? [])
+    .map((target) => getAmountDistanceFromMaterialTarget(amount, target))
+    .filter((distance): distance is number => distance !== null);
+  if (distances.length === 0) {
+    return null;
+  }
+  return Math.min(...distances);
+}
+
 function isClosestMaterialAmountRule(
   item: KmpMaterialChecklistRule,
   expense: ExpenseEntry,
@@ -1634,6 +1865,24 @@ function isClosestMaterialAmountRule(
   const closestDistance = Math.min(
     ...allRules
       .map((rule) => getMaterialRuleAmountDistance(rule, expense.amount))
+      .filter((distance): distance is number => distance !== null),
+  );
+  return itemDistance <= closestDistance + Number.EPSILON;
+}
+
+function isClosestMaterialDetectionRule(
+  item: KmpMaterialDetectionRule,
+  expense: ExpenseEntry,
+  allRules: KmpMaterialDetectionRule[],
+) {
+  const itemDistance = getDetectionRuleAmountDistance(item, expense.amount);
+  if (itemDistance === null) {
+    return false;
+  }
+
+  const closestDistance = Math.min(
+    ...allRules
+      .map((rule) => getDetectionRuleAmountDistance(rule, expense.amount))
       .filter((distance): distance is number => distance !== null),
   );
   return itemDistance <= closestDistance + Number.EPSILON;
@@ -1672,12 +1921,67 @@ function isMaterialRuleDetectedByExpense(
   return isClosestMaterialAmountRule(item, expense, allRules);
 }
 
+function isMaterialDetectionRuleMatchedByExpense(
+  item: KmpMaterialDetectionRule,
+  expense: ExpenseEntry,
+  haystack: string,
+  allRules: KmpMaterialDetectionRule[],
+) {
+  if (isGeneratedKmpMaterialChecklistForDetectionRule(item, expense)) {
+    return true;
+  }
+
+  const hasKeywordMatch = item.keywords.some((keyword) => hasMaterialKeyword(haystack, keyword));
+  if (hasKeywordMatch) {
+    return true;
+  }
+
+  const hasDifferentMaterialKeyword = allRules.some((rule) =>
+    rule.materialKey !== item.materialKey &&
+    rule.keywords.some((keyword) => hasMaterialKeyword(haystack, keyword)),
+  );
+  if (hasDifferentMaterialKeyword) {
+    return false;
+  }
+
+  if (!isGenericMaterialHaystack(haystack)) {
+    return false;
+  }
+
+  return isClosestMaterialDetectionRule(item, expense, allRules);
+}
+
+function isKmpMaterialRuleFulfilled(params: {
+  rule: KmpMaterialDetectionRule;
+  expenses: KmpCianjurDetectedMaterialExpense[];
+  hasGeneratedChecklist: boolean;
+}) {
+  if (params.rule.checklistStatus === "fulfilled") {
+    return true;
+  }
+  if (params.rule.checklistStatus === "pending") {
+    return false;
+  }
+  if (params.hasGeneratedChecklist) {
+    return true;
+  }
+  if (params.rule.minimumAmount > 0) {
+    return params.expenses.reduce((sum, expense) => sum + expense.amount, 0) >= params.rule.minimumAmount;
+  }
+  return params.expenses.length > 0;
+}
+
 export function buildKmpCianjurMissingMaterialReport(
   projects: Project[],
   expenses: ExpenseEntry[],
+  materialConfigs: KmpProjectMaterialConfig[] = [],
 ): KmpCianjurMissingMaterialReport {
   const kmpProjects = projects
-    .filter((project) => isKmpCianjurClientName(project.clientName))
+    .filter(
+      (project) =>
+        isKmpCianjurClientName(project.clientName) ||
+        materialConfigs.some((config) => config.projectId === project.id),
+    )
     .slice()
     .sort((a, b) => a.name.localeCompare(b.name, "id-ID"));
 
@@ -1696,43 +2000,62 @@ export function buildKmpCianjurMissingMaterialReport(
     expenseHaystacksByProjectId.set(expense.projectId, current);
   }
 
-  const checklistWithTokens = KMP_CIANJUR_MATERIAL_CHECKLIST.map((item) => ({
-    ...item,
-    keywords: item.keywords.map((keyword) => normalizeLooseText(keyword)).filter((keyword) => keyword.length > 0),
-  }));
-
   const projectReports = kmpProjects.map((project) => {
     const haystacks = expenseHaystacksByProjectId.get(project.id) ?? [];
     const materialExpenses = materialExpensesByProjectId.get(project.id) ?? [];
     const detectedMaterials: string[] = [];
     const detectedMaterialDetails: KmpCianjurDetectedMaterialDetail[] = [];
+    const missingMaterialDetails: KmpCianjurMaterialProgress[] = [];
+    const materialProgress: KmpCianjurMaterialProgress[] = [];
     const missingMaterials: string[] = [];
+    const projectRules = buildKmpMaterialRulesForProject(project, materialConfigs);
 
-    for (const item of checklistWithTokens) {
+    for (const item of projectRules) {
       const detectedExpenses = materialExpenses.filter((expense, index) =>
-        isMaterialRuleDetectedByExpense(item, expense, haystacks[index] ?? "", checklistWithTokens),
+        isMaterialDetectionRuleMatchedByExpense(item, expense, haystacks[index] ?? "", projectRules),
       );
-      if (detectedExpenses.length > 0) {
-        detectedMaterials.push(item.label);
-        detectedMaterialDetails.push({
-          materialKey: item.key,
-          materialLabel: item.label,
-          expenses: detectedExpenses
-            .map((expense) => ({
-              id: expense.id,
-              expenseDate: expense.expenseDate,
-              requesterName: expense.requesterName,
-              description: expense.description,
-              usageInfo: expense.usageInfo,
-              amount: expense.amount,
-            }))
-            .sort((a, b) => {
-              const dateDiff = b.expenseDate.localeCompare(a.expenseDate);
-              return dateDiff !== 0 ? dateDiff : b.id.localeCompare(a.id);
-            }),
+      const expenseRows = detectedExpenses
+        .map((expense) => ({
+          id: expense.id,
+          expenseDate: expense.expenseDate,
+          requesterName: expense.requesterName,
+          description: expense.description,
+          usageInfo: expense.usageInfo,
+          amount: expense.amount,
+        }))
+        .sort((a, b) => {
+          const dateDiff = b.expenseDate.localeCompare(a.expenseDate);
+          return dateDiff !== 0 ? dateDiff : b.id.localeCompare(a.id);
         });
+      const hasGeneratedChecklist = detectedExpenses.some((expense) =>
+        isGeneratedKmpMaterialChecklistForDetectionRule(item, expense),
+      );
+      const progress: KmpCianjurMaterialProgress = {
+        configId: item.configId,
+        materialKey: item.materialKey,
+        materialLabel: item.materialLabel,
+        materialName: item.materialName,
+        submissionName: item.submissionName,
+        minimumAmount: item.minimumAmount,
+        detectedAmount: expenseRows.reduce((sum, expense) => sum + expense.amount, 0),
+        checklistType: item.checklistType,
+        checklistStatus: item.checklistStatus,
+        isCustom: item.isCustom,
+        isFulfilled: isKmpMaterialRuleFulfilled({
+          rule: item,
+          expenses: expenseRows,
+          hasGeneratedChecklist,
+        }),
+        expenses: expenseRows,
+      };
+      materialProgress.push(progress);
+
+      if (progress.isFulfilled) {
+        detectedMaterials.push(item.materialLabel);
+        detectedMaterialDetails.push(progress);
       } else {
-        missingMaterials.push(item.label);
+        missingMaterials.push(item.materialLabel);
+        missingMaterialDetails.push(progress);
       }
     }
 
@@ -1742,16 +2065,25 @@ export function buildKmpCianjurMissingMaterialReport(
       clientName: project.clientName,
       detectedMaterials,
       detectedMaterialDetails,
+      missingMaterialDetails,
+      materialProgress,
       missingMaterials,
       detectedCount: detectedMaterials.length,
       missingCount: missingMaterials.length,
+      totalChecklistCount: projectRules.length,
     };
   });
 
   const completeProjectCount = projectReports.filter((project) => project.missingCount === 0).length;
 
   return {
-    checklistLabels: checklistWithTokens.map((item) => item.label),
+    checklistLabels: Array.from(
+      new Set(
+        projectReports.flatMap((project) =>
+          project.materialProgress.map((material) => material.materialLabel),
+        ),
+      ),
+    ),
     projects: projectReports,
     totalProjects: projectReports.length,
     completeProjectCount,
@@ -1855,11 +2187,63 @@ export async function getKmpCianjurHokProjectPresets(): Promise<
   return buildKmpCianjurHokProjectPresets(sampleProjects, sampleExpenses);
 }
 
+const SUPABASE_KMP_PROJECT_MATERIAL_SELECT =
+  "id, project_id, material_key, material_name, submission_name, minimum_amount, checklist_type, checklist_status, created_at, updated_at";
+
+const getCachedSupabaseKmpProjectMaterialConfigs = unstable_cache(
+  async (): Promise<KmpProjectMaterialConfig[]> => {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return [];
+    }
+
+    const { data, error } = await supabase
+      .from("kmp_project_materials")
+      .select(SUPABASE_KMP_PROJECT_MATERIAL_SELECT)
+      .order("created_at", { ascending: true });
+    if (error) {
+      if (!isMissingKmpProjectMaterialsTableError(error)) {
+        console.warn("[kmp-material] gagal membaca konfigurasi material.", error);
+      }
+      return [];
+    }
+
+    return (data ?? []).map((row) => mapKmpProjectMaterialConfig(row));
+  },
+  ["supabase-kmp-project-material-configs-v1"],
+  {
+    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
+    tags: [CACHE_TAGS.kmpProjectMaterials, CACHE_TAGS.projects],
+  },
+);
+
+export async function getKmpProjectMaterialConfigs(
+  projectIds?: string[],
+): Promise<KmpProjectMaterialConfig[]> {
+  const projectIdSet = new Set(
+    projectIds?.map((projectId) => projectId.trim()).filter((projectId) => projectId.length > 0) ?? [],
+  );
+
+  if (activeDataSource === "supabase") {
+    const configs = await getCachedSupabaseKmpProjectMaterialConfigs();
+    return projectIdSet.size > 0 ? configs.filter((config) => projectIdSet.has(config.projectId)) : configs;
+  }
+
+  if (activeDataSource === "firebase") {
+    const rows = await getFirebaseCollectionRows("kmp_project_materials");
+    const configs = rows.map((row) => mapKmpProjectMaterialConfig(row));
+    return projectIdSet.size > 0 ? configs.filter((config) => projectIdSet.has(config.projectId)) : configs;
+  }
+
+  return [];
+}
+
 const getSupabaseKmpCianjurMissingMaterialReportCached = unstable_cache(
   async (): Promise<KmpCianjurMissingMaterialReport> => {
-    const [projects, metadata] = await Promise.all([
+    const [projects, metadata, materialConfigs] = await Promise.all([
       getCachedSupabaseProjects(),
       getCachedSupabaseExpenseMetadata(),
+      getCachedSupabaseKmpProjectMaterialConfigs(),
     ]);
     const projectNameMap = Object.fromEntries(
       projects.map((project) => [project.id, project.name] as const),
@@ -1867,12 +2251,12 @@ const getSupabaseKmpCianjurMissingMaterialReportCached = unstable_cache(
     const expenses = metadata.expenseRows.map((row) =>
       mapExpense(row, projectNameMap[String(row.project_id ?? "")]),
     );
-    return buildKmpCianjurMissingMaterialReport(projects, expenses);
+    return buildKmpCianjurMissingMaterialReport(projects, expenses, materialConfigs);
   },
-  ["supabase-kmp-missing-material-report-v4"],
+  ["supabase-kmp-missing-material-report-v5"],
   {
     revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
-    tags: [CACHE_TAGS.projects, CACHE_TAGS.expenses],
+    tags: [CACHE_TAGS.projects, CACHE_TAGS.expenses, CACHE_TAGS.kmpProjectMaterials],
   },
 );
 
@@ -1890,19 +2274,108 @@ export async function getKmpCianjurMissingMaterialReport(): Promise<KmpCianjurMi
   }
 
   if (activeDataSource === "firebase") {
-    const [projectRows, expenseRows] = await Promise.all([
+    const [projectRows, expenseRows, materialConfigRows] = await Promise.all([
       getFirebaseCollectionRows("projects"),
       getFirebaseCollectionRows("project_expenses"),
+      getFirebaseCollectionRows("kmp_project_materials"),
     ]);
     const projectNameMap = Object.fromEntries(
       projectRows.map((row) => [String(row.id ?? ""), String(row.name ?? "Project")]),
     );
     const projects = projectRows.map((row) => mapProject(row));
     const expenses = expenseRows.map((row) => mapExpense(row, projectNameMap[String(row.project_id ?? "")]));
-    return buildKmpCianjurMissingMaterialReport(projects, expenses);
+    const materialConfigs = materialConfigRows.map((row) => mapKmpProjectMaterialConfig(row));
+    return buildKmpCianjurMissingMaterialReport(projects, expenses, materialConfigs);
   }
 
   return buildKmpCianjurMissingMaterialReport(sampleProjects, sampleExpenses);
+}
+
+export type KmpMaterialDuplicateDetectionInfo = {
+  materialKey: string;
+  materialName: string;
+  minimumAmount: number;
+  detectedAmount: number;
+  isFulfilled: boolean;
+};
+
+function findKmpMaterialRuleForInput(
+  project: Project,
+  materialConfigs: KmpProjectMaterialConfig[],
+  input: string,
+) {
+  const haystack = normalizeLooseText(input);
+  if (haystack.length < 2) {
+    return null;
+  }
+
+  const rules = buildKmpMaterialRulesForProject(project, materialConfigs);
+  return (
+    rules.find((rule) => rule.keywords.some((keyword) => hasMaterialKeyword(haystack, keyword))) ?? null
+  );
+}
+
+async function getProjectExpensesForKmpDetection(projectId: string) {
+  if (!projectId) {
+    return [];
+  }
+
+  if (activeDataSource === "excel") {
+    const db = readExcelDatabase();
+    const projectNameMap = Object.fromEntries(db.projects.map((project) => [project.id, project.name]));
+    return db.project_expenses
+      .filter((row) => row.project_id === projectId)
+      .map((row) => mapExpense(row, projectNameMap[row.project_id]));
+  }
+
+  if (activeDataSource === "supabase") {
+    const rows = await getCachedSupabaseProjectExpenseRows(projectId);
+    return rows.map((row) => mapExpense(row));
+  }
+
+  if (activeDataSource === "firebase") {
+    const rows = await getFirebaseCollectionRows("project_expenses");
+    return rows
+      .filter((row) => String(row.project_id ?? "") === projectId)
+      .map((row) => mapExpense(row));
+  }
+
+  return sampleExpenses.filter((expense) => expense.projectId === projectId);
+}
+
+export async function getKmpMaterialDuplicateDetectionInfo(
+  projectId: string,
+  input: string,
+): Promise<KmpMaterialDuplicateDetectionInfo | null> {
+  const [project, materialConfigs] = await Promise.all([
+    getProjectById(projectId),
+    getKmpProjectMaterialConfigs([projectId]),
+  ]);
+  if (!project) {
+    return null;
+  }
+
+  const rule = findKmpMaterialRuleForInput(project, materialConfigs, input);
+  if (!rule) {
+    return null;
+  }
+
+  const expenses = await getProjectExpensesForKmpDetection(project.id);
+  const report = buildKmpCianjurMissingMaterialReport([project], expenses, materialConfigs);
+  const progress = report.projects[0]?.materialProgress.find(
+    (item) => item.materialKey === rule.materialKey,
+  );
+  if (!progress) {
+    return null;
+  }
+
+  return {
+    materialKey: progress.materialKey,
+    materialName: progress.materialName || progress.materialLabel,
+    minimumAmount: progress.minimumAmount,
+    detectedAmount: progress.detectedAmount,
+    isFulfilled: progress.isFulfilled,
+  };
 }
 
 export async function getKmpCianjurMaterialRequesterName() {
@@ -3118,16 +3591,16 @@ function buildDashboardDataFromCollections(input: {
 // Tidak di-wrap dengan unstable_cache karena sub-queries sudah di-cache.
 // Expenses + attendance combined > 2MB → melebihi batas cache Next.js.
 async function getSupabaseDashboardData(): Promise<DashboardData> {
-  const [projects, expenseRows, attendanceRows] = await Promise.all([
+  const [projects, metadata, attendanceRows] = await Promise.all([
     getCachedSupabaseProjects(),
-    getCachedSupabaseAllExpenseRows(),
-    getCachedSupabaseAllAttendanceRows(),
+    getCachedSupabaseExpenseMetadata(),
+    getCachedSupabaseDashboardAttendanceRows(),
   ]);
 
   const projectNameMap = Object.fromEntries(
     projects.map((project) => [project.id, project.name] as const),
   );
-  const expenses = expenseRows.map((row) => mapExpense(row, projectNameMap[String(row.project_id)]));
+  const expenses = metadata.expenseRows.map((row) => mapExpense(row, projectNameMap[String(row.project_id)]));
   const attendance = attendanceRows.map((row) => mapAttendance(row));
 
   return buildDashboardDataFromCollections({

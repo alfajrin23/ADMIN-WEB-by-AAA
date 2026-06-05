@@ -173,6 +173,7 @@ export function revalidateProjectCache() {
 export function revalidateExpenseCache() {
   updateTag(CACHE_TAGS.expenses);
   updateTag(CACHE_TAGS.expenseCategories);
+  updateTag(CACHE_TAGS.kmpProjectMaterials);
 }
 export function revalidateAttendanceCache() {
   updateTag(CACHE_TAGS.attendance);

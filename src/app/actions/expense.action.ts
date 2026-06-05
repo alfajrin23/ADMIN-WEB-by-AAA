@@ -294,6 +294,228 @@ export async function syncKmpMaterialProjectStatusesAction() {
   return { updatedCount: completedProjectIds.length };
 }
 
+function parseKmpChecklistTypeInput(value: string): "none" | "system" | "manual" {
+  return value === "none" || value === "system" || value === "manual" ? value : "manual";
+}
+
+function parseKmpChecklistStatusInput(value: string): "auto" | "pending" | "fulfilled" {
+  return value === "pending" || value === "fulfilled" || value === "auto" ? value : "auto";
+}
+
+function createKmpMaterialKey(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/_+/g, "_") || "material";
+}
+
+function isMissingKmpProjectMaterialsTableError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const withError = error as { code?: unknown; message?: unknown; details?: unknown };
+  const code = typeof withError.code === "string" ? withError.code : "";
+  const text = [withError.message, withError.details]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toLowerCase();
+  return (
+    code === "42P01" ||
+    code === "PGRST205" ||
+    (text.includes("kmp_project_materials") && (text.includes("does not exist") || text.includes("schema cache")))
+  );
+}
+
+function getKmpMaterialConfigErrorMessage(error: unknown) {
+  if (isMissingKmpProjectMaterialsTableError(error)) {
+    return "Tabel material KMP belum tersedia. Jalankan schema Supabase terbaru terlebih dahulu.";
+  }
+  return getSupabaseMutationErrorMessage("Gagal menyimpan material deteksi KMP.");
+}
+
+export async function upsertKmpProjectMaterialAction(formData: FormData) {
+  const actor = await requireEditorActionUser();
+  const returnTo = getReturnTo(formData) ?? "/projects?modal=kmp-material-check";
+  const configId = getString(formData, "material_config_id");
+  const projectId = getString(formData, "project_id");
+  const materialName = getString(formData, "material_name");
+  const materialKey = getString(formData, "material_key") || createKmpMaterialKey(materialName);
+  const minimumAmount = Math.max(0, getNumber(formData, "minimum_amount"));
+  const payload = {
+    project_id: projectId,
+    material_key: materialKey,
+    material_name: materialName,
+    submission_name: getString(formData, "submission_name") || null,
+    minimum_amount: minimumAmount,
+    checklist_type: parseKmpChecklistTypeInput(getString(formData, "checklist_type")),
+    checklist_status: parseKmpChecklistStatusInput(getString(formData, "checklist_status")),
+    updated_at: new Date().toISOString(),
+  };
+
+  if (!projectId || !materialName || !materialKey) {
+    return returnOptimisticErrorOrRedirect(
+      formData,
+      returnTo,
+      "Project dan nama material wajib diisi.",
+    );
+  }
+
+  if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return returnOptimisticErrorOrRedirect(formData, returnTo, "Supabase belum terkonfigurasi.");
+    }
+    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal menyimpan material deteksi KMP.", formData)) {
+      return optimisticActionError(getSupabaseMutationErrorMessage("Gagal menyimpan material deteksi KMP."));
+    }
+
+    const result = configId
+      ? await supabase.from("kmp_project_materials").update(payload).eq("id", configId).eq("project_id", projectId)
+      : await supabase.from("kmp_project_materials").upsert(
+          payload,
+          { onConflict: "project_id,material_key" },
+        );
+    if (result.error) {
+      return returnOptimisticErrorOrRedirect(
+        formData,
+        returnTo,
+        getKmpMaterialConfigErrorMessage(result.error),
+      );
+    }
+  } else if (activeDataSource === "firebase") {
+    const firestore = getFirestoreServerClient();
+    if (!firestore) {
+      return returnOptimisticErrorOrRedirect(formData, returnTo, "Firebase belum terkonfigurasi.");
+    }
+    const id = configId || `${projectId}:${materialKey}`;
+    await runFirebaseWriteSafely(async () => {
+      await firestore.collection("kmp_project_materials").doc(id).set(
+        {
+          id,
+          ...payload,
+          created_at: createTimestamp(),
+        },
+        { merge: true },
+      );
+    });
+  } else {
+    return returnOptimisticErrorOrRedirect(
+      formData,
+      returnTo,
+      "Material deteksi KMP hanya bisa disimpan saat database aktif.",
+    );
+  }
+
+  revalidateProjectPages();
+  revalidateExpenseCache();
+  revalidatePath("/logs");
+  queueActivityLog({
+    actor,
+    actionType: configId ? "update" : "create",
+    module: "expense",
+    entityId: configId || materialKey,
+    description: `${configId ? "Memperbarui" : "Menambah"} material deteksi KMP.`,
+    payload: {
+      project_id: projectId,
+      material_key: materialKey,
+      material_name: materialName,
+      minimum_amount: minimumAmount,
+    },
+  });
+
+  if (isOptimisticUiRequest(formData)) {
+    return optimisticActionSuccess("Material deteksi KMP berhasil disimpan.");
+  }
+  redirect(withReturnMessage(returnTo, "success", "Material deteksi KMP berhasil disimpan."));
+}
+
+export async function deleteKmpProjectMaterialAction(formData: FormData) {
+  const actor = await requireEditorActionUser();
+  const returnTo = getReturnTo(formData) ?? "/projects?modal=kmp-material-check";
+  const configId = getString(formData, "material_config_id");
+  const projectId = getString(formData, "project_id");
+
+  if (!configId || !projectId) {
+    return returnOptimisticErrorOrRedirect(
+      formData,
+      returnTo,
+      "Material deteksi yang akan dihapus tidak valid.",
+    );
+  }
+
+  if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return returnOptimisticErrorOrRedirect(formData, returnTo, "Supabase belum terkonfigurasi.");
+    }
+    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal menghapus material deteksi KMP.", formData)) {
+      return optimisticActionError(getSupabaseMutationErrorMessage("Gagal menghapus material deteksi KMP."));
+    }
+    const { error } = await supabase
+      .from("kmp_project_materials")
+      .delete()
+      .eq("id", configId)
+      .eq("project_id", projectId);
+    if (error) {
+      return returnOptimisticErrorOrRedirect(
+        formData,
+        returnTo,
+        getKmpMaterialConfigErrorMessage(error),
+      );
+    }
+  } else if (activeDataSource === "firebase") {
+    const firestore = getFirestoreServerClient();
+    if (!firestore) {
+      return returnOptimisticErrorOrRedirect(formData, returnTo, "Firebase belum terkonfigurasi.");
+    }
+    await runFirebaseWriteSafely(async () => {
+      await firestore.collection("kmp_project_materials").doc(configId).delete();
+    });
+  } else {
+    return returnOptimisticErrorOrRedirect(
+      formData,
+      returnTo,
+      "Material deteksi KMP hanya bisa dihapus saat database aktif.",
+    );
+  }
+
+  revalidateProjectPages();
+  revalidateExpenseCache();
+  revalidatePath("/logs");
+  queueActivityLog({
+    actor,
+    actionType: "delete",
+    module: "expense",
+    entityId: configId,
+    description: "Menghapus material deteksi KMP.",
+    payload: {
+      project_id: projectId,
+      material_config_id: configId,
+    },
+  });
+
+  if (isOptimisticUiRequest(formData)) {
+    return optimisticActionSuccess("Material deteksi KMP berhasil dihapus.");
+  }
+  redirect(withReturnMessage(returnTo, "success", "Material deteksi KMP berhasil dihapus."));
+}
+
+export async function getKmpMaterialDuplicateDetectionAction(projectId: string, input: string) {
+  await requireAuthUser();
+  const normalizedProjectId = projectId.trim();
+  const normalizedInput = input.trim();
+  if (!normalizedProjectId || normalizedInput.length < 2) {
+    return null;
+  }
+
+  const { getKmpMaterialDuplicateDetectionInfo } = await import("@/lib/data");
+  return getKmpMaterialDuplicateDetectionInfo(normalizedProjectId, normalizedInput);
+}
+
 export async function updateExpenseAction(formData: FormData) {
   const actor = await requireEditorActionUser();
   const expenseId = getString(formData, "expense_id");

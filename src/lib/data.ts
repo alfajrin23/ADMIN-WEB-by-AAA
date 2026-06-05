@@ -1531,9 +1531,10 @@ type KmpCianjurMissingMaterialReport = {
 export type KmpChecklistType = "none" | "system" | "manual";
 export type KmpChecklistStatus = "auto" | "pending" | "fulfilled";
 
-export type KmpProjectMaterialConfig = {
+export type KmpClientMaterialConfig = {
   id: string;
-  projectId: string;
+  clientKey: string;
+  clientName: string;
   materialKey: string;
   materialName: string;
   submissionName: string | null;
@@ -1610,11 +1611,13 @@ function parseKmpChecklistStatus(value: unknown): KmpChecklistStatus {
   return value === "pending" || value === "fulfilled" || value === "auto" ? value : "auto";
 }
 
-function mapKmpProjectMaterialConfig(row: Record<string, unknown>): KmpProjectMaterialConfig {
+function mapKmpClientMaterialConfig(row: Record<string, unknown>): KmpClientMaterialConfig {
   const rawMinimumAmount = Number(row.minimum_amount ?? 0);
+  const rawClientName = typeof row.client_name === "string" ? row.client_name : "KMP Cianjur";
   return {
     id: String(row.id ?? ""),
-    projectId: String(row.project_id ?? ""),
+    clientKey: String(row.client_key ?? resolveClientScopeKey(rawClientName)),
+    clientName: rawClientName.trim() || "KMP Cianjur",
     materialKey: String(row.material_key ?? ""),
     materialName: String(row.material_name ?? ""),
     submissionName: typeof row.submission_name === "string" ? row.submission_name : null,
@@ -1626,7 +1629,7 @@ function mapKmpProjectMaterialConfig(row: Record<string, unknown>): KmpProjectMa
   };
 }
 
-function isMissingKmpProjectMaterialsTableError(error: unknown) {
+function isMissingKmpClientMaterialsTableError(error: unknown) {
   if (!error || typeof error !== "object") {
     return false;
   }
@@ -1639,7 +1642,7 @@ function isMissingKmpProjectMaterialsTableError(error: unknown) {
   return (
     code === "42P01" ||
     code === "PGRST205" ||
-    (text.includes("kmp_project_materials") && (text.includes("does not exist") || text.includes("schema cache")))
+    (text.includes("kmp_client_materials") && (text.includes("does not exist") || text.includes("schema cache")))
   );
 }
 
@@ -1673,24 +1676,25 @@ function getMaterialNameKeywords(materialName: string) {
   return Array.from(keywords);
 }
 
-function getConfigByMaterialKey(configs: KmpProjectMaterialConfig[]) {
+function getConfigByMaterialKey(configs: KmpClientMaterialConfig[]) {
   return new Map(
     configs
-      .filter((config) => config.projectId && config.materialKey)
+      .filter((config) => config.clientKey && config.materialKey)
       .map((config) => [config.materialKey, config] as const),
   );
 }
 
-function getProjectMaterialConfigs(
-  configs: KmpProjectMaterialConfig[],
-  projectId: string,
+function getClientMaterialConfigsForProject(
+  configs: KmpClientMaterialConfig[],
+  project: Project,
 ) {
-  return configs.filter((config) => config.projectId === projectId);
+  const clientKey = resolveClientScopeKey(project.clientName);
+  return configs.filter((config) => config.clientKey === clientKey);
 }
 
 function buildKmpMaterialRuleFromChecklist(
   item: KmpMaterialChecklistRule,
-  config: KmpProjectMaterialConfig | undefined,
+  config: KmpClientMaterialConfig | undefined,
 ): KmpMaterialDetectionRule {
   const materialName = config?.materialName.trim() || item.label;
   return {
@@ -1714,7 +1718,7 @@ function buildKmpMaterialRuleFromChecklist(
   };
 }
 
-function buildKmpMaterialRuleFromConfig(config: KmpProjectMaterialConfig): KmpMaterialDetectionRule {
+function buildKmpMaterialRuleFromConfig(config: KmpClientMaterialConfig): KmpMaterialDetectionRule {
   const materialName = config.materialName.trim() || "Material";
   return {
     configId: config.id,
@@ -1732,17 +1736,18 @@ function buildKmpMaterialRuleFromConfig(config: KmpProjectMaterialConfig): KmpMa
 
 function buildKmpMaterialRulesForProject(
   project: Project,
-  configs: KmpProjectMaterialConfig[],
+  configs: KmpClientMaterialConfig[],
 ) {
-  const projectConfigs = getProjectMaterialConfigs(configs, project.id);
-  const configByMaterialKey = getConfigByMaterialKey(projectConfigs);
-  const checklistRules = isKmpCianjurClientName(project.clientName)
+  const isKmpCianjurProject = isKmpCianjurClientName(project.clientName);
+  const clientConfigs = isKmpCianjurProject ? getClientMaterialConfigsForProject(configs, project) : [];
+  const configByMaterialKey = getConfigByMaterialKey(clientConfigs);
+  const checklistRules = isKmpCianjurProject
     ? KMP_CIANJUR_MATERIAL_CHECKLIST.map((item) =>
         buildKmpMaterialRuleFromChecklist(item, configByMaterialKey.get(item.key)),
       )
     : [];
   const checklistKeys = new Set<string>(KMP_CIANJUR_MATERIAL_CHECKLIST.map((item) => item.key));
-  const customRules = projectConfigs
+  const customRules = clientConfigs
     .filter((config) => !checklistKeys.has(config.materialKey))
     .map((config) => buildKmpMaterialRuleFromConfig(config));
   return [...checklistRules, ...customRules];
@@ -1974,14 +1979,10 @@ function isKmpMaterialRuleFulfilled(params: {
 export function buildKmpCianjurMissingMaterialReport(
   projects: Project[],
   expenses: ExpenseEntry[],
-  materialConfigs: KmpProjectMaterialConfig[] = [],
+  materialConfigs: KmpClientMaterialConfig[] = [],
 ): KmpCianjurMissingMaterialReport {
   const kmpProjects = projects
-    .filter(
-      (project) =>
-        isKmpCianjurClientName(project.clientName) ||
-        materialConfigs.some((config) => config.projectId === project.id),
-    )
+    .filter((project) => isKmpCianjurClientName(project.clientName))
     .slice()
     .sort((a, b) => a.name.localeCompare(b.name, "id-ID"));
 
@@ -2187,52 +2188,52 @@ export async function getKmpCianjurHokProjectPresets(): Promise<
   return buildKmpCianjurHokProjectPresets(sampleProjects, sampleExpenses);
 }
 
-const SUPABASE_KMP_PROJECT_MATERIAL_SELECT =
-  "id, project_id, material_key, material_name, submission_name, minimum_amount, checklist_type, checklist_status, created_at, updated_at";
+const SUPABASE_KMP_CLIENT_MATERIAL_SELECT =
+  "id, client_key, client_name, material_key, material_name, submission_name, minimum_amount, checklist_type, checklist_status, created_at, updated_at";
 
-const getCachedSupabaseKmpProjectMaterialConfigs = unstable_cache(
-  async (): Promise<KmpProjectMaterialConfig[]> => {
+const getCachedSupabaseKmpClientMaterialConfigs = unstable_cache(
+  async (): Promise<KmpClientMaterialConfig[]> => {
     const supabase = getSupabaseServerClient();
     if (!supabase) {
       return [];
     }
 
     const { data, error } = await supabase
-      .from("kmp_project_materials")
-      .select(SUPABASE_KMP_PROJECT_MATERIAL_SELECT)
+      .from("kmp_client_materials")
+      .select(SUPABASE_KMP_CLIENT_MATERIAL_SELECT)
       .order("created_at", { ascending: true });
     if (error) {
-      if (!isMissingKmpProjectMaterialsTableError(error)) {
+      if (!isMissingKmpClientMaterialsTableError(error)) {
         console.warn("[kmp-material] gagal membaca konfigurasi material.", error);
       }
       return [];
     }
 
-    return (data ?? []).map((row) => mapKmpProjectMaterialConfig(row));
+    return (data ?? []).map((row) => mapKmpClientMaterialConfig(row));
   },
-  ["supabase-kmp-project-material-configs-v1"],
+  ["supabase-kmp-client-material-configs-v1"],
   {
     revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
     tags: [CACHE_TAGS.kmpProjectMaterials, CACHE_TAGS.projects],
   },
 );
 
-export async function getKmpProjectMaterialConfigs(
-  projectIds?: string[],
-): Promise<KmpProjectMaterialConfig[]> {
-  const projectIdSet = new Set(
-    projectIds?.map((projectId) => projectId.trim()).filter((projectId) => projectId.length > 0) ?? [],
+export async function getKmpClientMaterialConfigs(
+  clientKeys?: string[],
+): Promise<KmpClientMaterialConfig[]> {
+  const clientKeySet = new Set(
+    clientKeys?.map((clientKey) => clientKey.trim()).filter((clientKey) => clientKey.length > 0) ?? [],
   );
 
   if (activeDataSource === "supabase") {
-    const configs = await getCachedSupabaseKmpProjectMaterialConfigs();
-    return projectIdSet.size > 0 ? configs.filter((config) => projectIdSet.has(config.projectId)) : configs;
+    const configs = await getCachedSupabaseKmpClientMaterialConfigs();
+    return clientKeySet.size > 0 ? configs.filter((config) => clientKeySet.has(config.clientKey)) : configs;
   }
 
   if (activeDataSource === "firebase") {
-    const rows = await getFirebaseCollectionRows("kmp_project_materials");
-    const configs = rows.map((row) => mapKmpProjectMaterialConfig(row));
-    return projectIdSet.size > 0 ? configs.filter((config) => projectIdSet.has(config.projectId)) : configs;
+    const rows = await getFirebaseCollectionRows("kmp_client_materials");
+    const configs = rows.map((row) => mapKmpClientMaterialConfig(row));
+    return clientKeySet.size > 0 ? configs.filter((config) => clientKeySet.has(config.clientKey)) : configs;
   }
 
   return [];
@@ -2243,7 +2244,7 @@ const getSupabaseKmpCianjurMissingMaterialReportCached = unstable_cache(
     const [projects, metadata, materialConfigs] = await Promise.all([
       getCachedSupabaseProjects(),
       getCachedSupabaseExpenseMetadata(),
-      getCachedSupabaseKmpProjectMaterialConfigs(),
+      getCachedSupabaseKmpClientMaterialConfigs(),
     ]);
     const projectNameMap = Object.fromEntries(
       projects.map((project) => [project.id, project.name] as const),
@@ -2253,7 +2254,7 @@ const getSupabaseKmpCianjurMissingMaterialReportCached = unstable_cache(
     );
     return buildKmpCianjurMissingMaterialReport(projects, expenses, materialConfigs);
   },
-  ["supabase-kmp-missing-material-report-v5"],
+  ["supabase-kmp-missing-material-report-v6"],
   {
     revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
     tags: [CACHE_TAGS.projects, CACHE_TAGS.expenses, CACHE_TAGS.kmpProjectMaterials],
@@ -2277,14 +2278,14 @@ export async function getKmpCianjurMissingMaterialReport(): Promise<KmpCianjurMi
     const [projectRows, expenseRows, materialConfigRows] = await Promise.all([
       getFirebaseCollectionRows("projects"),
       getFirebaseCollectionRows("project_expenses"),
-      getFirebaseCollectionRows("kmp_project_materials"),
+      getFirebaseCollectionRows("kmp_client_materials"),
     ]);
     const projectNameMap = Object.fromEntries(
       projectRows.map((row) => [String(row.id ?? ""), String(row.name ?? "Project")]),
     );
     const projects = projectRows.map((row) => mapProject(row));
     const expenses = expenseRows.map((row) => mapExpense(row, projectNameMap[String(row.project_id ?? "")]));
-    const materialConfigs = materialConfigRows.map((row) => mapKmpProjectMaterialConfig(row));
+    const materialConfigs = materialConfigRows.map((row) => mapKmpClientMaterialConfig(row));
     return buildKmpCianjurMissingMaterialReport(projects, expenses, materialConfigs);
   }
 
@@ -2301,7 +2302,7 @@ export type KmpMaterialDuplicateDetectionInfo = {
 
 function findKmpMaterialRuleForInput(
   project: Project,
-  materialConfigs: KmpProjectMaterialConfig[],
+  materialConfigs: KmpClientMaterialConfig[],
   input: string,
 ) {
   const haystack = normalizeLooseText(input);
@@ -2347,13 +2348,17 @@ export async function getKmpMaterialDuplicateDetectionInfo(
   projectId: string,
   input: string,
 ): Promise<KmpMaterialDuplicateDetectionInfo | null> {
-  const [project, materialConfigs] = await Promise.all([
-    getProjectById(projectId),
-    getKmpProjectMaterialConfigs([projectId]),
-  ]);
+  const project = await getProjectById(projectId);
   if (!project) {
     return null;
   }
+  if (!isKmpCianjurClientName(project.clientName)) {
+    return null;
+  }
+
+  const materialConfigs = await getKmpClientMaterialConfigs([
+    resolveClientScopeKey(project.clientName),
+  ]);
 
   const rule = findKmpMaterialRuleForInput(project, materialConfigs, input);
   if (!rule) {

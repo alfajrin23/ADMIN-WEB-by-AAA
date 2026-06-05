@@ -2092,7 +2092,7 @@ export function ExpenseInputModeFields({
       return "";
     }
     if (kmpDuplicateInfo.detectedAmount <= 0) {
-      return `Material ${kmpDuplicateInfo.materialName} belum pernah diinput pada project ini.`;
+      return `Material ${kmpDuplicateInfo.materialName} terdaftar sebagai material deteksi KMP, tetapi belum pernah diinput pada project ini.`;
     }
     if (kmpDuplicateInfo.minimumAmount > 0 && kmpDuplicateInfo.isFulfilled) {
       return `Material ${kmpDuplicateInfo.materialName} sudah pernah diinput pada project ini dan nominalnya sudah memenuhi minimal deteksi ${formatCurrency(kmpDuplicateInfo.minimumAmount)}.`;

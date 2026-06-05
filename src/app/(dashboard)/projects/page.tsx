@@ -1,59 +1,37 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Suspense } from "react";
-import {
-  createExpenseAction } from "@/app/actions/expense.action";
-import { createProjectAction, deleteProjectAction, deleteSelectedProjectsAction } from "@/app/actions/project.action";
-import { importExcelTemplateAction } from "@/app/actions/import.action";
+import { ProjectsModalController } from "@/components/projects-modal-controller";
+import { deleteProjectAction, deleteSelectedProjectsAction } from "@/app/actions/project.action";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { OptimisticDomMutationForm } from "@/components/optimistic-mutation-notice";
-import { ExpenseInputModeFields } from "@/components/expense-input-mode-fields";
-import { ExpenseDetailSearchForm } from "@/components/expense-detail-search-form";
-import { ExpenseDetailSearchResults } from "@/components/expense-detail-search-results";
-import { KmpMaterialMonitorPanel } from "@/components/kmp-material-monitor-panel";
 import { InstantModalLink } from "@/components/instant-modal-link";
 import { ProjectRecapExpenseList } from "@/components/project-recap-expense-list";
 import {
   CashInIcon,
-  CloseIcon,
   EditIcon,
   EyeIcon,
   ImportIcon,
   PlusIcon,
   ProjectIcon,
-  SaveIcon,
   SearchIcon,
   TrashIcon,
   WalletIcon,
 } from "@/components/icons";
-import { ExcelDropInput } from "@/components/excel-drop-input";
 import { ReportCopyButton } from "@/components/report-copy-button";
 import { ReportDownloadPreviewButton } from "@/components/report-download-preview-button";
 import { ProjectsSelectionToggle } from "@/components/projects-selection-toggle";
 import { OptimisticProjectsBulkEditButton } from "@/components/optimistic-projects-bulk-edit-button";
-import { MutationSubmitButton } from "@/components/mutation-submit-button";
-import {
-  OptimisticExpenseCreateForm,
-  OptimisticProjectCreateForm,
-} from "@/components/optimistic-create-forms";
 import { OptimisticPendingProjectRows } from "@/components/optimistic-pending-project-rows";
 import { ProjectsSearchInput } from "@/components/projects-search-input";
 import { SuccessToast } from "@/components/success-toast";
 import {
-  COST_CATEGORIES,
   mergeExpenseCategoryOptions,
   PROJECT_STATUSES,
   PROJECT_STATUS_STYLE,
 } from "@/lib/constants";
 import {
-  getDescriptionSuggestionsByProject,
-  getExpenseCategories,
-  getKmpCianjurMissingMaterialReport,
-  getKmpCianjurHokProjectPresets,
   getProjectDetail,
   getProjects,
-  getRequesterSuggestionsByProject,
-  searchExpenseDetails,
 } from "@/lib/data";
 import { formatDate } from "@/lib/format";
 import {
@@ -158,250 +136,6 @@ function createProjectsHref(params: {
   }
   const queryText = query.toString();
   return queryText ? `/projects?${queryText}` : "/projects";
-}
-
-function ModalContentLoading({ label = "Memuat data..." }: { label?: string }) {
-  return (
-    <div className="mt-4 space-y-3" aria-live="polite">
-      <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700">
-        {label}
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <div key={index} className="h-16 animate-pulse rounded-xl bg-slate-200/80" />
-        ))}
-      </div>
-      <div className="h-32 animate-pulse rounded-xl bg-slate-200/80" />
-    </div>
-  );
-}
-
-async function ExpenseModalContent({
-  projects,
-  currentProjectQueryId,
-  openExpenseModalHref,
-  expenseModalErrorReturnHref,
-  today,
-  expenseActionToken,
-  success,
-  error,
-}: {
-  projects: Awaited<ReturnType<typeof getProjects>>;
-  currentProjectQueryId?: string;
-  openExpenseModalHref: string;
-  expenseModalErrorReturnHref: string;
-  today: string;
-  expenseActionToken: string;
-  success: string;
-  error: string;
-}) {
-  if (projects.length === 0) {
-    return <p className="mt-4 text-sm text-slate-500">Belum ada project. Buat project dulu.</p>;
-  }
-
-  const [
-    expenseCategories,
-    requesterSuggestionsByProject,
-    descriptionSuggestionsByProject,
-    hokProjectPresets,
-  ] = await Promise.all([
-    getExpenseCategories(),
-    getRequesterSuggestionsByProject(),
-    getDescriptionSuggestionsByProject(),
-    getKmpCianjurHokProjectPresets(),
-  ]);
-  const defaultExpenseCategory = expenseCategories[0]?.value ?? COST_CATEGORIES[0].value;
-  const projectInfoById = new Map(projects.map((project) => [project.id, project] as const));
-  const projectClientNameById = Object.fromEntries(
-    projects.map((project) => [project.id, project.clientName ?? null] as const),
-  );
-  const projectClientScopeKeyById = new Map(
-    projects.map((project) => [project.id, resolveClientScopeKey(project.clientName)] as const),
-  );
-  const requesterHistorySuggestions = Object.entries(requesterSuggestionsByProject)
-    .flatMap(([projectId, requesterNames]) => {
-      const project = projectInfoById.get(projectId);
-      return requesterNames.map((requesterName) => ({
-        requesterName,
-        projectId,
-        projectName: project?.name ?? "Project",
-        projectCode: project?.code ?? null,
-        clientName: project?.clientName ?? null,
-      }));
-    })
-    .sort((a, b) => {
-      if (a.requesterName !== b.requesterName) {
-        return a.requesterName.localeCompare(b.requesterName, "id-ID");
-      }
-      return a.projectName.localeCompare(b.projectName, "id-ID");
-    });
-  const descriptionSuggestionsByClientScope = new Map<string, Set<string>>();
-  for (const [projectId, suggestionRows] of Object.entries(descriptionSuggestionsByProject)) {
-    const scopeKey = projectClientScopeKeyById.get(projectId) ?? `project:${projectId.toLowerCase()}`;
-    const current = descriptionSuggestionsByClientScope.get(scopeKey) ?? new Set<string>();
-    for (const item of suggestionRows) {
-      const trimmedValue = item.trim();
-      if (trimmedValue) {
-        current.add(trimmedValue);
-      }
-    }
-    descriptionSuggestionsByClientScope.set(scopeKey, current);
-  }
-  const sortedDescriptionsByScopeKey = new Map<string, string[]>();
-  for (const [scopeKey, set] of descriptionSuggestionsByClientScope.entries()) {
-    sortedDescriptionsByScopeKey.set(
-      scopeKey,
-      Array.from(set).sort((a, b) => a.localeCompare(b, "id-ID")),
-    );
-  }
-  const descriptionSuggestionsForProjects = Object.fromEntries(
-    projects.map((project) => {
-      const scopeKey = projectClientScopeKeyById.get(project.id) ?? `project:${project.id.toLowerCase()}`;
-      return [project.id, sortedDescriptionsByScopeKey.get(scopeKey) ?? []] as const;
-    }),
-  );
-
-  return (
-    <OptimisticExpenseCreateForm
-      key={`expense-modal-form-${expenseActionToken || success || error || "idle"}`}
-      id="expense-modal-form"
-      action={createExpenseAction}
-      className="mt-4 space-y-3"
-    >
-      <input type="hidden" name="return_to" value={openExpenseModalHref} />
-      <input type="hidden" name="error_return_to" value={expenseModalErrorReturnHref} />
-      <ExpenseInputModeFields
-        projects={projects}
-        initialProjectId={currentProjectQueryId}
-        today={today}
-        defaultExpenseCategory={defaultExpenseCategory}
-        expenseCategories={expenseCategories}
-        requesterHistorySuggestions={requesterHistorySuggestions}
-        projectClientNameById={projectClientNameById}
-        descriptionSuggestionsForProjects={descriptionSuggestionsForProjects}
-        hokProjectPresets={hokProjectPresets}
-      />
-    </OptimisticExpenseCreateForm>
-  );
-}
-
-async function DetailSearchModalContent({
-  currentProjectQueryId,
-  searchText,
-  activeView,
-  detailSearchQuery,
-  detailDateFrom,
-  detailDateTo,
-  detailYear,
-  hasDetailSearchCriteria,
-  openDetailSearchModalHref,
-  detailSearchReturnHref,
-  canEdit,
-}: {
-  currentProjectQueryId?: string;
-  searchText: string;
-  activeView: ProjectView;
-  detailSearchQuery: string;
-  detailDateFrom: string;
-  detailDateTo: string;
-  detailYear: number | null;
-  hasDetailSearchCriteria: boolean;
-  openDetailSearchModalHref: string;
-  detailSearchReturnHref: string;
-  canEdit: boolean;
-}) {
-  const [expenseCategories, detailSearchResults] = await Promise.all([
-    getExpenseCategories(),
-    hasDetailSearchCriteria
-      ? searchExpenseDetails(detailSearchQuery, 200, {
-          from: detailDateFrom || undefined,
-          to: detailDateTo || undefined,
-          year: detailYear ?? undefined,
-        })
-      : Promise.resolve([]),
-  ]);
-
-  return (
-    <div className="mt-4 space-y-4">
-      <ExpenseDetailSearchForm
-        currentProjectId={currentProjectQueryId}
-        projectSearchText={searchText}
-        activeView={activeView}
-        initialQuery={detailSearchQuery}
-        initialFrom={detailDateFrom}
-        initialTo={detailDateTo}
-        initialYear={detailYear}
-        hasCriteria={hasDetailSearchCriteria}
-        resetHref={openDetailSearchModalHref}
-      />
-
-      {!hasDetailSearchCriteria ? (
-        <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600">
-          Isi kata kunci rincian atau gunakan filter tanggal/tahun untuk mencari data di semua project.
-        </p>
-      ) : detailSearchResults.length === 0 ? (
-        <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-4 text-sm text-amber-700">
-          Data tidak ditemukan untuk filter rincian yang dipilih.
-        </p>
-      ) : (
-        <div className="space-y-2">
-          <p className="text-xs text-slate-500">
-            Ditemukan {detailSearchResults.length} data sesuai filter rincian.
-          </p>
-          <ExpenseDetailSearchResults
-            results={detailSearchResults}
-            projectSearchText={searchText}
-            canEdit={canEdit}
-            expenseCategories={expenseCategories}
-            bulkEditReturnTo={detailSearchReturnHref}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-async function KmpMaterialModalContent({
-  canEdit,
-  returnTo,
-  today,
-  searchText,
-}: {
-  canEdit: boolean;
-  returnTo: string;
-  today: string;
-  searchText: string;
-}) {
-  const kmpMaterialReport = await getKmpCianjurMissingMaterialReport();
-  const kmpMaterialMonitorProjects = kmpMaterialReport.projects.map((project) => ({
-    ...project,
-    recapHref: createProjectsHref({
-      projectId: project.projectId,
-      searchText,
-      view: "rekap",
-    }),
-  }));
-
-  if (kmpMaterialReport.projects.length === 0) {
-    return (
-      <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-4 text-sm text-amber-700">
-        Belum ada project klien KMP Cianjur yang bisa dimonitor.
-      </p>
-    );
-  }
-
-  return (
-    <KmpMaterialMonitorPanel
-      checklistLabels={kmpMaterialReport.checklistLabels}
-      totalProjects={kmpMaterialReport.totalProjects}
-      completeProjectCount={kmpMaterialReport.completeProjectCount}
-      incompleteProjectCount={kmpMaterialReport.incompleteProjectCount}
-      projects={kmpMaterialMonitorProjects}
-      canEdit={canEdit}
-      returnTo={returnTo}
-      today={today}
-    />
-  );
 }
 
 export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
@@ -594,7 +328,6 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                   scroll={false}
                   data-ui-button="true"
                   className="button-primary button-sm"
-                  loadingLabel="Membuka modal tambah project..."
                 >
                   <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
                     <PlusIcon />
@@ -607,7 +340,6 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                   scroll={false}
                   data-ui-button="true"
                   className="button-sm inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
-                  loadingLabel="Membuka modal input biaya..."
                 >
                   <span className="btn-icon icon-float-soft bg-emerald-100 text-emerald-700">
                     <CashInIcon />
@@ -622,7 +354,6 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
               scroll={false}
               data-ui-button="true"
               className="button-soft button-sm"
-              loadingLabel="Membuka modal cari rincian..."
             >
               <span className="btn-icon bg-slate-100 text-slate-700">
                 <SearchIcon />
@@ -636,7 +367,6 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 scroll={false}
                 data-ui-button="true"
                 className="button-sm inline-flex items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 hover:bg-amber-100"
-                loadingLabel="Membuka modal import..."
               >
                 <span className="btn-icon icon-wiggle-soft bg-amber-100 text-amber-700">
                   <ImportIcon />
@@ -746,7 +476,6 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
               scroll={false}
               data-ui-button="true"
               className="button-soft button-sm"
-              loadingLabel="Membuka monitoring material KMP..."
             >
               <span className="btn-icon bg-amber-100 text-amber-700">
                 <SearchIcon />
@@ -776,7 +505,6 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 scroll={false}
                 data-ui-button="true"
                 className="button-soft button-sm"
-                loadingLabel="Membuka modal cari rincian..."
               >
                 <span className="btn-icon bg-slate-100 text-slate-700">
                   <SearchIcon />
@@ -1071,162 +799,31 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
         </section>
       )}
 
-      {activeModal ? (
-        <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4">
-          <Link
-            href={closeModalHref}
-            prefetch
-            scroll={false}
-            aria-label="Tutup modal"
-            className="absolute inset-0 bg-slate-950/45"
-          />
-          <section
-            className={`modal-card panel relative z-10 max-h-[calc(100vh-2rem)] w-full overflow-y-auto p-5 ${
-              activeModal === "detail-search"
-                ? "max-w-6xl"
-                : activeModal === "kmp-material-check"
-                  ? "max-w-5xl"
-                  : "max-w-3xl"
-            }`}
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-lg font-semibold text-slate-900">
-                {activeModal === "detail-search"
-                  ? "Cari Rincian Semua Project"
-                  : activeModal === "kmp-material-check"
-                    ? "Monitoring Material KMP Cianjur"
-                  : activeModal === "project-new"
-                  ? "Tambah Project Baru"
-                  : activeModal === "expense-new"
-                    ? "Input Biaya Project"
-                    : "Import File Excel"}
-              </h2>
-              <Link
-                href={closeModalHref}
-                prefetch
-                scroll={false}
-                data-ui-button="true"
-                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100"
-              >
-                <span className="btn-icon bg-slate-100 text-slate-600">
-                  <CloseIcon />
-                </span>
-                Tutup
-              </Link>
-            </div>
-
-            {activeModal === "detail-search" ? (
-              <Suspense fallback={<ModalContentLoading label="Memuat pencarian rincian..." />}>
-                <DetailSearchModalContent
-                  currentProjectQueryId={currentProjectQueryId}
-                  searchText={searchText}
-                  activeView={activeView}
-                  detailSearchQuery={detailSearchQuery}
-                  detailDateFrom={detailDateFrom}
-                  detailDateTo={detailDateTo}
-                  detailYear={detailYear}
-                  hasDetailSearchCriteria={hasDetailSearchCriteria}
-                  openDetailSearchModalHref={openDetailSearchModalHref}
-                  detailSearchReturnHref={detailSearchReturnHref}
-                  canEdit={canEdit}
-                />
-              </Suspense>
-            ) : activeModal === "kmp-material-check" ? (
-              <Suspense fallback={<ModalContentLoading label="Memuat monitoring material KMP..." />}>
-                <KmpMaterialModalContent
-                  canEdit={canEdit}
-                  returnTo={openKmpMaterialReportHref}
-                  today={today}
-                  searchText={searchText}
-                />
-              </Suspense>
-            ) : activeModal === "project-new" ? (
-              <OptimisticProjectCreateForm action={createProjectAction} className="mt-4 space-y-3">
-                <input type="hidden" name="return_to" value={closeModalHref} />
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-500">Nama project</label>
-                  <input name="name" placeholder="Contoh: Renovasi Lobby" required />
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">Kode</label>
-                    <input name="code" placeholder="PRJ-001" />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">Status</label>
-                    <select name="status" defaultValue="aktif">
-                      {PROJECT_STATUSES.map((item) => (
-                        <option key={item.value} value={item.value}>
-                          {item.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-500">Klien</label>
-                  <input name="client_name" placeholder="Nama klien / perusahaan" />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-500">Tanggal mulai</label>
-                  <input type="date" name="start_date" />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-500">
-                    Kategori tambahan (opsional)
-                  </label>
-                  <input
-                    name="initial_categories"
-                    placeholder="Pisah dengan koma, contoh: transport, akomodasi"
-                  />
-                </div>
-                <MutationSubmitButton
-                  pendingLabel="Menyimpan Project..."
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-700"
-                >
-                  <span className="btn-icon icon-bounce-soft bg-white/20 text-white">
-                    <SaveIcon />
-                  </span>
-                  Simpan Project
-                </MutationSubmitButton>
-              </OptimisticProjectCreateForm>
-            ) : activeModal === "excel-import" ? (
-              activeDataSource === "demo" ? (
-                <p className="mt-4 text-sm text-slate-500">
-                  Import Excel tidak tersedia pada mode demo karena tidak ada database aktif.
-                </p>
-              ) : (
-                <form action={importExcelTemplateAction} className="mt-4 space-y-4">
-                  <input type="hidden" name="return_to" value={closeModalHref} />
-                  <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-                    Data hasil import akan masuk ke sumber data aktif: <strong>{getStorageLabel()}</strong>
-                  </p>
-                  <ExcelDropInput name="template_file" />
-                  <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600">
-                    <span className="btn-icon icon-wiggle-soft bg-white/20 text-white">
-                      <ImportIcon />
-                    </span>
-                    Proses Import Excel
-                  </button>
-                </form>
-              )
-            ) : (
-              <Suspense fallback={<ModalContentLoading label="Menyiapkan form input biaya..." />}>
-                <ExpenseModalContent
-                  projects={projects}
-                  currentProjectQueryId={currentProjectQueryId}
-                  openExpenseModalHref={openExpenseModalHref}
-                  expenseModalErrorReturnHref={expenseModalErrorReturnHref}
-                  today={today}
-                  expenseActionToken={expenseActionToken}
-                  success={success}
-                  error={error}
-                />
-              </Suspense>
-            )}
-          </section>
-        </div>
-      ) : null}
+      <ProjectsModalController
+        initialModal={activeModal}
+        projects={projects}
+        canEdit={canEdit}
+        activeDataSource={activeDataSource}
+        storageLabel={getStorageLabel()}
+        closeModalHref={closeModalHref}
+        openExpenseModalHref={openExpenseModalHref}
+        expenseModalErrorReturnHref={expenseModalErrorReturnHref}
+        openDetailSearchModalHref={openDetailSearchModalHref}
+        openKmpMaterialReportHref={openKmpMaterialReportHref}
+        detailSearchReturnHref={detailSearchReturnHref}
+        currentProjectQueryId={currentProjectQueryId}
+        searchText={searchText}
+        activeView={activeView}
+        detailSearchQuery={detailSearchQuery}
+        detailDateFrom={detailDateFrom}
+        detailDateTo={detailDateTo}
+        detailYear={detailYear}
+        hasDetailSearchCriteria={hasDetailSearchCriteria}
+        today={today}
+        expenseActionToken={expenseActionToken}
+        success={success}
+        error={error}
+      />
     </div>
   );
 }

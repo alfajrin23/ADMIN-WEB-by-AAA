@@ -313,7 +313,11 @@ function createKmpMaterialKey(value: string) {
     .replace(/_+/g, "_") || "material";
 }
 
-function isMissingKmpProjectMaterialsTableError(error: unknown) {
+function createKmpClientKey(value: string) {
+  return value.trim().toLowerCase() || "kmp cianjur";
+}
+
+function isMissingKmpClientMaterialsTableError(error: unknown) {
   if (!error || typeof error !== "object") {
     return false;
   }
@@ -326,12 +330,12 @@ function isMissingKmpProjectMaterialsTableError(error: unknown) {
   return (
     code === "42P01" ||
     code === "PGRST205" ||
-    (text.includes("kmp_project_materials") && (text.includes("does not exist") || text.includes("schema cache")))
+    (text.includes("kmp_client_materials") && (text.includes("does not exist") || text.includes("schema cache")))
   );
 }
 
 function getKmpMaterialConfigErrorMessage(error: unknown) {
-  if (isMissingKmpProjectMaterialsTableError(error)) {
+  if (isMissingKmpClientMaterialsTableError(error)) {
     return "Tabel material KMP belum tersedia. Jalankan schema Supabase terbaru terlebih dahulu.";
   }
   return getSupabaseMutationErrorMessage("Gagal menyimpan material deteksi KMP.");
@@ -341,12 +345,14 @@ export async function upsertKmpProjectMaterialAction(formData: FormData) {
   const actor = await requireEditorActionUser();
   const returnTo = getReturnTo(formData) ?? "/projects?modal=kmp-material-check";
   const configId = getString(formData, "material_config_id");
-  const projectId = getString(formData, "project_id");
+  const clientName = getString(formData, "client_name") || "KMP Cianjur";
+  const clientKey = createKmpClientKey(getString(formData, "client_key") || clientName);
   const materialName = getString(formData, "material_name");
   const materialKey = getString(formData, "material_key") || createKmpMaterialKey(materialName);
   const minimumAmount = Math.max(0, getNumber(formData, "minimum_amount"));
   const payload = {
-    project_id: projectId,
+    client_key: clientKey,
+    client_name: clientName,
     material_key: materialKey,
     material_name: materialName,
     submission_name: getString(formData, "submission_name") || null,
@@ -356,11 +362,11 @@ export async function upsertKmpProjectMaterialAction(formData: FormData) {
     updated_at: new Date().toISOString(),
   };
 
-  if (!projectId || !materialName || !materialKey) {
+  if (!clientKey || !materialName || !materialKey) {
     return returnOptimisticErrorOrRedirect(
       formData,
       returnTo,
-      "Project dan nama material wajib diisi.",
+      "Klien dan nama material wajib diisi.",
     );
   }
 
@@ -374,10 +380,10 @@ export async function upsertKmpProjectMaterialAction(formData: FormData) {
     }
 
     const result = configId
-      ? await supabase.from("kmp_project_materials").update(payload).eq("id", configId).eq("project_id", projectId)
-      : await supabase.from("kmp_project_materials").upsert(
+      ? await supabase.from("kmp_client_materials").update(payload).eq("id", configId).eq("client_key", clientKey)
+      : await supabase.from("kmp_client_materials").upsert(
           payload,
-          { onConflict: "project_id,material_key" },
+          { onConflict: "client_key,material_key" },
         );
     if (result.error) {
       return returnOptimisticErrorOrRedirect(
@@ -391,9 +397,9 @@ export async function upsertKmpProjectMaterialAction(formData: FormData) {
     if (!firestore) {
       return returnOptimisticErrorOrRedirect(formData, returnTo, "Firebase belum terkonfigurasi.");
     }
-    const id = configId || `${projectId}:${materialKey}`;
+    const id = configId || `${clientKey}:${materialKey}`;
     await runFirebaseWriteSafely(async () => {
-      await firestore.collection("kmp_project_materials").doc(id).set(
+      await firestore.collection("kmp_client_materials").doc(id).set(
         {
           id,
           ...payload,
@@ -420,7 +426,8 @@ export async function upsertKmpProjectMaterialAction(formData: FormData) {
     entityId: configId || materialKey,
     description: `${configId ? "Memperbarui" : "Menambah"} material deteksi KMP.`,
     payload: {
-      project_id: projectId,
+      client_key: clientKey,
+      client_name: clientName,
       material_key: materialKey,
       material_name: materialName,
       minimum_amount: minimumAmount,
@@ -437,9 +444,9 @@ export async function deleteKmpProjectMaterialAction(formData: FormData) {
   const actor = await requireEditorActionUser();
   const returnTo = getReturnTo(formData) ?? "/projects?modal=kmp-material-check";
   const configId = getString(formData, "material_config_id");
-  const projectId = getString(formData, "project_id");
+  const clientKey = createKmpClientKey(getString(formData, "client_key") || "KMP Cianjur");
 
-  if (!configId || !projectId) {
+  if (!configId || !clientKey) {
     return returnOptimisticErrorOrRedirect(
       formData,
       returnTo,
@@ -456,10 +463,10 @@ export async function deleteKmpProjectMaterialAction(formData: FormData) {
       return optimisticActionError(getSupabaseMutationErrorMessage("Gagal menghapus material deteksi KMP."));
     }
     const { error } = await supabase
-      .from("kmp_project_materials")
+      .from("kmp_client_materials")
       .delete()
       .eq("id", configId)
-      .eq("project_id", projectId);
+      .eq("client_key", clientKey);
     if (error) {
       return returnOptimisticErrorOrRedirect(
         formData,
@@ -473,7 +480,7 @@ export async function deleteKmpProjectMaterialAction(formData: FormData) {
       return returnOptimisticErrorOrRedirect(formData, returnTo, "Firebase belum terkonfigurasi.");
     }
     await runFirebaseWriteSafely(async () => {
-      await firestore.collection("kmp_project_materials").doc(configId).delete();
+      await firestore.collection("kmp_client_materials").doc(configId).delete();
     });
   } else {
     return returnOptimisticErrorOrRedirect(
@@ -493,7 +500,7 @@ export async function deleteKmpProjectMaterialAction(formData: FormData) {
     entityId: configId,
     description: "Menghapus material deteksi KMP.",
     payload: {
-      project_id: projectId,
+      client_key: clientKey,
       material_config_id: configId,
     },
   });
@@ -1669,4 +1676,64 @@ export async function getEditExpenseModalDataAction(expenseId: string) {
     getExpenseCategories(),
   ]);
   return { expense, projects, expenseCategories };
+}
+
+export async function getExpenseCreateModalDataAction() {
+  await requireAuthUser();
+  const {
+    getDescriptionSuggestionsByProject,
+    getExpenseCategories,
+    getKmpCianjurHokProjectPresets,
+    getRequesterSuggestionsByProject,
+  } = await import("@/lib/data");
+  const [
+    expenseCategories,
+    requesterSuggestionsByProject,
+    descriptionSuggestionsByProject,
+    hokProjectPresets,
+  ] = await Promise.all([
+    getExpenseCategories(),
+    getRequesterSuggestionsByProject(),
+    getDescriptionSuggestionsByProject(),
+    getKmpCianjurHokProjectPresets(),
+  ]);
+
+  return {
+    expenseCategories,
+    requesterSuggestionsByProject,
+    descriptionSuggestionsByProject,
+    hokProjectPresets,
+  };
+}
+
+export async function getExpenseDetailSearchModalDataAction(input: {
+  query: string;
+  from?: string;
+  to?: string;
+  year?: number | null;
+  hasCriteria: boolean;
+}) {
+  await requireAuthUser();
+  const { getExpenseCategories, searchExpenseDetails } = await import("@/lib/data");
+  const [expenseCategories, results] = await Promise.all([
+    getExpenseCategories(),
+    input.hasCriteria
+      ? searchExpenseDetails(input.query, 200, {
+          from: input.from || undefined,
+          to: input.to || undefined,
+          year: input.year ?? undefined,
+        })
+      : Promise.resolve([]),
+  ]);
+
+  return {
+    expenseCategories,
+    results,
+  };
+}
+
+export async function getKmpMaterialReportModalDataAction() {
+  await requireAuthUser();
+  const { getKmpCianjurMissingMaterialReport } = await import("@/lib/data");
+  return getKmpCianjurMissingMaterialReport();
 }

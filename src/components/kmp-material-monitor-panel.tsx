@@ -86,6 +86,7 @@ type KmpMaterialMonitorPanelProps = {
   canEdit: boolean;
   returnTo: string;
   today: string;
+  onDataChanged?: () => void;
 };
 
 type StatusFilter = "all" | "incomplete" | "complete" | "most-detected";
@@ -111,8 +112,8 @@ type MaterialSelectionRow = {
 };
 
 type MaterialEditorState = {
-  projectId: string;
-  projectName: string;
+  clientKey: string;
+  clientName: string;
   configId: string;
   materialKey: string;
   materialName: string;
@@ -121,6 +122,9 @@ type MaterialEditorState = {
   checklistType: AmountMode;
   checklistStatus: ChecklistStatus;
 };
+
+const KMP_CIANJUR_CLIENT_KEY = "kmp cianjur";
+const KMP_CIANJUR_CLIENT_NAME = "KMP Cianjur";
 
 const materialRuleByLabel: ReadonlyMap<string, KmpMaterialChecklistRule> = new Map(
   KMP_CIANJUR_MATERIAL_CHECKLIST.map((item) => [item.label, item]),
@@ -166,10 +170,10 @@ function createInitialMaterialDraft(label: string, rule: KmpMaterialChecklistRul
   };
 }
 
-function createBlankMaterialEditor(project: KmpMaterialMonitorProject): MaterialEditorState {
+function createBlankMaterialEditor(): MaterialEditorState {
   return {
-    projectId: project.projectId,
-    projectName: project.projectName,
+    clientKey: KMP_CIANJUR_CLIENT_KEY,
+    clientName: KMP_CIANJUR_CLIENT_NAME,
     configId: "",
     materialKey: "",
     materialName: "",
@@ -181,12 +185,11 @@ function createBlankMaterialEditor(project: KmpMaterialMonitorProject): Material
 }
 
 function createMaterialEditorFromDetail(
-  project: KmpMaterialMonitorProject,
   detail: KmpMaterialMonitorProject["missingMaterialDetails"][number],
 ): MaterialEditorState {
   return {
-    projectId: project.projectId,
-    projectName: project.projectName,
+    clientKey: KMP_CIANJUR_CLIENT_KEY,
+    clientName: KMP_CIANJUR_CLIENT_NAME,
     configId: detail.configId ?? "",
     materialKey: detail.materialKey,
     materialName: detail.materialName || detail.materialLabel,
@@ -251,6 +254,7 @@ export function KmpMaterialMonitorPanel({
   canEdit,
   returnTo,
   today,
+  onDataChanged,
 }: KmpMaterialMonitorPanelProps) {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
@@ -451,6 +455,7 @@ export function KmpMaterialMonitorPanel({
       pendingMessage: "Menyimpan material deteksi KMP...",
       optimisticUpdate: () => setMaterialEditor(null),
       rollback: () => setMaterialEditor(snapshot),
+      onSuccess: () => onDataChanged?.(),
     });
   };
 
@@ -461,7 +466,7 @@ export function KmpMaterialMonitorPanel({
     const snapshot = materialEditor;
     const formData = new FormData();
     formData.set("material_config_id", materialEditor.configId);
-    formData.set("project_id", materialEditor.projectId);
+    formData.set("client_key", materialEditor.clientKey);
     formData.set("return_to", returnTo);
     void runOptimisticMutation({
       action: deleteKmpProjectMaterialAction,
@@ -469,6 +474,7 @@ export function KmpMaterialMonitorPanel({
       pendingMessage: "Menghapus material deteksi KMP...",
       optimisticUpdate: () => setMaterialEditor(null),
       rollback: () => setMaterialEditor(snapshot),
+      onSuccess: () => onDataChanged?.(),
     });
   };
 
@@ -508,7 +514,7 @@ export function KmpMaterialMonitorPanel({
                   <button
                     type="button"
                     data-ui-button="true"
-                    onClick={() => setMaterialEditor(createMaterialEditorFromDetail(project, detail))}
+                    onClick={() => setMaterialEditor(createMaterialEditorFromDetail(detail))}
                     className="border-l border-emerald-200 px-2 py-1 text-emerald-700 hover:bg-emerald-100"
                     aria-label={`Edit material ${detail.materialLabel}`}
                   >
@@ -541,6 +547,20 @@ export function KmpMaterialMonitorPanel({
               lalu simpan dengan nominal kosong, nominal sistem, atau nominal manual.
             </p>
           </div>
+          <div className="flex flex-col items-stretch gap-2 sm:items-end">
+          {canEdit ? (
+            <button
+              type="button"
+              data-ui-button="true"
+              onClick={() => setMaterialEditor(createBlankMaterialEditor())}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-200 bg-white px-4 py-2 text-xs font-semibold text-amber-800 shadow-sm hover:bg-amber-50"
+            >
+              <span className="btn-icon bg-amber-100 text-amber-700">
+                <PlusIcon />
+              </span>
+              Tambah Material Deteksi
+            </button>
+          ) : null}
           <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-right shadow-sm">
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
               Checklist Aktif
@@ -549,6 +569,7 @@ export function KmpMaterialMonitorPanel({
               {checklistLabels.length}
             </p>
             <p className="mt-1 text-[11px] text-slate-500">item material prioritas</p>
+          </div>
           </div>
         </div>
 
@@ -744,19 +765,6 @@ export function KmpMaterialMonitorPanel({
                       >
                         {project.missingCount === 0 ? "Lengkap" : `${project.missingCount} belum ada`}
                       </span>
-                      {canEdit ? (
-                        <button
-                          type="button"
-                          data-ui-button="true"
-                          onClick={() => setMaterialEditor(createBlankMaterialEditor(project))}
-                          className="inline-flex items-center gap-1 rounded-xl border border-amber-200 bg-white px-3 py-2 text-[11px] font-semibold text-amber-800 transition-all duration-200 hover:bg-amber-50"
-                        >
-                          <span className="btn-icon bg-amber-100 text-amber-700">
-                            <PlusIcon />
-                          </span>
-                          Tambah Material
-                        </button>
-                      ) : null}
                       <Link
                         href={project.recapHref}
                         className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-semibold text-slate-700 transition-all duration-200 hover:bg-slate-100"
@@ -890,7 +898,7 @@ export function KmpMaterialMonitorPanel({
                                         <button
                                           type="button"
                                           data-ui-button="true"
-                                          onClick={() => setMaterialEditor(createMaterialEditorFromDetail(project, detail))}
+                                          onClick={() => setMaterialEditor(createMaterialEditorFromDetail(detail))}
                                           className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100"
                                         >
                                           <EditIcon className="h-3 w-3" />
@@ -1052,7 +1060,9 @@ export function KmpMaterialMonitorPanel({
                   <h3 className="mt-1 text-lg font-black text-slate-950">
                     {materialEditor.configId ? "Edit Material" : "Tambah Material"}
                   </h3>
-                  <p className="mt-1 text-xs text-slate-500">{materialEditor.projectName}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Berlaku untuk semua project klien {materialEditor.clientName}.
+                  </p>
                 </div>
                 <button
                   type="button"
@@ -1069,7 +1079,8 @@ export function KmpMaterialMonitorPanel({
 
               <form onSubmit={submitMaterialEditor} className="mt-4 space-y-3">
                 <input type="hidden" name="return_to" value={returnTo} />
-                <input type="hidden" name="project_id" value={materialEditor.projectId} />
+                <input type="hidden" name="client_key" value={materialEditor.clientKey} />
+                <input type="hidden" name="client_name" value={materialEditor.clientName} />
                 <input type="hidden" name="material_config_id" value={materialEditor.configId} />
                 <input type="hidden" name="material_key" value={materialEditor.materialKey} />
 
@@ -1237,10 +1248,7 @@ export function KmpMaterialMonitorPanel({
                   <button
                     type="button"
                     data-ui-button="true"
-                    onClick={() => setMaterialEditor(createMaterialEditorFromDetail(
-                      activeDetectedMaterial.project,
-                      activeDetectedMaterial.detail,
-                    ))}
+                    onClick={() => setMaterialEditor(createMaterialEditorFromDetail(activeDetectedMaterial.detail))}
                     className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
                   >
                     <span className="btn-icon bg-emerald-100 text-emerald-700">

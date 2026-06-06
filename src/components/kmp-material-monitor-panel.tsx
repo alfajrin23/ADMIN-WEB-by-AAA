@@ -266,6 +266,7 @@ export function KmpMaterialMonitorPanel({
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [masterMaterialQuery, setMasterMaterialQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("incomplete");
   const [expenseDate, setExpenseDate] = useState(today);
   const [materialDrafts, setMaterialDrafts] = useState<Record<string, MaterialDraft>>({});
@@ -420,6 +421,68 @@ export function KmpMaterialMonitorPanel({
       });
   }, [debouncedSearchQuery, projects, statusFilter]);
 
+  const masterMaterialRows = useMemo(() => {
+    type MasterMaterialDetail = KmpMaterialMonitorProject["missingMaterialDetails"][number];
+    const rowByKey = new Map<
+      string,
+      {
+        detail: MasterMaterialDetail;
+        projectCount: number;
+        missingCount: number;
+        detectedCount: number;
+      }
+    >();
+
+    const addDetail = (detail: MasterMaterialDetail, state: "missing" | "detected") => {
+      const current = rowByKey.get(detail.materialKey);
+      if (!current) {
+        rowByKey.set(detail.materialKey, {
+          detail,
+          projectCount: 1,
+          missingCount: state === "missing" ? 1 : 0,
+          detectedCount: state === "detected" ? 1 : 0,
+        });
+        return;
+      }
+
+      current.projectCount += 1;
+      if (state === "missing") {
+        current.missingCount += 1;
+      } else {
+        current.detectedCount += 1;
+      }
+      if (!current.detail.configId && detail.configId) {
+        current.detail = detail;
+      }
+    };
+
+    for (const project of projects) {
+      for (const detail of project.missingMaterialDetails) {
+        addDetail(detail, "missing");
+      }
+      for (const detail of project.detectedMaterialDetails) {
+        addDetail(detail, "detected");
+      }
+    }
+
+    const normalizedQuery = normalizeText(masterMaterialQuery);
+    return Array.from(rowByKey.values())
+      .filter(({ detail }) => {
+        if (!normalizedQuery) {
+          return true;
+        }
+        return normalizeText(
+          [
+            detail.materialLabel,
+            detail.materialName,
+            detail.submissionName ?? "",
+            detail.materialKey,
+          ].join(" "),
+        ).includes(normalizedQuery);
+      })
+      .sort((a, b) => a.detail.materialLabel.localeCompare(b.detail.materialLabel, "id-ID"));
+  }, [masterMaterialQuery, projects]);
+
   const selectedMaterialRows = useMemo<MaterialSelectionRow[]>(() => {
     const rows: MaterialSelectionRow[] = [];
 
@@ -554,17 +617,6 @@ export function KmpMaterialMonitorPanel({
                   {detail.materialLabel}
                   {detail.minimumAmount > 0 ? ` (${formatCurrency(detail.detectedAmount)})` : ""}
                 </button>
-                {canEdit ? (
-                  <button
-                    type="button"
-                    data-ui-button="true"
-                    onClick={() => setMaterialEditor(createMaterialEditorFromDetail(detail))}
-                    className="border-l border-emerald-200 px-2 py-1 text-emerald-700 hover:bg-emerald-100"
-                    aria-label={`Edit material ${detail.materialLabel}`}
-                  >
-                    <EditIcon className="h-3 w-3" />
-                  </button>
-                ) : null}
               </span>
             ))}
           </div>
@@ -592,19 +644,6 @@ export function KmpMaterialMonitorPanel({
             </p>
           </div>
           <div className="flex flex-col items-stretch gap-2 sm:items-end">
-          {canEdit ? (
-            <button
-              type="button"
-              data-ui-button="true"
-              onClick={() => setMaterialEditor(createBlankMaterialEditor())}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-200 bg-white px-4 py-2 text-xs font-semibold text-amber-800 shadow-sm hover:bg-amber-50"
-            >
-              <span className="btn-icon bg-amber-100 text-amber-700">
-                <PlusIcon />
-              </span>
-              Tambah Material Deteksi
-            </button>
-          ) : null}
           <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-right shadow-sm">
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
               Checklist Aktif
@@ -641,6 +680,90 @@ export function KmpMaterialMonitorPanel({
             </p>
           </div>
         </div>
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-700">
+              Master Material Global
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Edit nama pengajuan, nominal deteksi, dan aturan material satu kali untuk seluruh project KMP Cianjur.
+            </p>
+          </div>
+          {canEdit ? (
+            <button
+              type="button"
+              data-ui-button="true"
+              onClick={() => setMaterialEditor(createBlankMaterialEditor())}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+            >
+              <span className="btn-icon bg-blue-100 text-blue-700">
+                <PlusIcon />
+              </span>
+              Tambah Material
+            </button>
+          ) : null}
+        </div>
+        <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+          <input
+            value={masterMaterialQuery}
+            onChange={(event) => setMasterMaterialQuery(event.currentTarget.value)}
+            placeholder="Cari master material atau nama pengajuan"
+            autoComplete="off"
+          />
+          <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
+            {masterMaterialRows.length} material unik
+          </p>
+        </div>
+        <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+          {masterMaterialRows.slice(0, 60).map(({ detail, projectCount, missingCount, detectedCount }) => (
+            <article
+              key={`master-material-${detail.materialKey}`}
+              className="rounded-xl border border-slate-200 bg-slate-50 p-3"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-black text-slate-900" title={detail.materialLabel}>
+                    {detail.materialLabel}
+                  </p>
+                  <p className="mt-1 truncate text-[11px] text-slate-500" title={detail.submissionName ?? ""}>
+                    {detail.submissionName || "Nama pengajuan belum diisi"}
+                  </p>
+                </div>
+                {canEdit ? (
+                  <button
+                    type="button"
+                    data-ui-button="true"
+                    onClick={() => setMaterialEditor(createMaterialEditorFromDetail(detail))}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100"
+                    aria-label={`Edit master material ${detail.materialLabel}`}
+                  >
+                    <EditIcon className="h-3 w-3" />
+                    Edit
+                  </button>
+                ) : null}
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2 text-center text-[10px] font-semibold text-slate-600">
+                <span className="rounded-lg border border-slate-200 bg-white px-2 py-1">
+                  {projectCount} project
+                </span>
+                <span className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
+                  {missingCount} belum
+                </span>
+                <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-emerald-700">
+                  {detectedCount} sudah
+                </span>
+              </div>
+            </article>
+          ))}
+        </div>
+        {masterMaterialRows.length > 60 ? (
+          <p className="mt-3 text-[11px] text-slate-500">
+            Gunakan pencarian untuk menampilkan material lain.
+          </p>
+        ) : null}
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
@@ -942,17 +1065,6 @@ export function KmpMaterialMonitorPanel({
                                           {detail.submissionName || "Nama pengajuan belum diisi"}
                                         </span>
                                       </span>
-                                      {canEdit ? (
-                                        <button
-                                          type="button"
-                                          data-ui-button="true"
-                                          onClick={() => setMaterialEditor(createMaterialEditorFromDetail(detail))}
-                                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100"
-                                        >
-                                          <EditIcon className="h-3 w-3" />
-                                          Edit
-                                        </button>
-                                      ) : null}
                                     </span>
                                     <span className="mt-2 block rounded-lg border border-amber-100 bg-amber-50 px-2 py-1.5 text-[11px] font-semibold text-amber-800">
                                       {detail.minimumAmount > 0
@@ -963,7 +1075,7 @@ export function KmpMaterialMonitorPanel({
                                     </span>
                                     {!rule ? (
                                       <span className="mt-2 block text-[11px] text-slate-500">
-                                        Material custom dipenuhi otomatis dari input biaya atau lewat status checklist di tombol Edit.
+                                        Material custom dipenuhi otomatis dari input biaya atau lewat daftar master material.
                                       </span>
                                     ) : (
                                       <>
@@ -1316,19 +1428,6 @@ export function KmpMaterialMonitorPanel({
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
-                {canEdit ? (
-                  <button
-                    type="button"
-                    data-ui-button="true"
-                    onClick={() => setMaterialEditor(createMaterialEditorFromDetail(activeDetectedMaterial.detail))}
-                    className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
-                  >
-                    <span className="btn-icon bg-emerald-100 text-emerald-700">
-                      <EditIcon />
-                    </span>
-                    Edit
-                  </button>
-                ) : null}
                 <button
                   type="button"
                   data-ui-button="true"

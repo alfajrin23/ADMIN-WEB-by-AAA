@@ -177,6 +177,7 @@ const SCRAPER_MODE = "scraper";
 const CONTINUE_MODE = "continue";
 const EXPENSE_PROJECT_REFOCUS_KEY = "expense-modal-refocus-project";
 const EXPENSE_DRAFT_PENDING_CLEAR_KEY = "expense-modal-draft-pending-clear";
+const EXPENSE_INPUT_DRAFT_STORAGE_KEY = "admin-web:expense-input-draft:v2";
 const EXPENSE_CONTINUE_DRAFT_STORAGE_KEY = "admin-web:expense-continue-draft:v1";
 const EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY = "expense-modal-continue-draft-pending-clear";
 const EXPENSE_INPUT_DRAFT_GLOBAL_PROJECT_ID = "__global__";
@@ -527,6 +528,7 @@ export function ExpenseInputModeFields({
   const expenseActionToken = searchParams.get("expense_action_token")?.trim() ?? "";
   const expenseDraftProjectId = initialProjectId?.trim() || EXPENSE_INPUT_DRAFT_GLOBAL_PROJECT_ID;
   const continueDraftStorageKey = `${EXPENSE_CONTINUE_DRAFT_STORAGE_KEY}:${expenseDraftProjectId}`;
+  const expenseDraftStorageKey = `${EXPENSE_INPUT_DRAFT_STORAGE_KEY}:${expenseDraftProjectId}`;
   const rootRef = useRef<HTMLDivElement>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const hokExcelInputRef = useRef<HTMLInputElement>(null);
@@ -541,6 +543,15 @@ export function ExpenseInputModeFields({
   const draftServerUpdatedAtRef = useRef<string | null>(null);
   const serverDraftIsClearedRef = useRef(false);
   const hasUserEditedDraftRef = useRef(false);
+  const expenseDraftReadyRef = useRef(false);
+  const latestExpenseDraftPayloadRef = useRef<ExpenseDraftPayload | null>(null);
+  const latestExpenseDraftMetaRef = useRef({
+    defaultCategory: defaultExpenseCategory,
+    draftProjectId: expenseDraftProjectId,
+    initialProjectId: initialProjectId ?? "",
+    mode: expenseSavedMode ?? STANDARD_MODE,
+    today,
+  });
   const [submissionToken, setSubmissionToken] = useState(createExpenseSubmissionToken);
   const [mode, setMode] = useState<ExpenseInputMode>(() => expenseSavedMode ?? STANDARD_MODE);
   const [hokQuery, setHokQuery] = useState("");
@@ -752,12 +763,13 @@ export function ExpenseInputModeFields({
   }, [defaultExpenseCategory, today]);
 
   const clearStaleLocalDraftCache = useCallback(() => {
+    window.localStorage.removeItem(expenseDraftStorageKey);
     window.localStorage.removeItem(continueDraftStorageKey);
     window.sessionStorage.removeItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY);
     window.sessionStorage.removeItem(EXPENSE_DRAFT_PENDING_CLEAR_KEY);
     setContinueDraftSavedAt(null);
     setExpenseDraftSavedAt(null);
-  }, [continueDraftStorageKey]);
+  }, [continueDraftStorageKey, expenseDraftStorageKey]);
 
   const markUserDraftInteraction = useCallback(() => {
     hasUserEditedDraftRef.current = true;
@@ -1114,10 +1126,30 @@ export function ExpenseInputModeFields({
         }
         if (draft?.payload) {
           applyExpenseDraftPayload(draft.payload, draft.updatedAt);
+          return;
+        }
+        const rawLocalDraft = window.localStorage.getItem(expenseDraftStorageKey);
+        if (rawLocalDraft) {
+          const parsedLocalDraft: unknown = JSON.parse(rawLocalDraft);
+          if (isRecord(parsedLocalDraft)) {
+            applyExpenseDraftPayload(parsedLocalDraft, null);
+            setExpenseDraftNotice("Draft sementara dipulihkan dari browser. Draft akun akan disinkronkan kembali.");
+          }
         }
       })
       .catch(() => {
         if (!isCancelled) {
+          try {
+            const rawLocalDraft = window.localStorage.getItem(expenseDraftStorageKey);
+            const parsedLocalDraft: unknown = rawLocalDraft ? JSON.parse(rawLocalDraft) : null;
+            if (isRecord(parsedLocalDraft)) {
+              applyExpenseDraftPayload(parsedLocalDraft, null);
+              setExpenseDraftNotice("Draft akun belum bisa dibaca. Draft sementara dipulihkan dari browser.");
+              return;
+            }
+          } catch {
+            window.localStorage.removeItem(expenseDraftStorageKey);
+          }
           setExpenseDraftNotice("Draft akun belum bisa dibaca.");
         }
       })
@@ -1136,6 +1168,7 @@ export function ExpenseInputModeFields({
     continueDraftClearToken,
     expenseDraftProjectId,
     expenseDraftClearToken,
+    expenseDraftStorageKey,
   ]);
 
   useEffect(() => {
@@ -1337,6 +1370,73 @@ export function ExpenseInputModeFields({
       standardUnitPriceRaw,
       standardUsageInfo,
     ],
+  );
+
+  expenseDraftReadyRef.current = expenseDraftReady;
+  latestExpenseDraftPayloadRef.current = expenseDraftPayload;
+  latestExpenseDraftMetaRef.current = {
+    defaultCategory: defaultExpenseCategory,
+    draftProjectId: expenseDraftProjectId,
+    initialProjectId: initialProjectId ?? "",
+    mode,
+    today,
+  };
+
+  useEffect(() => {
+    if (!expenseDraftReady || continueDraftClearInProgressRef.current) {
+      return;
+    }
+    try {
+      if (
+        hasExpenseInputDraftContent(
+          expenseDraftPayload,
+          defaultExpenseCategory,
+          today,
+          initialProjectId ?? "",
+        )
+      ) {
+        window.localStorage.setItem(expenseDraftStorageKey, JSON.stringify(expenseDraftPayload));
+      } else {
+        window.localStorage.removeItem(expenseDraftStorageKey);
+      }
+    } catch {
+      // Local fallback is best-effort; database draft remains the source of truth.
+    }
+  }, [
+    defaultExpenseCategory,
+    expenseDraftPayload,
+    expenseDraftReady,
+    expenseDraftStorageKey,
+    initialProjectId,
+    today,
+  ]);
+
+  useEffect(
+    () => () => {
+      const payload = latestExpenseDraftPayloadRef.current;
+      const meta = latestExpenseDraftMetaRef.current;
+      if (
+        !payload ||
+        !expenseDraftReadyRef.current ||
+        continueDraftClearInProgressRef.current ||
+        !hasExpenseInputDraftContent(
+          payload,
+          meta.defaultCategory,
+          meta.today,
+          meta.initialProjectId,
+        )
+      ) {
+        return;
+      }
+
+      void saveExpenseInputDraftAction({
+        ...payload,
+        draftProjectId: meta.draftProjectId,
+        draftMode: meta.mode,
+        serverKnownUpdatedAt: draftServerUpdatedAtRef.current,
+      }).catch(() => undefined);
+    },
+    [],
   );
 
   useEffect(() => {

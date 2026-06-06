@@ -7,11 +7,18 @@ create table if not exists public.input_biaya_drafts (
   project_id text not null default '__global__',
   mode text not null,
   draft_data jsonb,
-  status text not null default 'active' check (status in ('active', 'cleared')),
+  status text not null default 'active' check (status in ('active', 'cleared', 'deleted')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (user_id, project_id, mode)
 );
+
+alter table public.input_biaya_drafts
+  drop constraint if exists input_biaya_drafts_status_check;
+
+alter table public.input_biaya_drafts
+  add constraint input_biaya_drafts_status_check
+  check (status in ('active', 'cleared', 'deleted'));
 
 create index if not exists input_biaya_drafts_user_idx
   on public.input_biaya_drafts (user_id);

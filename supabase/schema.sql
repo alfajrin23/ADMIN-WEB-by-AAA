@@ -69,6 +69,8 @@ create table if not exists public.kmp_client_materials (
   material_key text not null,
   material_name text not null,
   submission_name text,
+  standard_amount numeric not null default 0 check (standard_amount >= 0),
+  nominal_minimal numeric not null default 0 check (nominal_minimal >= 0),
   minimum_amount numeric not null default 0 check (minimum_amount >= 0),
   checklist_type text not null default 'manual' check (checklist_type in ('none', 'system', 'manual')),
   checklist_status text not null default 'auto' check (checklist_status in ('auto', 'pending', 'fulfilled')),
@@ -77,8 +79,39 @@ create table if not exists public.kmp_client_materials (
   unique (client_key, material_key)
 );
 
+alter table public.kmp_client_materials
+  add column if not exists standard_amount numeric not null default 0;
+
+alter table public.kmp_client_materials
+  add column if not exists nominal_minimal numeric not null default 0;
+
+alter table public.kmp_client_materials
+  drop constraint if exists kmp_client_materials_standard_amount_check;
+
+alter table public.kmp_client_materials
+  add constraint kmp_client_materials_standard_amount_check
+  check (standard_amount >= 0);
+
+alter table public.kmp_client_materials
+  drop constraint if exists kmp_client_materials_nominal_minimal_check;
+
+alter table public.kmp_client_materials
+  add constraint kmp_client_materials_nominal_minimal_check
+  check (nominal_minimal >= 0);
+
+update public.kmp_client_materials
+set nominal_minimal = minimum_amount
+where coalesce(nominal_minimal, 0) = 0
+  and coalesce(minimum_amount, 0) > 0;
+
 create index if not exists kmp_client_materials_client_key_idx
   on public.kmp_client_materials (client_key);
+
+create index if not exists kmp_client_materials_material_name_idx
+  on public.kmp_client_materials (material_name);
+
+create index if not exists kmp_client_materials_submission_name_idx
+  on public.kmp_client_materials (submission_name);
 
 alter table public.kmp_client_materials enable row level security;
 
@@ -104,6 +137,7 @@ begin
       material_key,
       material_name,
       submission_name,
+      nominal_minimal,
       minimum_amount,
       checklist_type,
       checklist_status,
@@ -117,6 +151,7 @@ begin
       material_name,
       submission_name,
       greatest(coalesce(minimum_amount, 0), 0),
+      greatest(coalesce(minimum_amount, 0), 0),
       coalesce(checklist_type, 'manual'),
       coalesce(checklist_status, 'auto'),
       coalesce(created_at, now()),
@@ -129,6 +164,7 @@ begin
       client_name = excluded.client_name,
       material_name = excluded.material_name,
       submission_name = excluded.submission_name,
+      nominal_minimal = excluded.nominal_minimal,
       minimum_amount = excluded.minimum_amount,
       checklist_type = excluded.checklist_type,
       checklist_status = excluded.checklist_status,

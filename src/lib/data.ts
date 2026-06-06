@@ -1553,6 +1553,7 @@ type KmpCianjurDetectedMaterialDetail = {
   materialLabel: string;
   materialName: string;
   submissionName: string | null;
+  standardAmount: number;
   minimumAmount: number;
   detectedAmount: number;
   checklistType: KmpChecklistType;
@@ -1580,6 +1581,7 @@ export type KmpClientMaterialConfig = {
   materialKey: string;
   materialName: string;
   submissionName: string | null;
+  standardAmount: number;
   minimumAmount: number;
   checklistType: KmpChecklistType;
   checklistStatus: KmpChecklistStatus;
@@ -1593,6 +1595,7 @@ type KmpCianjurMaterialProgress = {
   materialLabel: string;
   materialName: string;
   submissionName: string | null;
+  standardAmount: number;
   minimumAmount: number;
   detectedAmount: number;
   checklistType: KmpChecklistType;
@@ -1611,6 +1614,7 @@ type KmpMaterialDetectionRule = {
   keywords: string[];
   amountTargets?: readonly number[];
   amountOptions?: readonly { label: string; amount: number }[];
+  standardAmount: number;
   minimumAmount: number;
   checklistType: KmpChecklistType;
   checklistStatus: KmpChecklistStatus;
@@ -1655,6 +1659,8 @@ function parseKmpChecklistStatus(value: unknown): KmpChecklistStatus {
 
 function mapKmpClientMaterialConfig(row: Record<string, unknown>): KmpClientMaterialConfig {
   const rawMinimumAmount = Number(row.minimum_amount ?? 0);
+  const rawNominalMinimal = Number(row.nominal_minimal ?? row.minimum_amount ?? 0);
+  const rawStandardAmount = Number(row.standard_amount ?? 0);
   const rawClientName = typeof row.client_name === "string" ? row.client_name : "KMP Cianjur";
   return {
     id: String(row.id ?? ""),
@@ -1663,7 +1669,12 @@ function mapKmpClientMaterialConfig(row: Record<string, unknown>): KmpClientMate
     materialKey: String(row.material_key ?? ""),
     materialName: String(row.material_name ?? ""),
     submissionName: typeof row.submission_name === "string" ? row.submission_name : null,
-    minimumAmount: Number.isFinite(rawMinimumAmount) ? Math.max(rawMinimumAmount, 0) : 0,
+    standardAmount: Number.isFinite(rawStandardAmount) ? Math.max(rawStandardAmount, 0) : 0,
+    minimumAmount: Number.isFinite(rawNominalMinimal)
+      ? Math.max(rawNominalMinimal, 0)
+      : Number.isFinite(rawMinimumAmount)
+        ? Math.max(rawMinimumAmount, 0)
+        : 0,
     checklistType: parseKmpChecklistType(row.checklist_type),
     checklistStatus: parseKmpChecklistStatus(row.checklist_status),
     createdAt: String(row.created_at ?? new Date().toISOString()),
@@ -1747,6 +1758,7 @@ function buildKmpMaterialRuleFromChecklist(
   config: KmpClientMaterialConfig | undefined,
 ): KmpMaterialDetectionRule {
   const materialName = config?.materialName.trim() || item.label;
+  const standardAmount = config?.standardAmount ?? 0;
   return {
     configId: config?.id ?? null,
     materialKey: item.key,
@@ -1760,7 +1772,8 @@ function buildKmpMaterialRuleFromChecklist(
       ]),
     ).filter((keyword) => keyword.length > 0),
     amountTargets: item.amountTargets,
-    amountOptions: item.amountOptions,
+    amountOptions: standardAmount > 0 ? [{ label: "Standard", amount: standardAmount }] : item.amountOptions,
+    standardAmount,
     minimumAmount: config?.minimumAmount ?? item.minimumDetectedAmount ?? 0,
     checklistType: config?.checklistType ?? "system",
     checklistStatus: config?.checklistStatus ?? "auto",
@@ -1777,6 +1790,9 @@ function buildKmpMaterialRuleFromConfig(config: KmpClientMaterialConfig): KmpMat
     materialName,
     submissionName: config.submissionName,
     keywords: getMaterialNameKeywords(materialName),
+    amountTargets: config.standardAmount > 0 ? [config.standardAmount] : undefined,
+    amountOptions: config.standardAmount > 0 ? [{ label: "Standard", amount: config.standardAmount }] : undefined,
+    standardAmount: config.standardAmount,
     minimumAmount: config.minimumAmount,
     checklistType: config.checklistType,
     checklistStatus: config.checklistStatus,
@@ -2085,9 +2101,10 @@ export function buildKmpCianjurMissingMaterialReport(
         configId: item.configId,
         materialKey: item.materialKey,
         materialLabel: item.materialLabel,
-        materialName: item.materialName,
-        submissionName: item.submissionName,
-        minimumAmount: item.minimumAmount,
+      materialName: item.materialName,
+      submissionName: item.submissionName,
+      standardAmount: item.standardAmount,
+      minimumAmount: item.minimumAmount,
         detectedAmount: expenseRows.reduce((sum, expense) => sum + expense.amount, 0),
         checklistType: item.checklistType,
         checklistStatus: item.checklistStatus,
@@ -2239,7 +2256,7 @@ export async function getKmpCianjurHokProjectPresets(): Promise<
 }
 
 const SUPABASE_KMP_CLIENT_MATERIAL_SELECT =
-  "id, client_key, client_name, material_key, material_name, submission_name, minimum_amount, checklist_type, checklist_status, created_at, updated_at";
+  "id, client_key, client_name, material_key, material_name, submission_name, standard_amount, nominal_minimal, minimum_amount, checklist_type, checklist_status, created_at, updated_at";
 
 const getCachedSupabaseKmpClientMaterialConfigs = unstable_cache(
   async (): Promise<KmpClientMaterialConfig[]> => {

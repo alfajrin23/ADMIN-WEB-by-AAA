@@ -42,6 +42,7 @@ type KmpMaterialMonitorProject = {
     configId: string | null;
     materialName: string;
     submissionName: string | null;
+    standardAmount: number;
     minimumAmount: number;
     detectedAmount: number;
     checklistType: AmountMode;
@@ -55,6 +56,7 @@ type KmpMaterialMonitorProject = {
     materialLabel: string;
     materialName: string;
     submissionName: string | null;
+    standardAmount: number;
     minimumAmount: number;
     detectedAmount: number;
     checklistType: AmountMode;
@@ -120,13 +122,15 @@ type MaterialEditorState = {
   materialKey: string;
   materialName: string;
   submissionName: string;
-  minimumAmountRaw: string;
+  standardAmountRaw: string;
+  nominalMinimalRaw: string;
   checklistType: AmountMode;
   checklistStatus: ChecklistStatus;
 };
 
 const KMP_CIANJUR_CLIENT_KEY = "kmp cianjur";
 const KMP_CIANJUR_CLIENT_NAME = "KMP Cianjur";
+const PROJECT_RENDER_BATCH_SIZE = 24;
 
 const materialRuleByLabel: ReadonlyMap<string, KmpMaterialChecklistRule> = new Map(
   KMP_CIANJUR_MATERIAL_CHECKLIST.map((item) => [item.label, item]),
@@ -166,13 +170,14 @@ function createInitialMaterialDraft(
   label: string,
   rule: KmpMaterialChecklistRule | undefined,
   submissionName = "",
+  standardAmount = 0,
 ): MaterialDraft {
   return {
     selected: false,
     materialName: label,
     submissionName,
     amountMode: "none",
-    systemAmount: getDefaultSystemAmount(rule),
+    systemAmount: standardAmount > 0 ? String(standardAmount) : getDefaultSystemAmount(rule),
     manualAmount: "",
   };
 }
@@ -185,7 +190,8 @@ function createBlankMaterialEditor(): MaterialEditorState {
     materialKey: "",
     materialName: "",
     submissionName: "",
-    minimumAmountRaw: "",
+    standardAmountRaw: "",
+    nominalMinimalRaw: "",
     checklistType: "manual",
     checklistStatus: "auto",
   };
@@ -201,7 +207,8 @@ function createMaterialEditorFromDetail(
     materialKey: detail.materialKey,
     materialName: detail.materialName || detail.materialLabel,
     submissionName: detail.submissionName ?? "",
-    minimumAmountRaw: detail.minimumAmount > 0 ? String(Math.round(detail.minimumAmount)) : "",
+    standardAmountRaw: detail.standardAmount > 0 ? String(Math.round(detail.standardAmount)) : "",
+    nominalMinimalRaw: detail.minimumAmount > 0 ? String(Math.round(detail.minimumAmount)) : "",
     checklistType: detail.checklistType,
     checklistStatus: detail.checklistStatus,
   };
@@ -267,7 +274,9 @@ export function KmpMaterialMonitorPanel({
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [masterMaterialQuery, setMasterMaterialQuery] = useState("");
+  const [isMasterMaterialVisible, setIsMasterMaterialVisible] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("incomplete");
+  const [visibleProjectLimit, setVisibleProjectLimit] = useState(PROJECT_RENDER_BATCH_SIZE);
   const [expenseDate, setExpenseDate] = useState(today);
   const [materialDrafts, setMaterialDrafts] = useState<Record<string, MaterialDraft>>({});
   const [selectedDetectedMaterial, setSelectedDetectedMaterial] = useState<{
@@ -297,10 +306,15 @@ export function KmpMaterialMonitorPanel({
     };
   }, [router]);
 
-  const getMaterialDraft = (projectId: string, label: string, submissionName = "") => {
+  const getMaterialDraft = (
+    projectId: string,
+    label: string,
+    submissionName = "",
+    standardAmount = 0,
+  ) => {
     const rule = materialRuleByLabel.get(label);
     const key = getMaterialDraftKey(projectId, label);
-    return materialDrafts[key] ?? createInitialMaterialDraft(label, rule, submissionName);
+    return materialDrafts[key] ?? createInitialMaterialDraft(label, rule, submissionName, standardAmount);
   };
 
   const updateMaterialDraft = (
@@ -337,7 +351,12 @@ export function KmpMaterialMonitorPanel({
         }
 
         const key = getMaterialDraftKey(project.projectId, label);
-        const current = next[key] ?? createInitialMaterialDraft(label, rule, detail.submissionName ?? "");
+        const current = next[key] ?? createInitialMaterialDraft(
+          label,
+          rule,
+          detail.submissionName ?? "",
+          detail.standardAmount,
+        );
         next[key] = {
           ...current,
           selected: true,
@@ -362,7 +381,12 @@ export function KmpMaterialMonitorPanel({
           continue;
         }
         const key = getMaterialDraftKey(project.projectId, label);
-        const current = next[key] ?? createInitialMaterialDraft(label, rule, detail.submissionName ?? "");
+        const current = next[key] ?? createInitialMaterialDraft(
+          label,
+          rule,
+          detail.submissionName ?? "",
+          detail.standardAmount,
+        );
         next[key] = {
           ...current,
           selected: true,
@@ -515,6 +539,10 @@ export function KmpMaterialMonitorPanel({
 
     return rows;
   }, [materialDrafts, projects]);
+  const visibleProjects = useMemo(
+    () => filteredProjects.slice(0, visibleProjectLimit),
+    [filteredProjects, visibleProjectLimit],
+  );
 
   const selectedMaterialPayload = useMemo(
     () => JSON.stringify(selectedMaterialRows),
@@ -692,47 +720,63 @@ export function KmpMaterialMonitorPanel({
               Edit nama pengajuan, nominal deteksi, dan aturan material satu kali untuk seluruh project KMP Cianjur.
             </p>
           </div>
-          {canEdit ? (
-            <button
-              type="button"
-              data-ui-button="true"
-              onClick={() => setMaterialEditor(createBlankMaterialEditor())}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100"
-            >
-              <span className="btn-icon bg-blue-100 text-blue-700">
-                <PlusIcon />
-              </span>
-              Tambah Material
-            </button>
-          ) : null}
+          <button
+            type="button"
+            data-ui-button="true"
+            onClick={() => setIsMasterMaterialVisible((value) => !value)}
+            className="inline-flex items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+          >
+            {isMasterMaterialVisible ? "Sembunyikan Edit Material" : "Tampilkan Edit Material"}
+          </button>
         </div>
-        <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
-          <input
-            value={masterMaterialQuery}
-            onChange={(event) => setMasterMaterialQuery(event.currentTarget.value)}
-            placeholder="Cari master material atau nama pengajuan"
-            autoComplete="off"
-          />
-          <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
-            {masterMaterialRows.length} material unik
-          </p>
-        </div>
-        <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-          {masterMaterialRows.slice(0, 60).map(({ detail, projectCount, missingCount, detectedCount }) => (
-            <article
-              key={`master-material-${detail.materialKey}`}
-              className="rounded-xl border border-slate-200 bg-slate-50 p-3"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-black text-slate-900" title={detail.materialLabel}>
-                    {detail.materialLabel}
-                  </p>
-                  <p className="mt-1 truncate text-[11px] text-slate-500" title={detail.submissionName ?? ""}>
-                    {detail.submissionName || "Nama pengajuan belum diisi"}
-                  </p>
-                </div>
-                {canEdit ? (
+        {isMasterMaterialVisible ? (
+          <>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+              {canEdit ? (
+                <button
+                  type="button"
+                  data-ui-button="true"
+                  onClick={() => setMaterialEditor(createBlankMaterialEditor())}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                >
+                  <span className="btn-icon bg-blue-100 text-blue-700">
+                    <PlusIcon />
+                  </span>
+                  Tambah Material
+                </button>
+              ) : null}
+            </div>
+            <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+              <input
+                value={masterMaterialQuery}
+                onChange={(event) => setMasterMaterialQuery(event.currentTarget.value)}
+                placeholder="Cari master material atau nama pengajuan"
+                autoComplete="off"
+              />
+              <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
+                {masterMaterialRows.length} material unik
+              </p>
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {masterMaterialRows.slice(0, 60).map(({ detail, projectCount, missingCount, detectedCount }) => (
+                <article
+                  key={`master-material-${detail.materialKey}`}
+                  className="rounded-xl border border-slate-200 bg-slate-50 p-3"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-black text-slate-900" title={detail.materialLabel}>
+                        {detail.materialLabel}
+                      </p>
+                      <p className="mt-1 truncate text-[11px] text-slate-500" title={detail.submissionName ?? ""}>
+                        {detail.submissionName || "Nama pengajuan belum diisi"}
+                      </p>
+                      <p className="mt-1 text-[11px] font-semibold text-slate-500">
+                        Standard: {detail.standardAmount > 0 ? formatCurrency(detail.standardAmount) : "-"} | Minimal:{" "}
+                        {detail.minimumAmount > 0 ? formatCurrency(detail.minimumAmount) : "-"}
+                      </p>
+                    </div>
+                    {canEdit ? (
                   <button
                     type="button"
                     data-ui-button="true"
@@ -743,26 +787,28 @@ export function KmpMaterialMonitorPanel({
                     <EditIcon className="h-3 w-3" />
                     Edit
                   </button>
-                ) : null}
-              </div>
-              <div className="mt-3 grid grid-cols-3 gap-2 text-center text-[10px] font-semibold text-slate-600">
-                <span className="rounded-lg border border-slate-200 bg-white px-2 py-1">
-                  {projectCount} project
-                </span>
-                <span className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
-                  {missingCount} belum
-                </span>
-                <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-emerald-700">
-                  {detectedCount} sudah
-                </span>
-              </div>
-            </article>
-          ))}
-        </div>
-        {masterMaterialRows.length > 60 ? (
-          <p className="mt-3 text-[11px] text-slate-500">
-            Gunakan pencarian untuk menampilkan material lain.
-          </p>
+                    ) : null}
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-center text-[10px] font-semibold text-slate-600">
+                    <span className="rounded-lg border border-slate-200 bg-white px-2 py-1">
+                      {projectCount} project
+                    </span>
+                    <span className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
+                      {missingCount} belum
+                    </span>
+                    <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-emerald-700">
+                      {detectedCount} sudah
+                    </span>
+                  </div>
+                </article>
+              ))}
+            </div>
+            {masterMaterialRows.length > 60 ? (
+              <p className="mt-3 text-[11px] text-slate-500">
+                Gunakan pencarian untuk menampilkan material lain.
+              </p>
+            ) : null}
+          </>
         ) : null}
       </div>
 
@@ -819,7 +865,7 @@ export function KmpMaterialMonitorPanel({
 
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
           <p>
-            Menampilkan {filteredProjects.length} dari {projects.length} project KMP Cianjur.
+            Menampilkan {visibleProjects.length} dari {filteredProjects.length} project cocok.
           </p>
           <div className="flex flex-wrap gap-2">
             {checklistLabels.slice(0, 5).map((label) => (
@@ -887,7 +933,7 @@ export function KmpMaterialMonitorPanel({
           </p>
         ) : (
           <div className="grid gap-3 xl:grid-cols-2">
-            {filteredProjects.map((project, index) => {
+            {visibleProjects.map((project, index) => {
               const checklistTotal = Math.max(project.totalChecklistCount, 0);
               const checklistProgress = checklistTotal > 0
                 ? Math.round((project.detectedCount / checklistTotal) * 100)
@@ -1019,8 +1065,13 @@ export function KmpMaterialMonitorPanel({
                               project.projectId,
                               label,
                               detail.submissionName ?? "",
+                              detail.standardAmount,
                             );
-                            const amountOptions = rule ? getKmpCianjurMaterialAmountOptions(rule) : [];
+                            const amountOptions = detail.standardAmount > 0
+                              ? [{ label: "Standard", amount: detail.standardAmount }]
+                              : rule
+                                ? getKmpCianjurMaterialAmountOptions(rule)
+                                : [];
                             const isDisabled = !canEdit || !rule;
 
                             return (
@@ -1222,6 +1273,18 @@ export function KmpMaterialMonitorPanel({
                 </article>
               );
             })}
+            {visibleProjects.length < filteredProjects.length ? (
+              <div className="xl:col-span-2">
+                <button
+                  type="button"
+                  data-ui-button="true"
+                  onClick={() => setVisibleProjectLimit((value) => value + PROJECT_RENDER_BATCH_SIZE)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+                >
+                  Tampilkan {Math.min(PROJECT_RENDER_BATCH_SIZE, filteredProjects.length - visibleProjects.length)} project lagi
+                </button>
+              </div>
+            ) : null}
           </div>
         )}
       </OptimisticExpenseCreateForm>
@@ -1302,29 +1365,57 @@ export function KmpMaterialMonitorPanel({
                   />
                 </div>
 
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-500">
-                    Minimal nominal/harga deteksi
-                  </label>
-                  <div className="flex overflow-hidden rounded-xl border border-slate-200 bg-white focus-within:border-blue-700">
-                    <span className="inline-flex items-center border-r border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-600">
-                      Rp
-                    </span>
-                    <input
-                      name="minimum_amount"
-                      type="text"
-                      inputMode="numeric"
-                      value={materialEditor.minimumAmountRaw ? formatThousands(materialEditor.minimumAmountRaw) : ""}
-                      onChange={(event) =>
-                        setMaterialEditor((current) =>
-                          current
-                            ? { ...current, minimumAmountRaw: normalizeDigits(event.currentTarget.value) }
-                            : current,
-                        )
-                      }
-                      placeholder="Contoh: 5.000.000"
-                      className="!rounded-none !border-0 !shadow-none focus:!border-0"
-                    />
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-slate-500">
+                      Nominal harga standard produk
+                    </label>
+                    <div className="flex overflow-hidden rounded-xl border border-slate-200 bg-white focus-within:border-blue-700">
+                      <span className="inline-flex items-center border-r border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-600">
+                        Rp
+                      </span>
+                      <input
+                        name="standard_amount"
+                        type="text"
+                        inputMode="numeric"
+                        value={materialEditor.standardAmountRaw ? formatThousands(materialEditor.standardAmountRaw) : ""}
+                        onChange={(event) =>
+                          setMaterialEditor((current) =>
+                            current
+                              ? { ...current, standardAmountRaw: normalizeDigits(event.currentTarget.value) }
+                              : current,
+                          )
+                        }
+                        placeholder="Contoh: 9.300.000"
+                        className="!rounded-none !border-0 !shadow-none focus:!border-0"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-slate-500">
+                      Nominal minimal
+                    </label>
+                    <div className="flex overflow-hidden rounded-xl border border-slate-200 bg-white focus-within:border-blue-700">
+                      <span className="inline-flex items-center border-r border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-600">
+                        Rp
+                      </span>
+                      <input
+                        name="nominal_minimal"
+                        type="text"
+                        inputMode="numeric"
+                        value={materialEditor.nominalMinimalRaw ? formatThousands(materialEditor.nominalMinimalRaw) : ""}
+                        onChange={(event) =>
+                          setMaterialEditor((current) =>
+                            current
+                              ? { ...current, nominalMinimalRaw: normalizeDigits(event.currentTarget.value) }
+                              : current,
+                          )
+                        }
+                        placeholder="Contoh: 5.000.000"
+                        className="!rounded-none !border-0 !shadow-none focus:!border-0"
+                      />
+                    </div>
                   </div>
                 </div>
 

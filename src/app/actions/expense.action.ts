@@ -352,14 +352,17 @@ export async function upsertKmpProjectMaterialAction(formData: FormData) {
   const clientKey = createKmpClientKey(getString(formData, "client_key") || clientName);
   const materialName = getString(formData, "material_name");
   const materialKey = getString(formData, "material_key") || createKmpMaterialKey(materialName);
-  const minimumAmount = Math.max(0, getNumber(formData, "minimum_amount"));
+  const standardAmount = Math.max(0, getNumber(formData, "standard_amount"));
+  const nominalMinimal = Math.max(0, getNumber(formData, "nominal_minimal"));
   const payload = {
     client_key: clientKey,
     client_name: clientName,
     material_key: materialKey,
     material_name: materialName,
     submission_name: getString(formData, "submission_name") || null,
-    minimum_amount: minimumAmount,
+    standard_amount: standardAmount,
+    nominal_minimal: nominalMinimal,
+    minimum_amount: nominalMinimal,
     checklist_type: parseKmpChecklistTypeInput(getString(formData, "checklist_type")),
     checklist_status: parseKmpChecklistStatusInput(getString(formData, "checklist_status")),
     updated_at: new Date().toISOString(),
@@ -433,7 +436,8 @@ export async function upsertKmpProjectMaterialAction(formData: FormData) {
       client_name: clientName,
       material_key: materialKey,
       material_name: materialName,
-      minimum_amount: minimumAmount,
+      standard_amount: standardAmount,
+      nominal_minimal: nominalMinimal,
     },
   });
 
@@ -1406,9 +1410,8 @@ async function createKmpMaterialChecklistEntries(
     if (amountMode === "system") {
       const options = getKmpCianjurMaterialAmountOptions(rule);
       const requestedSystemAmount = parseNonNegativeAmount(entry.systemAmount);
-      const selectedOption =
-        options.find((option) => option.amount === requestedSystemAmount) ?? options[0];
-      amount = selectedOption?.amount ?? 0;
+      const selectedOption = options.find((option) => option.amount === requestedSystemAmount);
+      amount = selectedOption?.amount ?? (requestedSystemAmount || (options[0]?.amount ?? 0));
     } else if (amountMode === "manual") {
       amount = parseNonNegativeAmount(entry.manualAmount);
       if (amount <= 0) {

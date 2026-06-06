@@ -1350,7 +1350,10 @@ export async function createHokExpenseEntries(
       total_amount: rows.reduce((sum, row) => sum + row.amount, 0),
     },
   });
-  await clearExpenseInputDraftForActorWithinTimeout(actor.id);
+  await clearExpenseInputDraftForActorWithinTimeout(actor.id, {
+    projectId: getString(formData, "expense_draft_project_id"),
+    mode: "hok_kmp_cianjur",
+  });
   if (successReturnTo) {
     redirect(
       withReturnParams(successReturnTo, (params) => {
@@ -1571,7 +1574,10 @@ export async function createScraperExpenseEntries(
     },
   });
   if (!options.skipDraftClear) {
-    await clearExpenseInputDraftForActorWithinTimeout(actor.id);
+    await clearExpenseInputDraftForActorWithinTimeout(actor.id, {
+      projectId: getString(formData, "expense_draft_project_id"),
+      mode: "scraper",
+    });
   }
   const successMessage = `${rows.length} data scraper berhasil disimpan.`;
   if (successReturnTo) {

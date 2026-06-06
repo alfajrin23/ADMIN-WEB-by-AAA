@@ -220,6 +220,10 @@ export function ExpenseDetailSearchResults({
         .sort((a, b) => a.label.localeCompare(b.label, "id-ID")),
     [visibleResults],
   );
+  const editingExpense = useMemo(
+    () => visibleResults.find((item) => item.expenseId === editingExpenseId) ?? null,
+    [editingExpenseId, visibleResults],
+  );
   const categoryOptions = useMemo(() => {
     const categoryMap = new Map<string, string>();
     for (const item of expenseCategories) {
@@ -926,6 +930,9 @@ export function ExpenseDetailSearchResults({
       {editingExpenseId ? (
         <EditExpenseModal
           expenseId={editingExpenseId}
+          initialExpense={editingExpense}
+          initialProjects={projectOptions.map((project) => ({ id: project.value, name: project.label }))}
+          initialExpenseCategories={categoryOptions}
           onClose={() => setEditingExpenseId(null)}
           onOptimisticSave={handleOptimisticExpenseSave}
         />

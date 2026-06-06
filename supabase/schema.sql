@@ -1,6 +1,60 @@
 create extension if not exists pgcrypto;
 create extension if not exists pg_trgm;
 
+create table if not exists public.input_biaya_drafts (
+  id uuid primary key default gen_random_uuid(),
+  user_id text not null,
+  project_id text not null default '__global__',
+  mode text not null,
+  draft_data jsonb,
+  status text not null default 'active' check (status in ('active', 'cleared')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, project_id, mode)
+);
+
+create index if not exists input_biaya_drafts_user_idx
+  on public.input_biaya_drafts (user_id);
+
+create index if not exists input_biaya_drafts_project_idx
+  on public.input_biaya_drafts (project_id);
+
+create index if not exists input_biaya_drafts_mode_idx
+  on public.input_biaya_drafts (mode);
+
+create index if not exists input_biaya_drafts_lookup_idx
+  on public.input_biaya_drafts (user_id, project_id, mode, status);
+
+create index if not exists input_biaya_drafts_updated_at_idx
+  on public.input_biaya_drafts (updated_at desc);
+
+alter table public.input_biaya_drafts enable row level security;
+
+drop policy if exists "input_biaya_drafts_owner_select" on public.input_biaya_drafts;
+create policy "input_biaya_drafts_owner_select"
+  on public.input_biaya_drafts
+  for select
+  using (auth.role() = 'service_role' or user_id = auth.uid()::text);
+
+drop policy if exists "input_biaya_drafts_owner_insert" on public.input_biaya_drafts;
+create policy "input_biaya_drafts_owner_insert"
+  on public.input_biaya_drafts
+  for insert
+  with check (auth.role() = 'service_role' or user_id = auth.uid()::text);
+
+drop policy if exists "input_biaya_drafts_owner_update" on public.input_biaya_drafts;
+create policy "input_biaya_drafts_owner_update"
+  on public.input_biaya_drafts
+  for update
+  using (auth.role() = 'service_role' or user_id = auth.uid()::text)
+  with check (auth.role() = 'service_role' or user_id = auth.uid()::text);
+
+drop policy if exists "input_biaya_drafts_owner_delete" on public.input_biaya_drafts;
+create policy "input_biaya_drafts_owner_delete"
+  on public.input_biaya_drafts
+  for delete
+  using (auth.role() = 'service_role' or user_id = auth.uid()::text);
+
 create table if not exists public.kmp_client_materials (
   id uuid primary key default gen_random_uuid(),
   client_key text not null,

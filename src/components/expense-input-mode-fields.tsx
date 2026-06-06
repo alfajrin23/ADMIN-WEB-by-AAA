@@ -179,6 +179,7 @@ const EXPENSE_PROJECT_REFOCUS_KEY = "expense-modal-refocus-project";
 const EXPENSE_DRAFT_PENDING_CLEAR_KEY = "expense-modal-draft-pending-clear";
 const EXPENSE_CONTINUE_DRAFT_STORAGE_KEY = "admin-web:expense-continue-draft:v1";
 const EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY = "expense-modal-continue-draft-pending-clear";
+const EXPENSE_INPUT_DRAFT_GLOBAL_PROJECT_ID = "__global__";
 const EXPENSE_INPUT_DRAFT_DEBOUNCE_MS = 1000;
 const SCRAPER_SAVE_TIMEOUT_MS = 15_000;
 const HOK_EXCEL_ACCEPT = ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -524,6 +525,8 @@ export function ExpenseInputModeFields({
   const expenseSavedModeParam = searchParams.get("expense_saved_mode")?.trim() ?? "";
   const expenseSavedMode = expenseSavedModeParam ? resolveDraftMode(expenseSavedModeParam) : null;
   const expenseActionToken = searchParams.get("expense_action_token")?.trim() ?? "";
+  const expenseDraftProjectId = initialProjectId?.trim() || EXPENSE_INPUT_DRAFT_GLOBAL_PROJECT_ID;
+  const continueDraftStorageKey = `${EXPENSE_CONTINUE_DRAFT_STORAGE_KEY}:${expenseDraftProjectId}`;
   const rootRef = useRef<HTMLDivElement>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const hokExcelInputRef = useRef<HTMLInputElement>(null);
@@ -594,6 +597,7 @@ export function ExpenseInputModeFields({
   const [expenseDraftReady, setExpenseDraftReady] = useState(false);
   const [expenseDraftSavedAt, setExpenseDraftSavedAt] = useState<string | null>(null);
   const [expenseDraftNotice, setExpenseDraftNotice] = useState("");
+  const [expenseDraftSyncState, setExpenseDraftSyncState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const kmpDuplicateRequestIdRef = useRef(0);
 
   const expenseCategoryValues = useMemo(
@@ -748,12 +752,12 @@ export function ExpenseInputModeFields({
   }, [defaultExpenseCategory, today]);
 
   const clearStaleLocalDraftCache = useCallback(() => {
-    window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
+    window.localStorage.removeItem(continueDraftStorageKey);
     window.sessionStorage.removeItem(EXPENSE_CONTINUE_DRAFT_PENDING_CLEAR_KEY);
     window.sessionStorage.removeItem(EXPENSE_DRAFT_PENDING_CLEAR_KEY);
     setContinueDraftSavedAt(null);
     setExpenseDraftSavedAt(null);
-  }, []);
+  }, [continueDraftStorageKey]);
 
   const markUserDraftInteraction = useCallback(() => {
     hasUserEditedDraftRef.current = true;
@@ -976,7 +980,7 @@ export function ExpenseInputModeFields({
     const projectById = new Map(projects.map((project) => [project.id, project] as const));
 
     try {
-      const rawDraft = window.localStorage.getItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
+      const rawDraft = window.localStorage.getItem(continueDraftStorageKey);
       if (!rawDraft) {
         setContinueDraftReady(true);
         return;
@@ -984,7 +988,7 @@ export function ExpenseInputModeFields({
 
       const parsedDraft: unknown = JSON.parse(rawDraft);
       if (!isRecord(parsedDraft)) {
-        window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
+        window.localStorage.removeItem(continueDraftStorageKey);
         setContinueDraftReady(true);
         return;
       }
@@ -1064,12 +1068,13 @@ export function ExpenseInputModeFields({
         }
       }
     } catch {
-      window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
+      window.localStorage.removeItem(continueDraftStorageKey);
     } finally {
       setContinueDraftReady(true);
     }
   }, [
     continueDraftClearToken,
+    continueDraftStorageKey,
     continueDraftReady,
     defaultExpenseCategory,
     errorMessage,
@@ -1096,7 +1101,7 @@ export function ExpenseInputModeFields({
 
     let isCancelled = false;
     hasLoadedExpenseDraftRef.current = true;
-    getExpenseInputDraftAction()
+    getExpenseInputDraftAction({ projectId: expenseDraftProjectId })
       .then((draft) => {
         if (isCancelled) {
           return;
@@ -1129,6 +1134,7 @@ export function ExpenseInputModeFields({
     applyExpenseDraftPayload,
     clearStaleLocalDraftCache,
     continueDraftClearToken,
+    expenseDraftProjectId,
     expenseDraftClearToken,
   ]);
 
@@ -1143,7 +1149,7 @@ export function ExpenseInputModeFields({
         return;
       }
       isChecking = true;
-      getExpenseInputDraftAction()
+      getExpenseInputDraftAction({ projectId: expenseDraftProjectId })
         .then((draft) => {
           if (
             draft?.isCleared &&
@@ -1183,7 +1189,7 @@ export function ExpenseInputModeFields({
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.clearInterval(intervalId);
     };
-  }, [clearStaleLocalDraftCache, expenseDraftReady, mode, resetExpenseDraftAfterSave]);
+  }, [clearStaleLocalDraftCache, expenseDraftProjectId, expenseDraftReady, mode, resetExpenseDraftAfterSave]);
 
   useEffect(() => {
     if (!continueDraftReady) {
@@ -1199,7 +1205,7 @@ export function ExpenseInputModeFields({
     });
 
     if (continueDraftClearInProgressRef.current) {
-      window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
+      window.localStorage.removeItem(continueDraftStorageKey);
       setContinueDraftSavedAt(null);
       if (!hasDraftContent) {
         continueDraftClearInProgressRef.current = false;
@@ -1208,7 +1214,7 @@ export function ExpenseInputModeFields({
     }
 
     if (!hasDraftContent) {
-      window.localStorage.removeItem(EXPENSE_CONTINUE_DRAFT_STORAGE_KEY);
+      window.localStorage.removeItem(continueDraftStorageKey);
       setContinueDraftSavedAt(null);
       return;
     }
@@ -1216,7 +1222,7 @@ export function ExpenseInputModeFields({
     const savedAt = new Date().toISOString();
     try {
       window.localStorage.setItem(
-        EXPENSE_CONTINUE_DRAFT_STORAGE_KEY,
+        continueDraftStorageKey,
         JSON.stringify({
           version: 1,
           savedAt,
@@ -1243,6 +1249,7 @@ export function ExpenseInputModeFields({
     continueDescription,
     continueDraftReady,
     continueDraftClearVersion,
+    continueDraftStorageKey,
     continueEntries,
     continueProjectId,
     continueRequester,
@@ -1351,7 +1358,8 @@ export function ExpenseInputModeFields({
       ) {
         if (!serverDraftIsClearedRef.current) {
           serverDraftIsClearedRef.current = true;
-          clearExpenseInputDraftAction()
+          setExpenseDraftSyncState("saving");
+          clearExpenseInputDraftAction({ projectId: expenseDraftProjectId })
             .then((result) => {
               if (result?.updatedAt) {
                 draftServerUpdatedAtRef.current = result.updatedAt;
@@ -1359,23 +1367,29 @@ export function ExpenseInputModeFields({
               if (result?.isCleared) {
                 serverDraftIsClearedRef.current = true;
               }
+              setExpenseDraftSyncState("idle");
             })
             .catch(() => {
               serverDraftIsClearedRef.current = false;
+              setExpenseDraftSyncState("error");
             });
         }
         setExpenseDraftSavedAt(null);
         return;
       }
 
+      setExpenseDraftSyncState("saving");
       saveExpenseInputDraftAction({
         ...expenseDraftPayload,
+        draftProjectId: expenseDraftProjectId,
+        draftMode: mode,
         serverKnownUpdatedAt: draftServerUpdatedAtRef.current,
       })
         .then((result) => {
           if (result?.isCleared) {
             draftServerUpdatedAtRef.current = result.updatedAt ?? null;
             serverDraftIsClearedRef.current = true;
+            setExpenseDraftSyncState("saved");
             setExpenseDraftNotice("Draft lama sudah kosong di akun. Lanjutkan input, perubahan berikutnya akan menjadi draft baru.");
             return;
           }
@@ -1384,9 +1398,11 @@ export function ExpenseInputModeFields({
             draftServerUpdatedAtRef.current = result.updatedAt;
           }
           setExpenseDraftSavedAt(new Date().toISOString());
+          setExpenseDraftSyncState("saved");
           setExpenseDraftNotice("");
         })
         .catch(() => {
+          setExpenseDraftSyncState("error");
           setExpenseDraftNotice("Draft akun belum bisa disimpan.");
         });
     }, EXPENSE_INPUT_DRAFT_DEBOUNCE_MS);
@@ -1395,16 +1411,19 @@ export function ExpenseInputModeFields({
   }, [
     defaultExpenseCategory,
     expenseDraftPayload,
+    expenseDraftProjectId,
     expenseDraftReady,
     initialProjectId,
+    mode,
     resetExpenseDraftAfterSave,
     today,
   ]);
 
   const clearContinueDraft = useCallback(() => {
     resetExpenseDraftAfterSave(mode);
+    void clearExpenseInputDraftAction({ projectId: expenseDraftProjectId }).catch(() => undefined);
     setContinueDraftNotice("Draft mode continue dihapus.");
-  }, [mode, resetExpenseDraftAfterSave]);
+  }, [expenseDraftProjectId, mode, resetExpenseDraftAfterSave]);
 
   const validateHokRows = useCallback(() => {
     const selectedRows = hokRows.filter((row) => row.selected);
@@ -1515,7 +1534,10 @@ export function ExpenseInputModeFields({
 
         resetExpenseDraftAfterSave(SCRAPER_MODE);
         setScraperSuccessMessage(result.message);
-        void clearExpenseInputDraftAction().catch(() => undefined);
+        void clearExpenseInputDraftAction({
+          projectId: expenseDraftProjectId,
+          mode: SCRAPER_MODE,
+        }).catch(() => undefined);
         router.refresh();
       })
       .catch((error: unknown) => {
@@ -1536,6 +1558,7 @@ export function ExpenseInputModeFields({
       });
   }, [
     addPendingExpenses,
+    expenseDraftProjectId,
     isScraperSaving,
     projects,
     removePendingExpenseIds,
@@ -2115,6 +2138,14 @@ export function ExpenseInputModeFields({
     amountRaw: continueAmountRaw,
   });
   const continueDraftSavedAtLabel = formatContinueDraftSavedAt(continueDraftSavedAt);
+  const expenseDraftSyncLabel =
+    expenseDraftSyncState === "saving"
+      ? " Menyimpan draft..."
+      : expenseDraftSyncState === "saved"
+        ? " Draft tersimpan."
+        : expenseDraftSyncState === "error"
+          ? " Gagal menyimpan draft."
+          : "";
 
   return (
     <div
@@ -2128,6 +2159,7 @@ export function ExpenseInputModeFields({
       <EnterToNextField formId={formId} />
       <input type="hidden" name="expense_submission_token" value={submissionToken} />
       <input type="hidden" name="expense_input_mode" value={mode} />
+      <input type="hidden" name="expense_draft_project_id" value={expenseDraftProjectId} />
       {mode === CONTINUE_MODE && (
         <input type="hidden" name="continue_rows_json" value={continuePayload} />
       )}
@@ -2137,6 +2169,7 @@ export function ExpenseInputModeFields({
           <p className="text-[11px] text-slate-500">
             Draft semua mode tersimpan di akun yang sama
             {formatContinueDraftSavedAt(expenseDraftSavedAt) ? `, terakhir ${formatContinueDraftSavedAt(expenseDraftSavedAt)}` : ""}.
+            {expenseDraftSyncLabel}
             {expenseDraftNotice ? ` ${expenseDraftNotice}` : ""}
           </p>
         </div>

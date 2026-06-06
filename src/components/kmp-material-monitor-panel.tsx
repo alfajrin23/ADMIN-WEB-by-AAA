@@ -96,6 +96,7 @@ type ChecklistStatus = "auto" | "pending" | "fulfilled";
 type MaterialDraft = {
   selected: boolean;
   materialName: string;
+  submissionName: string;
   amountMode: AmountMode;
   systemAmount: string;
   manualAmount: string;
@@ -106,6 +107,7 @@ type MaterialSelectionRow = {
   projectName: string;
   materialKey: string;
   materialName: string;
+  submissionName: string;
   amountMode: AmountMode;
   systemAmount: string;
   manualAmount: string;
@@ -160,10 +162,15 @@ function getDefaultSelectedAmountMode(rule: KmpMaterialChecklistRule | undefined
   return getDefaultSystemAmount(rule) ? "system" : "none";
 }
 
-function createInitialMaterialDraft(label: string, rule: KmpMaterialChecklistRule | undefined): MaterialDraft {
+function createInitialMaterialDraft(
+  label: string,
+  rule: KmpMaterialChecklistRule | undefined,
+  submissionName = "",
+): MaterialDraft {
   return {
     selected: false,
     materialName: label,
+    submissionName,
     amountMode: "none",
     systemAmount: getDefaultSystemAmount(rule),
     manualAmount: "",
@@ -289,10 +296,10 @@ export function KmpMaterialMonitorPanel({
     };
   }, [router]);
 
-  const getMaterialDraft = (projectId: string, label: string) => {
+  const getMaterialDraft = (projectId: string, label: string, submissionName = "") => {
     const rule = materialRuleByLabel.get(label);
     const key = getMaterialDraftKey(projectId, label);
-    return materialDrafts[key] ?? createInitialMaterialDraft(label, rule);
+    return materialDrafts[key] ?? createInitialMaterialDraft(label, rule, submissionName);
   };
 
   const updateMaterialDraft = (
@@ -311,6 +318,39 @@ export function KmpMaterialMonitorPanel({
     });
   };
 
+  const applyMaterialDraftToAllProjects = (
+    label: string,
+    sourceDraft: MaterialDraft,
+  ) => {
+    setMaterialDrafts((previous) => {
+      const rule = materialRuleByLabel.get(label);
+      if (!rule) {
+        return previous;
+      }
+
+      const next = { ...previous };
+      for (const project of projects) {
+        const detail = project.missingMaterialDetails.find((item) => item.materialLabel === label);
+        if (!detail) {
+          continue;
+        }
+
+        const key = getMaterialDraftKey(project.projectId, label);
+        const current = next[key] ?? createInitialMaterialDraft(label, rule, detail.submissionName ?? "");
+        next[key] = {
+          ...current,
+          selected: true,
+          materialName: sourceDraft.materialName,
+          submissionName: sourceDraft.submissionName,
+          amountMode: sourceDraft.amountMode,
+          systemAmount: sourceDraft.systemAmount,
+          manualAmount: sourceDraft.manualAmount,
+        };
+      }
+      return next;
+    });
+  };
+
   const selectProjectMissingMaterials = (project: KmpMaterialMonitorProject) => {
     setMaterialDrafts((previous) => {
       const next = { ...previous };
@@ -321,10 +361,12 @@ export function KmpMaterialMonitorPanel({
           continue;
         }
         const key = getMaterialDraftKey(project.projectId, label);
-        const current = next[key] ?? createInitialMaterialDraft(label, rule);
+        const current = next[key] ?? createInitialMaterialDraft(label, rule, detail.submissionName ?? "");
         next[key] = {
           ...current,
           selected: true,
+          materialName: detail.materialName || current.materialName,
+          submissionName: current.submissionName || detail.submissionName || "",
           amountMode: current.amountMode === "none" ? getDefaultSelectedAmountMode(rule) : current.amountMode,
         };
       }
@@ -400,6 +442,7 @@ export function KmpMaterialMonitorPanel({
           projectName: project.projectName,
           materialKey: rule.key,
           materialName: draft.materialName.trim() || rule.label,
+          submissionName: draft.submissionName.trim(),
           amountMode: draft.amountMode,
           systemAmount: draft.systemAmount,
           manualAmount: draft.manualAmount,
@@ -420,6 +463,7 @@ export function KmpMaterialMonitorPanel({
       const draft: MaterialDraft = {
         selected: true,
         materialName: row.materialName,
+        submissionName: row.submissionName,
         amountMode: row.amountMode,
         systemAmount: row.systemAmount,
         manualAmount: row.manualAmount,
@@ -848,7 +892,11 @@ export function KmpMaterialMonitorPanel({
                           {project.missingMaterialDetails.map((detail) => {
                             const label = detail.materialLabel;
                             const rule = materialRuleByLabel.get(label);
-                            const draft = getMaterialDraft(project.projectId, label);
+                            const draft = getMaterialDraft(
+                              project.projectId,
+                              label,
+                              detail.submissionName ?? "",
+                            );
                             const amountOptions = rule ? getKmpCianjurMaterialAmountOptions(rule) : [];
                             const isDisabled = !canEdit || !rule;
 
@@ -932,6 +980,21 @@ export function KmpMaterialMonitorPanel({
                                       }
                                       className="mt-2 !h-9 !rounded-lg text-xs font-semibold"
                                       aria-label={`Nama material ${label}`}
+                                    />
+                                    <input
+                                      type="text"
+                                      value={draft.submissionName}
+                                      disabled={isDisabled || !draft.selected}
+                                      onChange={(event) =>
+                                        updateMaterialDraft(project.projectId, label, (current) => ({
+                                          ...current,
+                                          submissionName: event.currentTarget.value,
+                                          selected: true,
+                                        }))
+                                      }
+                                      placeholder="Nama pengajuan untuk rincian"
+                                      className="mt-2 !h-9 !rounded-lg text-xs font-semibold"
+                                      aria-label={`Nama pengajuan ${label}`}
                                     />
                                     <span className="mt-2 flex flex-wrap gap-1.5">
                                       {[
@@ -1022,6 +1085,15 @@ export function KmpMaterialMonitorPanel({
                                         />
                                       </span>
                                     ) : null}
+                                    <button
+                                      type="button"
+                                      data-ui-button="true"
+                                      disabled={isDisabled || !draft.selected}
+                                      onClick={() => applyMaterialDraftToAllProjects(label, draft)}
+                                      className="mt-2 inline-flex w-full items-center justify-center rounded-lg border border-blue-200 bg-blue-50 px-2 py-1.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                      Terapkan ke semua {label}
+                                    </button>
                                       </>
                                     )}
                                   </span>

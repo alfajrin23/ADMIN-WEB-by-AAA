@@ -238,7 +238,10 @@ export async function createExpenseAction(formData: FormData) {
       expense_date: basePayload.expense_date,
     },
   });
-  await clearExpenseInputDraftForActorWithinTimeout(actor.id);
+  await clearExpenseInputDraftForActorWithinTimeout(actor.id, {
+    projectId: getString(formData, "expense_draft_project_id"),
+    mode: "standard",
+  });
   const successMessage =
     projectIds.length > 1
       ? `Biaya berhasil disimpan ke ${projectIds.length} project.`
@@ -1158,7 +1161,10 @@ async function createContinueExpenseEntries(
       project_ids: [...new Set(entries.map((e) => e.projectId))],
     },
   });
-  await clearExpenseInputDraftForActorWithinTimeout(actor.id);
+  await clearExpenseInputDraftForActorWithinTimeout(actor.id, {
+    projectId: getString(formData, "expense_draft_project_id"),
+    mode: "continue",
+  });
   if (successReturnTo) {
     const clearToken = randomUUID();
     redirect(
@@ -1179,6 +1185,7 @@ type KmpMaterialChecklistEntryJson = {
   projectName?: unknown;
   materialKey?: unknown;
   materialName?: unknown;
+  submissionName?: unknown;
   amountMode?: unknown;
   systemAmount?: unknown;
   manualAmount?: unknown;
@@ -1190,6 +1197,7 @@ type KmpMaterialChecklistRow = {
   materialKey: string;
   materialLabel: string;
   materialName: string;
+  submissionName: string;
   amountMode: "none" | "system" | "manual";
   amount: number;
 };
@@ -1392,6 +1400,7 @@ async function createKmpMaterialChecklistEntries(
     const amountMode: "none" | "system" | "manual" =
       rawAmountMode === "system" || rawAmountMode === "manual" ? rawAmountMode : "none";
     const materialName = getStringField(entry.materialName) || rule.label;
+    const submissionName = getStringField(entry.submissionName);
     let amount = 0;
 
     if (amountMode === "system") {
@@ -1414,6 +1423,7 @@ async function createKmpMaterialChecklistEntries(
       materialKey,
       materialLabel: rule.label,
       materialName,
+      submissionName,
       amountMode,
       amount,
     });
@@ -1491,7 +1501,7 @@ async function createKmpMaterialChecklistEntries(
       project_id: row.projectId,
       category: basePayload.category,
       specialist_type: basePayload.specialist_type,
-      requester_name: basePayload.requester_name,
+      requester_name: row.submissionName || basePayload.requester_name,
       description: row.materialName,
       recipient_name: basePayload.recipient_name,
       quantity: basePayload.quantity,
@@ -1650,13 +1660,16 @@ async function createKmpMaterialChecklistEntries(
       project_names: rows.map((row) => row.projectName || row.projectId),
       material_keys: rows.map((row) => row.materialKey),
       material_names: rows.map((row) => row.materialName),
-      requester_name: requesterName,
+      requester_names: rows.map((row) => row.submissionName || requesterName),
       expense_date: expenseDate,
       completed_project_ids: completedProjectIds,
       total_amount: savedMutationRows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0),
     },
   });
-  await clearExpenseInputDraftForActorWithinTimeout(actor.id);
+  await clearExpenseInputDraftForActorWithinTimeout(actor.id, {
+    projectId: getString(formData, "expense_draft_project_id"),
+    mode: "standard",
+  });
   if (successReturnTo) {
     redirect(
       withReturnParams(successReturnTo, (params) => {

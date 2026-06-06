@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { updateExpenseAction, getEditExpenseModalDataAction } from "@/app/actions/expense.action";
 import { CloseIcon, SaveIcon } from "@/components/icons";
 import { RupiahInput } from "@/components/rupiah-input";
-import { SPECIALIST_COST_PRESETS, toCategorySlug } from "@/lib/constants";
-import type { ProjectExpenseSearchResult } from "@/lib/types";
+import { mergeExpenseCategoryOptions, SPECIALIST_COST_PRESETS, toCategorySlug } from "@/lib/constants";
+import type { ExpenseEntry, Project, ProjectExpenseSearchResult } from "@/lib/types";
 
 type EditExpenseModalProps = {
   expenseId: string;
+  initialExpense?: ProjectExpenseSearchResult | null;
+  initialProjects?: Array<Pick<Project, "id" | "name">>;
+  initialExpenseCategories?: Array<{ value: string; label: string }>;
   onClose: () => void;
   onOptimisticSave?: (formData: FormData, nextValue: ProjectExpenseSearchResult) => void;
 };
@@ -24,9 +27,73 @@ function getFormAmount(formData: FormData, key: string) {
   return Number.isFinite(amount) ? amount : 0;
 }
 
-export function EditExpenseModal({ expenseId, onClose, onOptimisticSave }: EditExpenseModalProps) {
-  const [data, setData] = useState<Awaited<ReturnType<typeof getEditExpenseModalDataAction>> | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+function createInitialExpenseEntry(input: ProjectExpenseSearchResult): ExpenseEntry {
+  return {
+    id: input.expenseId,
+    projectId: input.projectId,
+    projectName: input.projectName,
+    category: input.category,
+    specialistType: null,
+    requesterName: input.requesterName,
+    description: input.description,
+    recipientName: input.recipientName,
+    quantity: 1,
+    unitLabel: null,
+    usageInfo: input.usageInfo,
+    unitPrice: 0,
+    amount: input.amount,
+    expenseDate: input.expenseDate,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+export function EditExpenseModal({
+  expenseId,
+  initialExpense,
+  initialProjects = [],
+  initialExpenseCategories = [],
+  onClose,
+  onOptimisticSave,
+}: EditExpenseModalProps) {
+  const initialData = useMemo<Awaited<ReturnType<typeof getEditExpenseModalDataAction>> | null>(() => {
+    if (!initialExpense) {
+      return null;
+    }
+    const projectMap = new Map<string, Pick<Project, "id" | "name">>();
+    for (const project of initialProjects) {
+      projectMap.set(project.id, project);
+    }
+    projectMap.set(initialExpense.projectId, {
+      id: initialExpense.projectId,
+      name: initialExpense.projectName,
+    });
+    const categoryMap = new Map(initialExpenseCategories.map((item) => [item.value, item] as const));
+    if (!categoryMap.has(initialExpense.category)) {
+      categoryMap.set(initialExpense.category, {
+        value: initialExpense.category,
+        label: initialExpense.category,
+      });
+    }
+
+    return {
+      expense: createInitialExpenseEntry(initialExpense),
+      projects: Array.from(projectMap.values()).map((project) => ({
+        id: project.id,
+        name: project.name,
+        code: null,
+        clientName: null,
+        startDate: null,
+        status: "aktif",
+        createdAt: new Date().toISOString(),
+      })),
+      expenseCategories:
+        categoryMap.size > 0
+          ? Array.from(categoryMap.values())
+          : mergeExpenseCategoryOptions([initialExpense.category]),
+    };
+  }, [initialExpense, initialExpenseCategories, initialProjects]);
+  const [data, setData] = useState<Awaited<ReturnType<typeof getEditExpenseModalDataAction>> | null>(initialData);
+  const [isRefreshing, setIsRefreshing] = useState(true);
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const queryText = searchParams.toString();
@@ -36,25 +103,17 @@ export function EditExpenseModal({ expenseId, onClose, onOptimisticSave }: EditE
     let active = true;
     getEditExpenseModalDataAction(expenseId).then((result) => {
       if (active) {
-        setData(result);
-        setIsLoading(false);
+        setData((current) => (current?.expense ? current : result));
+      }
+    }).finally(() => {
+      if (active) {
+        setIsRefreshing(false);
       }
     });
     return () => {
       active = false;
     };
-  }, [expenseId]);
-
-  if (isLoading) {
-    return (
-      <div className="modal-overlay fixed inset-0 z-[80] flex items-center justify-center p-4">
-        <div className="absolute inset-0 bg-slate-950/45" />
-        <div className="panel relative z-10 p-5 text-center text-sm font-medium text-slate-600">
-          Loading data biaya...
-        </div>
-      </div>
-    );
-  }
+  }, [expenseId, initialData]);
 
   if (!data?.expense) {
     return (
@@ -119,6 +178,11 @@ export function EditExpenseModal({ expenseId, onClose, onOptimisticSave }: EditE
         </div>
 
         <form action={onOptimisticSave ? undefined : updateExpenseAction as (formData: FormData) => Promise<void>} onSubmit={handleSubmit} className="mt-4 space-y-3">
+          {isRefreshing ? (
+            <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold text-slate-500">
+              Memperbarui detail di background...
+            </p>
+          ) : null}
           <input type="hidden" name="expense_id" value={expense.id} />
           <input type="hidden" name="return_to" value={returnTo} />
           <div>

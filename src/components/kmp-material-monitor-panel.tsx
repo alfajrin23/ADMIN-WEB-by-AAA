@@ -22,6 +22,7 @@ import {
   KMP_CIANJUR_MATERIAL_CHECKLIST,
   type KmpMaterialChecklistRule,
 } from "@/lib/kmp-materials";
+import { OPTIMISTIC_UI_FIELD } from "@/lib/optimistic-ui";
 
 type KmpMaterialMonitorProject = {
   projectId: string;
@@ -284,6 +285,8 @@ export function KmpMaterialMonitorPanel({
     materialKey: string;
   } | null>(null);
   const [materialEditor, setMaterialEditor] = useState<MaterialEditorState | null>(null);
+  const [materialEditorError, setMaterialEditorError] = useState("");
+  const [isMaterialEditorSubmitting, setIsMaterialEditorSubmitting] = useState(false);
   const { notice, runOptimisticMutation } = useOptimisticMutation();
 
   useEffect(() => {
@@ -315,6 +318,11 @@ export function KmpMaterialMonitorPanel({
     const rule = materialRuleByLabel.get(label);
     const key = getMaterialDraftKey(projectId, label);
     return materialDrafts[key] ?? createInitialMaterialDraft(label, rule, submissionName, standardAmount);
+  };
+
+  const openMaterialEditor = (nextEditor: MaterialEditorState) => {
+    setMaterialEditorError("");
+    setMaterialEditor(nextEditor);
   };
 
   const updateMaterialDraft = (
@@ -582,16 +590,31 @@ export function KmpMaterialMonitorPanel({
 
   const submitMaterialEditor = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const snapshot = materialEditor;
+    event.stopPropagation();
+    if (isMaterialEditorSubmitting) {
+      return;
+    }
     const formData = new FormData(event.currentTarget);
-    void runOptimisticMutation({
-      action: upsertKmpProjectMaterialAction,
-      formData,
-      pendingMessage: "Menyimpan material deteksi KMP...",
-      optimisticUpdate: () => setMaterialEditor(null),
-      rollback: () => setMaterialEditor(snapshot),
-      onSuccess: () => onDataChanged?.(),
-    });
+    formData.set(OPTIMISTIC_UI_FIELD, "1");
+    setMaterialEditorError("");
+    setIsMaterialEditorSubmitting(true);
+    void upsertKmpProjectMaterialAction(formData)
+      .then((result) => {
+        if (!result?.ok) {
+          setMaterialEditorError(result?.message || "Material gagal disimpan. Periksa input lalu coba lagi.");
+          return;
+        }
+        setMaterialEditor(null);
+        setMaterialEditorError("");
+        onDataChanged?.();
+        router.refresh();
+      })
+      .catch(() => {
+        setMaterialEditorError("Koneksi ke server gagal. Data input tetap dipertahankan.");
+      })
+      .finally(() => {
+        setIsMaterialEditorSubmitting(false);
+      });
   };
 
   const deleteMaterialEditor = () => {
@@ -736,7 +759,7 @@ export function KmpMaterialMonitorPanel({
                 <button
                   type="button"
                   data-ui-button="true"
-                  onClick={() => setMaterialEditor(createBlankMaterialEditor())}
+                  onClick={() => openMaterialEditor(createBlankMaterialEditor())}
                   className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100"
                 >
                   <span className="btn-icon bg-blue-100 text-blue-700">
@@ -780,7 +803,7 @@ export function KmpMaterialMonitorPanel({
                   <button
                     type="button"
                     data-ui-button="true"
-                    onClick={() => setMaterialEditor(createMaterialEditorFromDetail(detail))}
+                    onClick={() => openMaterialEditor(createMaterialEditorFromDetail(detail))}
                     className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100"
                     aria-label={`Edit master material ${detail.materialLabel}`}
                   >
@@ -1295,10 +1318,16 @@ export function KmpMaterialMonitorPanel({
             <button
               type="button"
               aria-label="Tutup editor material"
-              onClick={() => setMaterialEditor(null)}
+              onClick={() => {
+                setMaterialEditorError("");
+                setMaterialEditor(null);
+              }}
               className="absolute inset-0 bg-slate-950/55"
             />
-            <section className="panel relative z-10 max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto p-5">
+            <section
+              className="panel relative z-10 max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto p-5"
+              onClick={(event) => event.stopPropagation()}
+            >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.12em] text-amber-700">
@@ -1314,7 +1343,10 @@ export function KmpMaterialMonitorPanel({
                 <button
                   type="button"
                   data-ui-button="true"
-                  onClick={() => setMaterialEditor(null)}
+                  onClick={() => {
+                    setMaterialEditorError("");
+                    setMaterialEditor(null);
+                  }}
                   className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
                 >
                   <span className="btn-icon bg-slate-100 text-slate-600">
@@ -1324,12 +1356,18 @@ export function KmpMaterialMonitorPanel({
                 </button>
               </div>
 
-              <form onSubmit={submitMaterialEditor} className="mt-4 space-y-3">
+              <form onSubmit={submitMaterialEditor} onClick={(event) => event.stopPropagation()} className="mt-4 space-y-3">
                 <input type="hidden" name="return_to" value={returnTo} />
                 <input type="hidden" name="client_key" value={materialEditor.clientKey} />
                 <input type="hidden" name="client_name" value={materialEditor.clientName} />
                 <input type="hidden" name="material_config_id" value={materialEditor.configId} />
                 <input type="hidden" name="material_key" value={materialEditor.materialKey} />
+
+                {materialEditorError ? (
+                  <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                    {materialEditorError}
+                  </p>
+                ) : null}
 
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-500">
@@ -1338,11 +1376,11 @@ export function KmpMaterialMonitorPanel({
                   <input
                     name="material_name"
                     value={materialEditor.materialName}
-                    onChange={(event) =>
-                      setMaterialEditor((current) =>
-                        current ? { ...current, materialName: event.currentTarget.value } : current,
-                      )
-                    }
+                      onChange={(event) =>
+                        setMaterialEditor((current) =>
+                          current ? { ...current, materialName: event.currentTarget.value } : current,
+                        )
+                      }
                     placeholder="Contoh: Folding Gate"
                     required
                     autoFocus
@@ -1356,10 +1394,10 @@ export function KmpMaterialMonitorPanel({
                   <input
                     name="submission_name"
                     value={materialEditor.submissionName}
-                    onChange={(event) =>
-                      setMaterialEditor((current) =>
-                        current ? { ...current, submissionName: event.currentTarget.value } : current,
-                      )
+                      onChange={(event) =>
+                        setMaterialEditor((current) =>
+                          current ? { ...current, submissionName: event.currentTarget.value } : current,
+                        )
                     }
                     placeholder="Contoh: Pengajuan Folding Gate"
                   />
@@ -1468,6 +1506,7 @@ export function KmpMaterialMonitorPanel({
                       type="button"
                       data-ui-button="true"
                       onClick={deleteMaterialEditor}
+                      disabled={isMaterialEditorSubmitting}
                       className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 hover:bg-rose-100"
                     >
                       <span className="btn-icon bg-rose-100 text-rose-700">
@@ -1481,12 +1520,13 @@ export function KmpMaterialMonitorPanel({
                   <button
                     type="submit"
                     data-ui-button="true"
-                    className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-600"
+                    disabled={isMaterialEditorSubmitting}
+                    className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <span className="btn-icon bg-white/20 text-white">
                       <SaveIcon />
                     </span>
-                    Simpan Material
+                    {isMaterialEditorSubmitting ? "Menyimpan..." : "Simpan Material"}
                   </button>
                 </div>
               </form>

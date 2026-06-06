@@ -215,6 +215,37 @@ function createMaterialEditorFromDetail(
   };
 }
 
+function normalizeMaterialEditorState(editor: Partial<MaterialEditorState> | null): MaterialEditorState | null {
+  if (!editor) {
+    return null;
+  }
+
+  const defaults = createBlankMaterialEditor();
+  const checklistType: AmountMode =
+    editor.checklistType === "none" || editor.checklistType === "system" || editor.checklistType === "manual"
+      ? editor.checklistType
+      : defaults.checklistType;
+  const checklistStatus: ChecklistStatus =
+    editor.checklistStatus === "auto" ||
+    editor.checklistStatus === "pending" ||
+    editor.checklistStatus === "fulfilled"
+      ? editor.checklistStatus
+      : defaults.checklistStatus;
+
+  return {
+    clientKey: editor.clientKey ?? defaults.clientKey,
+    clientName: editor.clientName ?? defaults.clientName,
+    configId: editor.configId ?? defaults.configId,
+    materialKey: editor.materialKey ?? defaults.materialKey,
+    materialName: editor.materialName ?? defaults.materialName,
+    submissionName: editor.submissionName ?? defaults.submissionName,
+    standardAmountRaw: normalizeDigits(editor.standardAmountRaw ?? defaults.standardAmountRaw),
+    nominalMinimalRaw: normalizeDigits(editor.nominalMinimalRaw ?? defaults.nominalMinimalRaw),
+    checklistType,
+    checklistStatus,
+  };
+}
+
 function resolveDraftAmount(draft: MaterialDraft, rule: KmpMaterialChecklistRule | undefined) {
   if (draft.amountMode === "manual") {
     return Number(normalizeDigits(draft.manualAmount)) || 0;
@@ -257,6 +288,221 @@ function KmpMaterialSubmitButton({
           ? `Simpan Checklist (${selectedCount})`
           : "Pilih Material"}
     </button>
+  );
+}
+
+function MaterialEditorModal({
+  editor,
+  error,
+  isSubmitting,
+  returnTo,
+  onClose,
+  onDelete,
+  onPatch,
+  onSubmit,
+}: {
+  editor: MaterialEditorState;
+  error: string;
+  isSubmitting: boolean;
+  returnTo: string;
+  onClose: () => void;
+  onDelete: () => void;
+  onPatch: (patch: Partial<MaterialEditorState>) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+      <button
+        type="button"
+        aria-label="Tutup editor material"
+        onClick={onClose}
+        className="absolute inset-0 bg-slate-950/55"
+      />
+      <section
+        className="panel relative z-10 max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto p-5"
+        onClick={(event) => event.stopPropagation()}
+        onMouseDown={(event) => event.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-amber-700">
+              Material Deteksi KMP
+            </p>
+            <h3 className="mt-1 text-lg font-black text-slate-950">
+              {editor.configId ? "Edit Material" : "Tambah Material"}
+            </h3>
+            <p className="mt-1 text-xs text-slate-500">
+              Berlaku untuk semua project klien {editor.clientName}.
+            </p>
+          </div>
+          <button
+            type="button"
+            data-ui-button="true"
+            onClick={onClose}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+          >
+            <span className="btn-icon bg-slate-100 text-slate-600">
+              <CloseIcon />
+            </span>
+            Tutup
+          </button>
+        </div>
+
+        <form
+          onSubmit={onSubmit}
+          onClick={(event) => event.stopPropagation()}
+          onChange={(event) => event.stopPropagation()}
+          className="mt-4 space-y-3"
+        >
+          <input type="hidden" name="return_to" value={returnTo} />
+          <input type="hidden" name="client_key" value={editor.clientKey} />
+          <input type="hidden" name="client_name" value={editor.clientName} />
+          <input type="hidden" name="material_config_id" value={editor.configId} />
+          <input type="hidden" name="material_key" value={editor.materialKey} />
+
+          {error ? (
+            <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+              {error}
+            </p>
+          ) : null}
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">
+              Nama material yang ingin dideteksi
+            </label>
+            <input
+              name="material_name"
+              value={editor.materialName}
+              onChange={(event) => onPatch({ materialName: event.currentTarget.value })}
+              placeholder="Contoh: Folding Gate"
+              required
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">
+              Nama pengajuan
+            </label>
+            <input
+              name="submission_name"
+              value={editor.submissionName}
+              onChange={(event) => onPatch({ submissionName: event.currentTarget.value })}
+              placeholder="Contoh: Pengajuan Folding Gate"
+            />
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">
+                Nominal harga standard produk
+              </label>
+              <div className="flex overflow-hidden rounded-xl border border-slate-200 bg-white focus-within:border-blue-700">
+                <span className="inline-flex items-center border-r border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-600">
+                  Rp
+                </span>
+                <input
+                  name="standard_amount"
+                  type="text"
+                  inputMode="numeric"
+                  value={editor.standardAmountRaw ? formatThousands(editor.standardAmountRaw) : ""}
+                  onChange={(event) => onPatch({ standardAmountRaw: normalizeDigits(event.currentTarget.value) })}
+                  placeholder="Contoh: 9.300.000"
+                  className="!rounded-none !border-0 !shadow-none focus:!border-0"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">
+                Nominal minimal
+              </label>
+              <div className="flex overflow-hidden rounded-xl border border-slate-200 bg-white focus-within:border-blue-700">
+                <span className="inline-flex items-center border-r border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-600">
+                  Rp
+                </span>
+                <input
+                  name="nominal_minimal"
+                  type="text"
+                  inputMode="numeric"
+                  value={editor.nominalMinimalRaw ? formatThousands(editor.nominalMinimalRaw) : ""}
+                  onChange={(event) => onPatch({ nominalMinimalRaw: normalizeDigits(event.currentTarget.value) })}
+                  placeholder="Contoh: 5.000.000"
+                  className="!rounded-none !border-0 !shadow-none focus:!border-0"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">
+                Tipe checklist
+              </label>
+              <select
+                name="checklist_type"
+                value={editor.checklistType}
+                onChange={(event) => onPatch({ checklistType: event.currentTarget.value as AmountMode })}
+              >
+                <option value="none">Tanpa nominal</option>
+                <option value="system">Sistem</option>
+                <option value="manual">Manual</option>
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">
+                Status checklist
+              </label>
+              <select
+                name="checklist_status"
+                value={editor.checklistStatus}
+                onChange={(event) => onPatch({ checklistStatus: event.currentTarget.value as ChecklistStatus })}
+              >
+                <option value="auto">Otomatis dari input biaya</option>
+                <option value="pending">Manual belum terpenuhi</option>
+                <option value="fulfilled">Manual terpenuhi</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+            {editor.configId ? (
+              <button
+                type="button"
+                data-ui-button="true"
+                onClick={onDelete}
+                disabled={isSubmitting}
+                className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <span className="btn-icon bg-rose-100 text-rose-700">
+                  <TrashIcon />
+                </span>
+                Hapus Aturan
+              </button>
+            ) : (
+              <span />
+            )}
+            <button
+              type="submit"
+              data-ui-button="true"
+              disabled={isSubmitting}
+              className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <span className="btn-icon bg-white/20 text-white">
+                <SaveIcon />
+              </span>
+              {isSubmitting ? "Menyimpan..." : "Simpan Material"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>,
+    document.body,
   );
 }
 
@@ -322,7 +568,24 @@ export function KmpMaterialMonitorPanel({
 
   const openMaterialEditor = (nextEditor: MaterialEditorState) => {
     setMaterialEditorError("");
-    setMaterialEditor(nextEditor);
+    setMaterialEditor(normalizeMaterialEditorState(nextEditor));
+  };
+
+  const closeMaterialEditor = () => {
+    setMaterialEditorError("");
+    setMaterialEditor(null);
+  };
+
+  const updateMaterialEditor = (patch: Partial<MaterialEditorState>) => {
+    setMaterialEditor((current) => {
+      if (!current) {
+        return current;
+      }
+      return normalizeMaterialEditorState({ ...createBlankMaterialEditor(), ...current, ...patch });
+    });
+    if (materialEditorError) {
+      setMaterialEditorError("");
+    }
   };
 
   const updateMaterialDraft = (
@@ -587,6 +850,7 @@ export function KmpMaterialMonitorPanel({
     );
     return project && detail ? { project, detail } : null;
   }, [projects, selectedDetectedMaterial]);
+  const activeMaterialEditor = normalizeMaterialEditorState(materialEditor);
 
   const submitMaterialEditor = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -594,7 +858,25 @@ export function KmpMaterialMonitorPanel({
     if (isMaterialEditorSubmitting) {
       return;
     }
+    const currentEditor = normalizeMaterialEditorState(materialEditor);
+    if (!currentEditor) {
+      return;
+    }
+    if (!currentEditor.materialName.trim()) {
+      setMaterialEditorError("Nama material wajib diisi.");
+      return;
+    }
     const formData = new FormData(event.currentTarget);
+    formData.set("client_key", currentEditor.clientKey);
+    formData.set("client_name", currentEditor.clientName);
+    formData.set("material_config_id", currentEditor.configId);
+    formData.set("material_key", currentEditor.materialKey);
+    formData.set("material_name", currentEditor.materialName.trim());
+    formData.set("submission_name", currentEditor.submissionName.trim());
+    formData.set("standard_amount", currentEditor.standardAmountRaw);
+    formData.set("nominal_minimal", currentEditor.nominalMinimalRaw);
+    formData.set("checklist_type", currentEditor.checklistType);
+    formData.set("checklist_status", currentEditor.checklistStatus);
     formData.set(OPTIMISTIC_UI_FIELD, "1");
     setMaterialEditorError("");
     setIsMaterialEditorSubmitting(true);
@@ -618,13 +900,14 @@ export function KmpMaterialMonitorPanel({
   };
 
   const deleteMaterialEditor = () => {
-    if (!materialEditor?.configId) {
+    const currentEditor = normalizeMaterialEditorState(materialEditor);
+    if (!currentEditor?.configId) {
       return;
     }
-    const snapshot = materialEditor;
+    const snapshot = currentEditor;
     const formData = new FormData();
-    formData.set("material_config_id", materialEditor.configId);
-    formData.set("client_key", materialEditor.clientKey);
+    formData.set("material_config_id", currentEditor.configId);
+    formData.set("client_key", currentEditor.clientKey);
     formData.set("return_to", returnTo);
     void runOptimisticMutation({
       action: deleteKmpProjectMaterialAction,
@@ -1312,229 +1595,18 @@ export function KmpMaterialMonitorPanel({
         )}
       </OptimisticExpenseCreateForm>
 
-      {typeof document !== "undefined" && materialEditor
-        ? createPortal(
-          <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
-            <button
-              type="button"
-              aria-label="Tutup editor material"
-              onClick={() => {
-                setMaterialEditorError("");
-                setMaterialEditor(null);
-              }}
-              className="absolute inset-0 bg-slate-950/55"
-            />
-            <section
-              className="panel relative z-10 max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto p-5"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-amber-700">
-                    Material Deteksi KMP
-                  </p>
-                  <h3 className="mt-1 text-lg font-black text-slate-950">
-                    {materialEditor.configId ? "Edit Material" : "Tambah Material"}
-                  </h3>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Berlaku untuk semua project klien {materialEditor.clientName}.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  data-ui-button="true"
-                  onClick={() => {
-                    setMaterialEditorError("");
-                    setMaterialEditor(null);
-                  }}
-                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                >
-                  <span className="btn-icon bg-slate-100 text-slate-600">
-                    <CloseIcon />
-                  </span>
-                  Tutup
-                </button>
-              </div>
-
-              <form onSubmit={submitMaterialEditor} onClick={(event) => event.stopPropagation()} className="mt-4 space-y-3">
-                <input type="hidden" name="return_to" value={returnTo} />
-                <input type="hidden" name="client_key" value={materialEditor.clientKey} />
-                <input type="hidden" name="client_name" value={materialEditor.clientName} />
-                <input type="hidden" name="material_config_id" value={materialEditor.configId} />
-                <input type="hidden" name="material_key" value={materialEditor.materialKey} />
-
-                {materialEditorError ? (
-                  <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
-                    {materialEditorError}
-                  </p>
-                ) : null}
-
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-500">
-                    Nama material yang ingin dideteksi
-                  </label>
-                  <input
-                    name="material_name"
-                    value={materialEditor.materialName}
-                      onChange={(event) =>
-                        setMaterialEditor((current) =>
-                          current ? { ...current, materialName: event.currentTarget.value } : current,
-                        )
-                      }
-                    placeholder="Contoh: Folding Gate"
-                    required
-                    autoFocus
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-500">
-                    Nama pengajuan
-                  </label>
-                  <input
-                    name="submission_name"
-                    value={materialEditor.submissionName}
-                      onChange={(event) =>
-                        setMaterialEditor((current) =>
-                          current ? { ...current, submissionName: event.currentTarget.value } : current,
-                        )
-                    }
-                    placeholder="Contoh: Pengajuan Folding Gate"
-                  />
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">
-                      Nominal harga standard produk
-                    </label>
-                    <div className="flex overflow-hidden rounded-xl border border-slate-200 bg-white focus-within:border-blue-700">
-                      <span className="inline-flex items-center border-r border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-600">
-                        Rp
-                      </span>
-                      <input
-                        name="standard_amount"
-                        type="text"
-                        inputMode="numeric"
-                        value={materialEditor.standardAmountRaw ? formatThousands(materialEditor.standardAmountRaw) : ""}
-                        onChange={(event) =>
-                          setMaterialEditor((current) =>
-                            current
-                              ? { ...current, standardAmountRaw: normalizeDigits(event.currentTarget.value) }
-                              : current,
-                          )
-                        }
-                        placeholder="Contoh: 9.300.000"
-                        className="!rounded-none !border-0 !shadow-none focus:!border-0"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">
-                      Nominal minimal
-                    </label>
-                    <div className="flex overflow-hidden rounded-xl border border-slate-200 bg-white focus-within:border-blue-700">
-                      <span className="inline-flex items-center border-r border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-600">
-                        Rp
-                      </span>
-                      <input
-                        name="nominal_minimal"
-                        type="text"
-                        inputMode="numeric"
-                        value={materialEditor.nominalMinimalRaw ? formatThousands(materialEditor.nominalMinimalRaw) : ""}
-                        onChange={(event) =>
-                          setMaterialEditor((current) =>
-                            current
-                              ? { ...current, nominalMinimalRaw: normalizeDigits(event.currentTarget.value) }
-                              : current,
-                          )
-                        }
-                        placeholder="Contoh: 5.000.000"
-                        className="!rounded-none !border-0 !shadow-none focus:!border-0"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">
-                      Tipe checklist
-                    </label>
-                    <select
-                      name="checklist_type"
-                      value={materialEditor.checklistType}
-                      onChange={(event) =>
-                        setMaterialEditor((current) =>
-                          current
-                            ? { ...current, checklistType: event.currentTarget.value as AmountMode }
-                            : current,
-                        )
-                      }
-                    >
-                      <option value="none">Tanpa nominal</option>
-                      <option value="system">Sistem</option>
-                      <option value="manual">Manual</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-500">
-                      Status checklist
-                    </label>
-                    <select
-                      name="checklist_status"
-                      value={materialEditor.checklistStatus}
-                      onChange={(event) =>
-                        setMaterialEditor((current) =>
-                          current
-                            ? { ...current, checklistStatus: event.currentTarget.value as ChecklistStatus }
-                            : current,
-                        )
-                      }
-                    >
-                      <option value="auto">Otomatis dari input biaya</option>
-                      <option value="pending">Manual belum terpenuhi</option>
-                      <option value="fulfilled">Manual terpenuhi</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
-                  {materialEditor.configId ? (
-                    <button
-                      type="button"
-                      data-ui-button="true"
-                      onClick={deleteMaterialEditor}
-                      disabled={isMaterialEditorSubmitting}
-                      className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 hover:bg-rose-100"
-                    >
-                      <span className="btn-icon bg-rose-100 text-rose-700">
-                        <TrashIcon />
-                      </span>
-                      Hapus Aturan
-                    </button>
-                  ) : (
-                    <span />
-                  )}
-                  <button
-                    type="submit"
-                    data-ui-button="true"
-                    disabled={isMaterialEditorSubmitting}
-                    className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <span className="btn-icon bg-white/20 text-white">
-                      <SaveIcon />
-                    </span>
-                    {isMaterialEditorSubmitting ? "Menyimpan..." : "Simpan Material"}
-                  </button>
-                </div>
-              </form>
-            </section>
-          </div>,
-          document.body,
-        )
-        : null}
+      {activeMaterialEditor ? (
+        <MaterialEditorModal
+          editor={activeMaterialEditor}
+          error={materialEditorError}
+          isSubmitting={isMaterialEditorSubmitting}
+          returnTo={returnTo}
+          onClose={closeMaterialEditor}
+          onDelete={deleteMaterialEditor}
+          onPatch={updateMaterialEditor}
+          onSubmit={submitMaterialEditor}
+        />
+      ) : null}
 
       {typeof document !== "undefined" && activeDetectedMaterial
         ? createPortal(

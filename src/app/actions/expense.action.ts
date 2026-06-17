@@ -1204,6 +1204,7 @@ type KmpMaterialChecklistRow = {
   submissionName: string;
   amountMode: "none" | "system" | "manual";
   amount: number;
+  standardAmount: number;
 };
 
 const SUPABASE_UUID_PATTERN =
@@ -1347,7 +1348,11 @@ function getUnavailableProjectMessage(rows: KmpMaterialChecklistRow[], unavailab
   return `Checklist belum disimpan karena data project desa ${preview}${suffix} sudah tidak tersedia. Muat ulang halaman lalu coba lagi.`;
 }
 
-function getKmpMaterialSystemAmount(materialKey: string) {
+function getKmpMaterialSystemAmount(materialKey: string, standardAmount = 0) {
+  if (standardAmount > 0) {
+    return standardAmount;
+  }
+
   const rule = getKmpCianjurMaterialRule(materialKey);
   if (!rule) {
     return 0;
@@ -1383,6 +1388,27 @@ async function createKmpMaterialChecklistEntries(
   const invalidManualAmountLabels: string[] = [];
   const invalidRows: string[] = [];
   const rowMap = new Map<string, KmpMaterialChecklistRow>();
+  const { getKmpCianjurMissingMaterialReport } = await import("@/lib/data");
+  const checklistReport = await getKmpCianjurMissingMaterialReport();
+  const materialByProjectAndKey = new Map<
+    string,
+    {
+      materialKey: string;
+      materialLabel: string;
+      materialName: string;
+      standardAmount: number;
+    }
+  >();
+  for (const project of checklistReport.projects) {
+    for (const material of project.materialProgress) {
+      materialByProjectAndKey.set(`${project.projectId}:${material.materialKey}`, {
+        materialKey: material.materialKey,
+        materialLabel: material.materialLabel,
+        materialName: material.materialName,
+        standardAmount: material.standardAmount,
+      });
+    }
+  }
 
   for (const item of parsedRows) {
     if (!item || typeof item !== "object") {
@@ -1394,8 +1420,9 @@ async function createKmpMaterialChecklistEntries(
     const projectId = getStringField(entry.projectId);
     const projectName = getStringField(entry.projectName);
     const materialKey = getStringField(entry.materialKey);
-    const rule = getKmpCianjurMaterialRule(materialKey);
-    if (!projectId || !rule) {
+    const reportMaterial = materialByProjectAndKey.get(`${projectId}:${materialKey}`);
+    const staticRule = getKmpCianjurMaterialRule(materialKey);
+    if (!projectId || (!reportMaterial && !staticRule)) {
       invalidRows.push(projectName || materialKey || projectId || "Baris material");
       continue;
     }
@@ -1403,15 +1430,23 @@ async function createKmpMaterialChecklistEntries(
     const rawAmountMode = getStringField(entry.amountMode);
     const amountMode: "none" | "system" | "manual" =
       rawAmountMode === "system" || rawAmountMode === "manual" ? rawAmountMode : "none";
-    const materialName = getStringField(entry.materialName) || rule.label;
+    const materialLabel = reportMaterial?.materialLabel ?? staticRule?.label ?? materialKey;
+    const standardAmount = Math.max(0, reportMaterial?.standardAmount ?? 0);
+    const materialName = getStringField(entry.materialName) || reportMaterial?.materialName || materialLabel;
     const submissionName = getStringField(entry.submissionName);
     let amount = 0;
 
     if (amountMode === "system") {
-      const options = getKmpCianjurMaterialAmountOptions(rule);
       const requestedSystemAmount = parseNonNegativeAmount(entry.systemAmount);
-      const selectedOption = options.find((option) => option.amount === requestedSystemAmount);
-      amount = selectedOption?.amount ?? (requestedSystemAmount || (options[0]?.amount ?? 0));
+      if (standardAmount > 0) {
+        amount = requestedSystemAmount > 0 ? requestedSystemAmount : standardAmount;
+      } else if (staticRule) {
+        const options = getKmpCianjurMaterialAmountOptions(staticRule);
+        const selectedOption = options.find((option) => option.amount === requestedSystemAmount);
+        amount = selectedOption?.amount ?? (requestedSystemAmount || (options[0]?.amount ?? 0));
+      } else {
+        amount = requestedSystemAmount;
+      }
     } else if (amountMode === "manual") {
       amount = parseNonNegativeAmount(entry.manualAmount);
       if (amount <= 0) {
@@ -1424,11 +1459,12 @@ async function createKmpMaterialChecklistEntries(
       projectId,
       projectName,
       materialKey,
-      materialLabel: rule.label,
+      materialLabel,
       materialName,
       submissionName,
       amountMode,
       amount,
+      standardAmount,
     });
   }
 
@@ -1566,7 +1602,10 @@ async function createKmpMaterialChecklistEntries(
           }
 
           const sourceRow = rows[index];
-          const fallbackAmount = getKmpMaterialSystemAmount(sourceRow?.materialKey ?? "");
+          const fallbackAmount = getKmpMaterialSystemAmount(
+            sourceRow?.materialKey ?? "",
+            sourceRow?.standardAmount ?? 0,
+          );
           if (fallbackAmount <= 0) {
             return mutationRow;
           }

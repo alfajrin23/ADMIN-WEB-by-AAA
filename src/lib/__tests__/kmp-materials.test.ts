@@ -7,6 +7,7 @@ import {
   buildKmpCianjurMaterialRequesterName,
   buildKmpCianjurMissingMaterialReport,
 } from "@/lib/data";
+import type { KmpClientMaterialConfig } from "@/lib/data";
 import type { ExpenseEntry, Project } from "@/lib/types";
 
 const project: Project = {
@@ -80,6 +81,37 @@ describe("KMP Cianjur material checklist", () => {
     );
 
     expect(report.projects[0]?.detectedMaterials).toContain("Cat");
+  });
+
+  it("accepts an explicit custom material checklist without nominal", () => {
+    const customMaterial: KmpClientMaterialConfig = {
+      id: "custom-1",
+      clientKey: "kmp cianjur",
+      clientName: "KMP Cianjur",
+      materialKey: "custom_plafon",
+      materialName: "Custom Plafon",
+      submissionName: null,
+      standardAmount: 0,
+      minimumAmount: 0,
+      checklistType: "none",
+      checklistStatus: "auto",
+      createdAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-01T00:00:00.000Z",
+    };
+    const report = buildKmpCianjurMissingMaterialReport(
+      [project],
+      [
+        createExpense({
+          id: "custom-checklist",
+          description: "Custom Plafon",
+          usageInfo: "Checklist Material KMP Cianjur - Custom Plafon - tanpa nominal",
+          amount: 0,
+        }),
+      ],
+      [customMaterial],
+    );
+
+    expect(report.projects[0]?.detectedMaterials).toContain("Custom Plafon");
   });
 
   it("excludes generated checklist rows when resolving the majority requester", () => {

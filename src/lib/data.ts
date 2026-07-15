@@ -1527,6 +1527,7 @@ function buildKmpCianjurHokProjectPresets(projects: Project[], expenses: Expense
 type KmpCianjurMissingMaterialProjectReport = {
   projectId: string;
   projectName: string;
+  projectCode: string | null;
   clientName: string | null;
   detectedMaterials: string[];
   detectedMaterialDetails: KmpCianjurDetectedMaterialDetail[];
@@ -2130,6 +2131,7 @@ export function buildKmpCianjurMissingMaterialReport(
     return {
       projectId: project.id,
       projectName: project.name,
+      projectCode: project.code,
       clientName: project.clientName,
       detectedMaterials,
       detectedMaterialDetails,

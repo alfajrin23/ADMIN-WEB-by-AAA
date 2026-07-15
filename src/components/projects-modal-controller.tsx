@@ -210,6 +210,7 @@ export function ProjectsModalController({
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [kmpReport, setKmpReport] = useState<KmpMaterialReport | null>(null);
   const [kmpError, setKmpError] = useState("");
+  const [isKmpLoading, setIsKmpLoading] = useState(false);
   const expenseRequestRef = useRef(0);
   const detailRequestRef = useRef(0);
   const kmpRequestRef = useRef(0);
@@ -392,12 +393,13 @@ export function ProjectsModalController({
 
   const loadKmpReport = useCallback((force = false) => {
     if (kmpReport && !force) {
-      return;
+      return Promise.resolve();
     }
     const requestId = kmpRequestRef.current + 1;
     kmpRequestRef.current = requestId;
     setKmpError("");
-    getKmpMaterialReportModalDataAction()
+    setIsKmpLoading(true);
+    return getKmpMaterialReportModalDataAction()
       .then((data) => {
         if (kmpRequestRef.current === requestId) {
           setKmpReport(data);
@@ -406,6 +408,11 @@ export function ProjectsModalController({
       .catch(() => {
         if (kmpRequestRef.current === requestId) {
           setKmpError("Gagal memuat monitoring material KMP.");
+        }
+      })
+      .finally(() => {
+        if (kmpRequestRef.current === requestId) {
+          setIsKmpLoading(false);
         }
       });
   }, [kmpReport]);
@@ -705,17 +712,24 @@ export function ProjectsModalController({
     }));
 
     return (
-      <KmpMaterialMonitorPanel
-        checklistLabels={kmpReport.checklistLabels}
-        totalProjects={kmpReport.totalProjects}
-        completeProjectCount={kmpReport.completeProjectCount}
-        incompleteProjectCount={kmpReport.incompleteProjectCount}
-        projects={projectsWithHref}
-        canEdit={canEdit}
-        returnTo={openKmpMaterialReportHref}
-        today={today}
-        onDataChanged={() => loadKmpReport(true)}
-      />
+      <>
+        {isKmpLoading ? (
+          <p className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">
+            Memperbarui monitoring material dari database...
+          </p>
+        ) : null}
+        <KmpMaterialMonitorPanel
+          checklistLabels={kmpReport.checklistLabels}
+          totalProjects={kmpReport.totalProjects}
+          completeProjectCount={kmpReport.completeProjectCount}
+          incompleteProjectCount={kmpReport.incompleteProjectCount}
+          projects={projectsWithHref}
+          canEdit={canEdit}
+          returnTo={openKmpMaterialReportHref}
+          today={today}
+          onDataChanged={() => loadKmpReport(true)}
+        />
+      </>
     );
   };
 

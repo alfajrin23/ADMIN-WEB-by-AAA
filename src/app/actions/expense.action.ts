@@ -70,6 +70,7 @@ import { activeDataSource } from "@/lib/storage";
 import {
   getSupabaseAttendanceSelect,
   getSupabaseServerClient,
+  isSupabaseWriteConfigured,
   omitSpecialistTeamNameField,
   withSupabaseSpecialistTeamNameFallback,
 } from "@/lib/supabase";
@@ -516,6 +517,459 @@ export async function deleteKmpProjectMaterialAction(formData: FormData) {
     return optimisticActionSuccess("Material deteksi KMP berhasil dihapus.");
   }
   redirect(withReturnMessage(returnTo, "success", "Material deteksi KMP berhasil dihapus."));
+}
+
+type BulkKmpProjectMaterialInput = {
+  material_id?: unknown;
+  material_key?: unknown;
+  master_material_id?: unknown;
+  materialId?: unknown;
+  materialKey?: unknown;
+  masterMaterialId?: unknown;
+  material_name?: unknown;
+  materialName?: unknown;
+  material_label?: unknown;
+  materialLabel?: unknown;
+  project_ids?: unknown;
+  projectIds?: unknown;
+  nama_pengajuan?: unknown;
+  namaPengajuan?: unknown;
+  submission_name?: unknown;
+  submissionName?: unknown;
+  nominal?: unknown;
+  expense_date?: unknown;
+  expenseDate?: unknown;
+};
+
+type BulkKmpProjectMaterialIssue = {
+  project_id: string;
+  project_name?: string;
+  reason: string;
+};
+
+export type BulkKmpProjectMaterialResult = {
+  success: boolean;
+  inserted_count: number;
+  skipped_count: number;
+  failed_count: number;
+  inserted_project_ids: string[];
+  skipped_projects: BulkKmpProjectMaterialIssue[];
+  failed_projects: BulkKmpProjectMaterialIssue[];
+  message: string;
+};
+
+const BULK_KMP_MATERIAL_SUBMISSION_TOKEN = "master-material-global";
+const BULK_KMP_MATERIAL_SUBMISSION_NAME_MAX_LENGTH = 160;
+
+function getBulkInputText(value: unknown) {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return "";
+}
+
+function getBulkProjectIds(input: BulkKmpProjectMaterialInput) {
+  const rawProjectIds = Array.isArray(input.project_ids)
+    ? input.project_ids
+    : Array.isArray(input.projectIds)
+      ? input.projectIds
+      : [];
+  return Array.from(
+    new Set(
+      rawProjectIds
+        .map((projectId) => getBulkInputText(projectId))
+        .filter((projectId) => projectId.length > 0),
+    ),
+  );
+}
+
+function createBulkKmpMaterialResult(params: {
+  insertedProjectIds?: string[];
+  skippedProjects?: BulkKmpProjectMaterialIssue[];
+  failedProjects?: BulkKmpProjectMaterialIssue[];
+  message: string;
+  success?: boolean;
+}): BulkKmpProjectMaterialResult {
+  const insertedProjectIds = params.insertedProjectIds ?? [];
+  const skippedProjects = params.skippedProjects ?? [];
+  const failedProjects = params.failedProjects ?? [];
+  return {
+    success: params.success ?? failedProjects.length === 0,
+    inserted_count: insertedProjectIds.length,
+    skipped_count: skippedProjects.length,
+    failed_count: failedProjects.length,
+    inserted_project_ids: insertedProjectIds,
+    skipped_projects: skippedProjects,
+    failed_projects: failedProjects,
+    message: params.message,
+  };
+}
+
+function getBulkKmpMaterialRequestError(input: {
+  materialKey: string;
+  projectIds: string[];
+  submissionName: string;
+  nominal: number;
+}) {
+  if (!input.materialKey) {
+    return "Material yang akan ditambahkan tidak valid.";
+  }
+  if (input.projectIds.length === 0) {
+    return "Pilih minimal satu project terlebih dahulu.";
+  }
+  if (!input.submissionName) {
+    return "Nama pengajuan wajib diisi.";
+  }
+  if (input.submissionName.length > BULK_KMP_MATERIAL_SUBMISSION_NAME_MAX_LENGTH) {
+    return `Nama pengajuan maksimal ${BULK_KMP_MATERIAL_SUBMISSION_NAME_MAX_LENGTH} karakter.`;
+  }
+  if (!Number.isSafeInteger(input.nominal) || input.nominal <= 0) {
+    return "Nominal wajib diisi dan harus lebih besar dari 0.";
+  }
+  return "";
+}
+
+export async function bulkInsertKmpProjectMaterialAction(
+  input: BulkKmpProjectMaterialInput,
+): Promise<BulkKmpProjectMaterialResult> {
+  const actor = await requireEditorActionUser();
+  const materialKey =
+    getBulkInputText(input.material_key) ||
+    getBulkInputText(input.materialKey) ||
+    getBulkInputText(input.material_id) ||
+    getBulkInputText(input.materialId) ||
+    getBulkInputText(input.master_material_id) ||
+    getBulkInputText(input.masterMaterialId);
+  const requestedMaterialName =
+    getBulkInputText(input.material_name) ||
+    getBulkInputText(input.materialName) ||
+    getBulkInputText(input.material_label) ||
+    getBulkInputText(input.materialLabel);
+  const projectIds = getBulkProjectIds(input);
+  const submissionName =
+    getBulkInputText(input.nama_pengajuan) ||
+    getBulkInputText(input.namaPengajuan) ||
+    getBulkInputText(input.submission_name) ||
+    getBulkInputText(input.submissionName);
+  const nominal = parseNonNegativeAmount(input.nominal);
+  const requestError = getBulkKmpMaterialRequestError({
+    materialKey,
+    projectIds,
+    submissionName,
+    nominal,
+  });
+  if (requestError) {
+    return createBulkKmpMaterialResult({
+      failedProjects: projectIds.map((projectId) => ({
+        project_id: projectId,
+        reason: requestError,
+      })),
+      message: requestError,
+      success: false,
+    });
+  }
+
+  revalidateExpenseCache();
+  revalidateProjectCache();
+  const { getKmpCianjurMissingMaterialReport } = await import("@/lib/data");
+  const report = await getKmpCianjurMissingMaterialReport();
+  const staticRule = getKmpCianjurMaterialRule(materialKey);
+  const reportProjectById = new Map(report.projects.map((project) => [project.projectId, project] as const));
+  const materialByProjectId = new Map<
+    string,
+    (typeof report.projects)[number]["materialProgress"][number]
+  >();
+
+  for (const project of report.projects) {
+    const materialProgress = project.materialProgress.find((material) => material.materialKey === materialKey);
+    if (materialProgress) {
+      materialByProjectId.set(project.projectId, materialProgress);
+    }
+  }
+
+  const materialSample = Array.from(materialByProjectId.values())[0];
+  if (!materialSample && !staticRule) {
+    return createBulkKmpMaterialResult({
+      failedProjects: projectIds.map((projectId) => ({
+        project_id: projectId,
+        project_name: reportProjectById.get(projectId)?.projectName,
+        reason: "Material tidak tersedia pada master material.",
+      })),
+      message: "Material tidak tersedia pada master material.",
+      success: false,
+    });
+  }
+
+  const unavailableProjectIds = await findUnavailableKmpMaterialProjectIds(projectIds);
+  const unavailableProjectIdSet = new Set(unavailableProjectIds);
+  const failedProjects: BulkKmpProjectMaterialIssue[] = [];
+  const skippedProjects: BulkKmpProjectMaterialIssue[] = [];
+  const insertCandidates: Array<{
+    project: (typeof report.projects)[number];
+    material: (typeof report.projects)[number]["materialProgress"][number];
+  }> = [];
+
+  for (const projectId of projectIds) {
+    const project = reportProjectById.get(projectId);
+    const material = materialByProjectId.get(projectId);
+    if (unavailableProjectIdSet.has(projectId)) {
+      failedProjects.push({
+        project_id: projectId,
+        project_name: project?.projectName,
+        reason: "Project sudah tidak tersedia.",
+      });
+      continue;
+    }
+    if (!project) {
+      failedProjects.push({
+        project_id: projectId,
+        reason: "Project tidak termasuk ruang lingkup material ini.",
+      });
+      continue;
+    }
+    if (!material) {
+      failedProjects.push({
+        project_id: projectId,
+        project_name: project.projectName,
+        reason: "Material tidak berlaku pada project ini.",
+      });
+      continue;
+    }
+    if (material.isFulfilled) {
+      skippedProjects.push({
+        project_id: projectId,
+        project_name: project.projectName,
+        reason: "Material sudah tersedia pada project",
+      });
+      continue;
+    }
+    insertCandidates.push({ project, material });
+  }
+
+  if (insertCandidates.length === 0) {
+    const message = skippedProjects.length > 0 && failedProjects.length === 0
+      ? "Tidak ada project baru yang ditambahkan karena material sudah tersedia."
+      : "Tidak ada project valid yang bisa ditambahkan.";
+    return createBulkKmpMaterialResult({
+      skippedProjects,
+      failedProjects,
+      message,
+      success: failedProjects.length === 0,
+    });
+  }
+
+  const expenseDate = resolveChecklistExpenseDate(
+    getBulkInputText(input.expense_date) || getBulkInputText(input.expenseDate),
+  );
+  const mutationRows = insertCandidates.map(({ project, material }) => {
+    const materialLabel = material.materialLabel || staticRule?.label || requestedMaterialName || materialKey;
+    const materialName = material.materialName || requestedMaterialName || materialLabel;
+    return {
+      id: createExpenseMutationId({
+        mode: "kmp_material_check",
+        submissionToken: BULK_KMP_MATERIAL_SUBMISSION_TOKEN,
+        projectId: project.projectId,
+        rowKey: material.materialKey,
+      }),
+      project_id: project.projectId,
+      category: "material",
+      specialist_type: null,
+      requester_name: submissionName,
+      description: materialName,
+      recipient_name: null,
+      quantity: 1,
+      unit_label: null,
+      usage_info: `Checklist Material KMP Cianjur - ${materialLabel} - nominal bulk`,
+      unit_price: 0,
+      amount: nominal,
+      expense_date: expenseDate,
+    };
+  });
+
+  if (activeDataSource === "excel") {
+    for (const row of mutationRows) {
+      insertExcelExpense({
+        project_id: row.project_id,
+        category: "material",
+        specialist_type: row.specialist_type,
+        requester_name: row.requester_name,
+        description: row.description,
+        recipient_name: row.recipient_name,
+        quantity: row.quantity,
+        unit_label: row.unit_label,
+        usage_info: row.usage_info,
+        unit_price: row.unit_price,
+        amount: row.amount,
+        expense_date: row.expense_date,
+      });
+    }
+  } else if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      return createBulkKmpMaterialResult({
+        skippedProjects,
+        failedProjects: [
+          ...failedProjects,
+          ...insertCandidates.map(({ project }) => ({
+            project_id: project.projectId,
+            project_name: project.projectName,
+            reason: "Supabase belum terkonfigurasi.",
+          })),
+        ],
+        message: "Supabase belum terkonfigurasi.",
+        success: false,
+      });
+    }
+    if (!isSupabaseWriteConfigured) {
+      const message = getSupabaseMutationErrorMessage("Gagal menambahkan material ke project.");
+      return createBulkKmpMaterialResult({
+        skippedProjects,
+        failedProjects: [
+          ...failedProjects,
+          ...insertCandidates.map(({ project }) => ({
+            project_id: project.projectId,
+            project_name: project.projectName,
+            reason: message,
+          })),
+        ],
+        message,
+        success: false,
+      });
+    }
+
+    for (const chunk of chunkArray(mutationRows, 100)) {
+      const { error } = await supabase.from("project_expenses").upsert(chunk, {
+        onConflict: "id",
+      });
+      if (error) {
+        const message = getKmpMaterialMutationErrorMessage(error);
+        console.warn("[kmp-material] gagal bulk insert master material.", error.message);
+        return createBulkKmpMaterialResult({
+          skippedProjects,
+          failedProjects: [
+            ...failedProjects,
+            ...insertCandidates.map(({ project }) => ({
+              project_id: project.projectId,
+              project_name: project.projectName,
+              reason: message,
+            })),
+          ],
+          message,
+          success: false,
+        });
+      }
+    }
+  } else if (activeDataSource === "firebase") {
+    const firestore = getFirestoreServerClient();
+    if (!firestore) {
+      return createBulkKmpMaterialResult({
+        skippedProjects,
+        failedProjects: [
+          ...failedProjects,
+          ...insertCandidates.map(({ project }) => ({
+            project_id: project.projectId,
+            project_name: project.projectName,
+            reason: "Firebase belum terkonfigurasi.",
+          })),
+        ],
+        message: "Firebase belum terkonfigurasi.",
+        success: false,
+      });
+    }
+    await runFirebaseWriteSafely(async () => {
+      let batch = firestore.batch();
+      let count = 0;
+      for (const row of mutationRows) {
+        batch.set(
+          firestore.collection("project_expenses").doc(row.id),
+          {
+            id: row.id,
+            project_id: row.project_id,
+            category: row.category,
+            specialist_type: row.specialist_type,
+            requester_name: row.requester_name,
+            description: row.description,
+            recipient_name: row.recipient_name,
+            quantity: row.quantity,
+            unit_label: row.unit_label,
+            usage_info: row.usage_info,
+            unit_price: row.unit_price,
+            amount: row.amount,
+            expense_date: row.expense_date,
+            created_at: createTimestamp(),
+          },
+          { merge: true },
+        );
+        count += 1;
+        if (count >= 400) {
+          await batch.commit();
+          batch = firestore.batch();
+          count = 0;
+        }
+      }
+      if (count > 0) {
+        await batch.commit();
+      }
+    });
+  } else {
+    const message = "Database belum aktif, material tidak dapat disimpan.";
+    return createBulkKmpMaterialResult({
+      skippedProjects,
+      failedProjects: [
+        ...failedProjects,
+        ...insertCandidates.map(({ project }) => ({
+          project_id: project.projectId,
+          project_name: project.projectName,
+          reason: message,
+        })),
+      ],
+      message,
+      success: false,
+    });
+  }
+
+  const insertedProjectIds = mutationRows.map((row) => row.project_id);
+  const completedProjectIds = await completeKmpCianjurProjectsWithFullMaterialProgress();
+  revalidateProjectPages();
+  revalidateProjectCache();
+  revalidateExpenseCache();
+  revalidatePath("/logs");
+  queueActivityLog({
+    actor,
+    actionType: "create",
+    module: "expense",
+    description: `Menambah material ${materialSample?.materialLabel ?? staticRule?.label ?? materialKey} ke ${insertedProjectIds.length} project.`,
+    payload: {
+      expense_mode: "kmp_material_bulk_master",
+      expense_ids: mutationRows.map((row) => row.id),
+      project_ids: insertedProjectIds,
+      project_names: insertCandidates.map(({ project }) => project.projectName),
+      skipped_project_ids: skippedProjects.map((project) => project.project_id),
+      failed_project_ids: failedProjects.map((project) => project.project_id),
+      material_key: materialKey,
+      material_name: materialSample?.materialName ?? requestedMaterialName,
+      requester_name: submissionName,
+      nominal,
+      expense_date: expenseDate,
+      completed_project_ids: completedProjectIds,
+      total_amount: mutationRows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0),
+    },
+  });
+
+  const message =
+    skippedProjects.length > 0 || failedProjects.length > 0
+      ? `${insertedProjectIds.length} project berhasil ditambahkan, ${skippedProjects.length} dilewati, dan ${failedProjects.length} gagal.`
+      : `Material berhasil ditambahkan ke ${insertedProjectIds.length} project.`;
+
+  return createBulkKmpMaterialResult({
+    insertedProjectIds,
+    skippedProjects,
+    failedProjects,
+    message,
+  });
 }
 
 export async function getKmpMaterialDuplicateDetectionAction(projectId: string, input: string) {

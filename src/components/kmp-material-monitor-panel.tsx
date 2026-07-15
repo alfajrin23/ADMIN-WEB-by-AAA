@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { createPortal, useFormStatus } from "react-dom";
 import {
+  bulkInsertKmpProjectMaterialAction,
   createExpenseAction,
   deleteKmpProjectMaterialAction,
   syncKmpMaterialProjectStatusesAction,
@@ -27,6 +28,7 @@ import { OPTIMISTIC_UI_FIELD } from "@/lib/optimistic-ui";
 type KmpMaterialMonitorProject = {
   projectId: string;
   projectName: string;
+  projectCode: string | null;
   clientName: string | null;
   detectedMaterials: string[];
   detectedMaterialDetails: Array<{
@@ -89,12 +91,13 @@ type KmpMaterialMonitorPanelProps = {
   canEdit: boolean;
   returnTo: string;
   today: string;
-  onDataChanged?: () => void;
+  onDataChanged?: () => void | Promise<void>;
 };
 
 type StatusFilter = "all" | "incomplete" | "complete" | "most-detected";
 type AmountMode = "none" | "system" | "manual";
 type ChecklistStatus = "auto" | "pending" | "fulfilled";
+type MasterMaterialDetailMode = "missing" | "detected";
 
 type MaterialDraft = {
   selected: boolean;
@@ -129,9 +132,23 @@ type MaterialEditorState = {
   checklistStatus: ChecklistStatus;
 };
 
+type MasterMaterialRow = {
+  detail: KmpMaterialDetail;
+  projectCount: number;
+  missingCount: number;
+  detectedCount: number;
+};
+
+type MasterMaterialProjectRow = {
+  project: KmpMaterialMonitorProject;
+  detail: KmpMaterialDetail;
+};
+
 const KMP_CIANJUR_CLIENT_KEY = "kmp cianjur";
 const KMP_CIANJUR_CLIENT_NAME = "KMP Cianjur";
 const PROJECT_RENDER_BATCH_SIZE = 24;
+const MASTER_MATERIAL_DETAIL_PAGE_SIZE = 12;
+const BULK_SUBMISSION_NAME_MAX_LENGTH = 160;
 
 const materialRuleByLabel: ReadonlyMap<string, KmpMaterialChecklistRule> = new Map(
   KMP_CIANJUR_MATERIAL_CHECKLIST.map((item) => [item.label, item]),
@@ -175,6 +192,45 @@ function normalizeDigits(value: string) {
 
 function formatThousands(value: string) {
   return value.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+}
+
+function getProjectLocationLabel(project: KmpMaterialMonitorProject) {
+  return project.projectCode?.trim() || project.projectName;
+}
+
+function getMasterMaterialRowSearchText(row: MasterMaterialProjectRow) {
+  return normalizeText(
+    [
+      row.project.projectName,
+      row.project.projectCode ?? "",
+      row.project.clientName ?? "",
+      row.detail.materialLabel,
+      row.detail.materialName,
+      row.detail.submissionName ?? "",
+    ].join(" "),
+  );
+}
+
+function getBulkResultMessage(input: {
+  materialName: string;
+  insertedCount: number;
+  skippedCount: number;
+  failedCount: number;
+}) {
+  if (input.insertedCount > 0 && input.skippedCount === 0 && input.failedCount === 0) {
+    return `Material ${input.materialName} berhasil ditambahkan ke ${input.insertedCount} project.`;
+  }
+  if (input.insertedCount > 0) {
+    const skippedText = input.skippedCount > 0
+      ? ` dan ${input.skippedCount} project dilewati karena material sudah tersedia`
+      : "";
+    const failedText = input.failedCount > 0 ? `, ${input.failedCount} project gagal diproses` : "";
+    return `${input.insertedCount} project berhasil ditambahkan${skippedText}${failedText}.`;
+  }
+  if (input.skippedCount > 0 && input.failedCount === 0) {
+    return `${input.skippedCount} project dilewati karena material sudah tersedia.`;
+  }
+  return `${input.failedCount} project gagal diproses.`;
 }
 
 function getMaterialDraftKey(projectId: string, label: string, materialKey?: string) {
@@ -542,6 +598,26 @@ export function KmpMaterialMonitorPanel({
     projectId: string;
     materialKey: string;
   } | null>(null);
+  const [masterDetailModal, setMasterDetailModal] = useState<{
+    mode: MasterMaterialDetailMode;
+    materialKey: string;
+  } | null>(null);
+  const [masterDetailSearch, setMasterDetailSearch] = useState("");
+  const [masterDetailLocationFilter, setMasterDetailLocationFilter] = useState("");
+  const [masterDetailPage, setMasterDetailPage] = useState(1);
+  const [selectedBulkProjectIds, setSelectedBulkProjectIds] = useState<string[]>([]);
+  const [isBulkFormVisible, setIsBulkFormVisible] = useState(false);
+  const [bulkSubmissionName, setBulkSubmissionName] = useState("");
+  const [bulkNominalRaw, setBulkNominalRaw] = useState("");
+  const [bulkError, setBulkError] = useState("");
+  const [bulkNotice, setBulkNotice] = useState<{
+    type: "success" | "info";
+    message: string;
+  } | null>(null);
+  const [isBulkConfirmOpen, setIsBulkConfirmOpen] = useState(false);
+  const [isBulkSubmitting, setIsBulkSubmitting] = useState(false);
+  const [isBulkRefreshing, setIsBulkRefreshing] = useState(false);
+  const [showAllSelectedBulkProjects, setShowAllSelectedBulkProjects] = useState(false);
   const [materialEditor, setMaterialEditor] = useState<MaterialEditorState | null>(null);
   const [materialEditorError, setMaterialEditorError] = useState("");
   const [isMaterialEditorSubmitting, setIsMaterialEditorSubmitting] = useState(false);
@@ -726,19 +802,10 @@ export function KmpMaterialMonitorPanel({
       });
   }, [debouncedSearchQuery, projects, statusFilter]);
 
-  const masterMaterialRows = useMemo(() => {
-    type MasterMaterialDetail = KmpMaterialMonitorProject["missingMaterialDetails"][number];
-    const rowByKey = new Map<
-      string,
-      {
-        detail: MasterMaterialDetail;
-        projectCount: number;
-        missingCount: number;
-        detectedCount: number;
-      }
-    >();
+  const masterMaterialRows = useMemo<MasterMaterialRow[]>(() => {
+    const rowByKey = new Map<string, MasterMaterialRow>();
 
-    const addDetail = (detail: MasterMaterialDetail, state: "missing" | "detected") => {
+    const addDetail = (detail: KmpMaterialDetail, state: "missing" | "detected") => {
       const current = rowByKey.get(detail.materialKey);
       if (!current) {
         rowByKey.set(detail.materialKey, {
@@ -787,6 +854,89 @@ export function KmpMaterialMonitorPanel({
       })
       .sort((a, b) => a.detail.materialLabel.localeCompare(b.detail.materialLabel, "id-ID"));
   }, [masterMaterialQuery, projects]);
+
+  const activeMasterMaterialRow = useMemo(() => {
+    if (!masterDetailModal) {
+      return null;
+    }
+    return masterMaterialRows.find((row) => row.detail.materialKey === masterDetailModal.materialKey) ?? null;
+  }, [masterDetailModal, masterMaterialRows]);
+
+  const activeMasterMaterialProjectRows = useMemo<MasterMaterialProjectRow[]>(() => {
+    if (!masterDetailModal) {
+      return [];
+    }
+
+    return projects
+      .map((project) => {
+        const detail = masterDetailModal.mode === "missing"
+          ? project.missingMaterialDetails.find((item) => item.materialKey === masterDetailModal.materialKey)
+          : project.detectedMaterialDetails.find((item) => item.materialKey === masterDetailModal.materialKey);
+        return detail ? { project, detail } : null;
+      })
+      .filter((row): row is MasterMaterialProjectRow => Boolean(row))
+      .sort((a, b) => a.project.projectName.localeCompare(b.project.projectName, "id-ID"));
+  }, [masterDetailModal, projects]);
+
+  const masterDetailLocationOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          activeMasterMaterialProjectRows
+            .map((row) => getProjectLocationLabel(row.project))
+            .filter((label) => label.trim().length > 0),
+        ),
+      ).sort((a, b) => a.localeCompare(b, "id-ID")),
+    [activeMasterMaterialProjectRows],
+  );
+
+  const filteredMasterDetailRows = useMemo(() => {
+    const normalizedSearch = normalizeText(masterDetailSearch);
+    return activeMasterMaterialProjectRows.filter((row) => {
+      const matchesSearch = !normalizedSearch || getMasterMaterialRowSearchText(row).includes(normalizedSearch);
+      const matchesLocation =
+        !masterDetailLocationFilter || getProjectLocationLabel(row.project) === masterDetailLocationFilter;
+      return matchesSearch && matchesLocation;
+    });
+  }, [activeMasterMaterialProjectRows, masterDetailLocationFilter, masterDetailSearch]);
+
+  const masterDetailPageCount = Math.max(1, Math.ceil(filteredMasterDetailRows.length / MASTER_MATERIAL_DETAIL_PAGE_SIZE));
+  const safeMasterDetailPage = Math.min(masterDetailPage, masterDetailPageCount);
+  const pagedMasterDetailRows = useMemo(
+    () =>
+      filteredMasterDetailRows.slice(
+        (safeMasterDetailPage - 1) * MASTER_MATERIAL_DETAIL_PAGE_SIZE,
+        safeMasterDetailPage * MASTER_MATERIAL_DETAIL_PAGE_SIZE,
+      ),
+    [filteredMasterDetailRows, safeMasterDetailPage],
+  );
+
+  const selectedBulkProjectIdSet = useMemo(
+    () => new Set(selectedBulkProjectIds),
+    [selectedBulkProjectIds],
+  );
+  const selectedBulkRows = useMemo(
+    () =>
+      activeMasterMaterialProjectRows.filter((row) => selectedBulkProjectIdSet.has(row.project.projectId)),
+    [activeMasterMaterialProjectRows, selectedBulkProjectIdSet],
+  );
+
+  useEffect(() => {
+    setMasterDetailPage(1);
+  }, [masterDetailLocationFilter, masterDetailModal?.materialKey, masterDetailModal?.mode, masterDetailSearch]);
+
+  useEffect(() => {
+    if (masterDetailModal?.mode !== "missing") {
+      setSelectedBulkProjectIds((current) => (current.length === 0 ? current : []));
+      return;
+    }
+
+    const validProjectIds = new Set(activeMasterMaterialProjectRows.map((row) => row.project.projectId));
+    setSelectedBulkProjectIds((current) => {
+      const next = current.filter((projectId) => validProjectIds.has(projectId));
+      return next.length === current.length ? current : next;
+    });
+  }, [activeMasterMaterialProjectRows, masterDetailModal?.mode]);
 
   const selectedMaterialRows = useMemo<MaterialSelectionRow[]>(() => {
     const rows: MaterialSelectionRow[] = [];
@@ -922,6 +1072,148 @@ export function KmpMaterialMonitorPanel({
     });
   };
 
+  const resetBulkMaterialState = () => {
+    setSelectedBulkProjectIds([]);
+    setIsBulkFormVisible(false);
+    setBulkSubmissionName("");
+    setBulkNominalRaw("");
+    setBulkError("");
+    setBulkNotice(null);
+    setIsBulkConfirmOpen(false);
+    setShowAllSelectedBulkProjects(false);
+  };
+
+  const openMasterMaterialDetail = (mode: MasterMaterialDetailMode, materialKey: string) => {
+    setMasterDetailModal({ mode, materialKey });
+    setMasterDetailSearch("");
+    setMasterDetailLocationFilter("");
+    setMasterDetailPage(1);
+    resetBulkMaterialState();
+  };
+
+  const closeMasterMaterialDetail = () => {
+    setMasterDetailModal(null);
+    resetBulkMaterialState();
+  };
+
+  const toggleBulkProjectSelection = (projectId: string, checked: boolean) => {
+    setSelectedBulkProjectIds((current) => {
+      if (checked) {
+        return current.includes(projectId) ? current : [...current, projectId];
+      }
+      return current.filter((item) => item !== projectId);
+    });
+    setBulkError("");
+    setBulkNotice(null);
+  };
+
+  const selectAllFilteredBulkProjects = () => {
+    setSelectedBulkProjectIds(Array.from(new Set(filteredMasterDetailRows.map((row) => row.project.projectId))));
+    setBulkError("");
+    setBulkNotice(null);
+  };
+
+  const clearBulkProjectSelection = () => {
+    setSelectedBulkProjectIds([]);
+    setIsBulkFormVisible(false);
+    setBulkError("");
+    setBulkNotice(null);
+    setShowAllSelectedBulkProjects(false);
+  };
+
+  const validateBulkMaterialForm = () => {
+    if (!canEdit) {
+      return "Role viewer hanya bisa melihat daftar material.";
+    }
+    if (selectedBulkProjectIds.length === 0) {
+      return "Pilih minimal satu project terlebih dahulu.";
+    }
+    if (!bulkSubmissionName.trim()) {
+      return "Nama pengajuan wajib diisi.";
+    }
+    if (bulkSubmissionName.trim().length > BULK_SUBMISSION_NAME_MAX_LENGTH) {
+      return `Nama pengajuan maksimal ${BULK_SUBMISSION_NAME_MAX_LENGTH} karakter.`;
+    }
+    const nominal = Number(normalizeDigits(bulkNominalRaw));
+    if (!Number.isSafeInteger(nominal) || nominal <= 0) {
+      return "Nominal wajib diisi dan harus lebih besar dari 0.";
+    }
+    return "";
+  };
+
+  const requestBulkMaterialSubmit = () => {
+    const errorMessage = validateBulkMaterialForm();
+    if (errorMessage) {
+      setBulkError(errorMessage);
+      return;
+    }
+    setBulkError("");
+    setIsBulkConfirmOpen(true);
+  };
+
+  const confirmBulkMaterialSubmit = async () => {
+    if (isBulkSubmitting || !activeMasterMaterialRow || masterDetailModal?.mode !== "missing") {
+      return;
+    }
+
+    const errorMessage = validateBulkMaterialForm();
+    if (errorMessage) {
+      setBulkError(errorMessage);
+      setIsBulkConfirmOpen(false);
+      return;
+    }
+
+    const nominal = Number(normalizeDigits(bulkNominalRaw));
+    setIsBulkSubmitting(true);
+    setBulkError("");
+    setBulkNotice(null);
+    try {
+      const result = await bulkInsertKmpProjectMaterialAction({
+        material_key: activeMasterMaterialRow.detail.materialKey,
+        material_name: activeMasterMaterialRow.detail.materialName || activeMasterMaterialRow.detail.materialLabel,
+        project_ids: selectedBulkProjectIds,
+        nama_pengajuan: bulkSubmissionName.trim(),
+        nominal,
+        expense_date: today,
+      });
+      const nextMessage = getBulkResultMessage({
+        materialName: activeMasterMaterialRow.detail.materialLabel,
+        insertedCount: result.inserted_count,
+        skippedCount: result.skipped_count,
+        failedCount: result.failed_count,
+      });
+      if (result.inserted_count > 0 || result.skipped_count > 0) {
+        setBulkNotice({
+          type: result.failed_count > 0 || result.skipped_count > 0 ? "info" : "success",
+          message: nextMessage,
+        });
+      }
+      if (result.failed_count > 0 && result.inserted_count === 0) {
+        const preview = result.failed_projects
+          .slice(0, 3)
+          .map((project) => `${project.project_name ?? project.project_id}: ${project.reason}`)
+          .join("; ");
+        setBulkError(preview || result.message || "Material gagal ditambahkan.");
+      }
+      if (result.inserted_count > 0) {
+        setSelectedBulkProjectIds([]);
+        setIsBulkFormVisible(false);
+        setBulkSubmissionName("");
+        setBulkNominalRaw("");
+        setShowAllSelectedBulkProjects(false);
+        setIsBulkRefreshing(true);
+        await onDataChanged?.();
+        router.refresh();
+      }
+    } catch {
+      setBulkError("Koneksi terputus saat menyimpan material. Coba lagi.");
+    } finally {
+      setIsBulkConfirmOpen(false);
+      setIsBulkSubmitting(false);
+      setIsBulkRefreshing(false);
+    }
+  };
+
   const renderDetectedMaterials = (project: KmpMaterialMonitorProject) => (
     <div className="rounded-2xl border border-slate-200 bg-white/78 p-3">
       <p className="text-xs font-semibold text-slate-700">Sudah terdeteksi</p>
@@ -961,6 +1253,538 @@ export function KmpMaterialMonitorPanel({
       )}
     </div>
   );
+
+  const renderMasterMaterialDetailModal = () => {
+    if (typeof document === "undefined" || !masterDetailModal || !activeMasterMaterialRow) {
+      return null;
+    }
+
+    const isMissingMode = masterDetailModal.mode === "missing";
+    const detail = activeMasterMaterialRow.detail;
+    const pageStart = filteredMasterDetailRows.length === 0
+      ? 0
+      : (safeMasterDetailPage - 1) * MASTER_MATERIAL_DETAIL_PAGE_SIZE + 1;
+    const pageEnd = Math.min(
+      safeMasterDetailPage * MASTER_MATERIAL_DETAIL_PAGE_SIZE,
+      filteredMasterDetailRows.length,
+    );
+    const selectedCount = selectedBulkRows.length;
+    const selectedPreviewRows = showAllSelectedBulkProjects
+      ? selectedBulkRows
+      : selectedBulkRows.slice(0, 5);
+    const nominalValue = Number(normalizeDigits(bulkNominalRaw));
+    const modalTitle = isMissingMode
+      ? `Project Belum Memiliki Material - ${detail.materialLabel}`
+      : `Project Sudah Memiliki Material - ${detail.materialLabel}`;
+
+    return createPortal(
+      <div className="fixed inset-0 z-[90] flex items-center justify-center p-3 sm:p-4">
+        <button
+          type="button"
+          aria-label="Tutup detail master material"
+          disabled={isBulkSubmitting}
+          onClick={closeMasterMaterialDetail}
+          className="absolute inset-0 bg-slate-950/55"
+        />
+        <section
+          className="panel relative z-10 max-h-[calc(100vh-1.5rem)] w-full max-w-6xl overflow-y-auto p-4 sm:p-5"
+          onClick={(event) => event.stopPropagation()}
+          onMouseDown={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className={`text-xs font-semibold uppercase tracking-[0.12em] ${
+                isMissingMode ? "text-amber-700" : "text-emerald-700"
+              }`}>
+                {isMissingMode ? "Detail Project Belum" : "Detail Project Sudah"}
+              </p>
+              <h3 className="mt-1 text-lg font-black text-slate-950">
+                {modalTitle}
+              </h3>
+              <p className="mt-1 text-xs text-slate-500">
+                {detail.submissionName
+                  ? `Nama pengajuan/PIC: ${detail.submissionName}`
+                  : "Nama pengajuan/PIC belum tersedia."}
+              </p>
+            </div>
+            <button
+              type="button"
+              data-ui-button="true"
+              onClick={closeMasterMaterialDetail}
+              disabled={isBulkSubmitting}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <span className="btn-icon bg-slate-100 text-slate-600">
+                <CloseIcon />
+              </span>
+              Tutup
+            </button>
+          </div>
+
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                Nominal Standard
+              </p>
+              <p className="mt-1 text-sm font-black text-slate-950">
+                {detail.standardAmount > 0 ? formatCurrency(detail.standardAmount) : "-"}
+              </p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                Nominal Minimal
+              </p>
+              <p className="mt-1 text-sm font-black text-slate-950">
+                {detail.minimumAmount > 0 ? formatCurrency(detail.minimumAmount) : "-"}
+              </p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                Total Project
+              </p>
+              <p className="mt-1 text-sm font-black text-slate-950">
+                {activeMasterMaterialRow.projectCount}
+              </p>
+            </div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-700">
+                Belum
+              </p>
+              <p className="mt-1 text-sm font-black text-amber-950">
+                {activeMasterMaterialRow.missingCount}
+              </p>
+            </div>
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">
+                Sudah
+              </p>
+              <p className="mt-1 text-sm font-black text-emerald-950">
+                {activeMasterMaterialRow.detectedCount}
+              </p>
+            </div>
+          </div>
+
+          {bulkNotice ? (
+            <div
+              className={`mt-4 rounded-xl border px-3 py-2 text-xs font-semibold ${
+                bulkNotice.type === "success"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-amber-200 bg-amber-50 text-amber-800"
+              }`}
+            >
+              {bulkNotice.message}
+            </div>
+          ) : null}
+          {isBulkRefreshing ? (
+            <p className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">
+              Memperbarui daftar project dari database...
+            </p>
+          ) : null}
+          {bulkError ? (
+            <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+              <p>{bulkError}</p>
+              {isBulkFormVisible && canEdit ? (
+                <button
+                  type="button"
+                  data-ui-button="true"
+                  onClick={requestBulkMaterialSubmit}
+                  disabled={isBulkSubmitting}
+                  className="mt-2 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Coba Lagi
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-slate-600">Cari project atau lokasi</span>
+              <div className="flex items-center overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                <span className="inline-flex items-center px-3 text-slate-400">
+                  <SearchIcon className="h-4 w-4" />
+                </span>
+                <input
+                  value={masterDetailSearch}
+                  onChange={(event) => setMasterDetailSearch(event.currentTarget.value)}
+                  placeholder="Cari nama project, desa/lokasi, atau nama pengajuan"
+                  autoComplete="off"
+                  className="!border-0 !shadow-none focus:!border-0 focus:!shadow-none"
+                />
+              </div>
+            </label>
+            {masterDetailLocationOptions.length > 1 ? (
+              <label className="block min-w-[14rem]">
+                <span className="mb-1 block text-xs font-semibold text-slate-600">Filter lokasi</span>
+                <select
+                  value={masterDetailLocationFilter}
+                  onChange={(event) => setMasterDetailLocationFilter(event.currentTarget.value)}
+                >
+                  <option value="">Semua lokasi</option>
+                  {masterDetailLocationOptions.map((location) => (
+                    <option key={location} value={location}>
+                      {location}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </div>
+
+          {isMissingMode ? (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  data-ui-button="true"
+                  disabled={!canEdit || filteredMasterDetailRows.length === 0 || isBulkSubmitting}
+                  onClick={selectAllFilteredBulkProjects}
+                  className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Pilih Semua
+                </button>
+                <button
+                  type="button"
+                  data-ui-button="true"
+                  disabled={!canEdit || selectedCount === 0 || isBulkSubmitting}
+                  onClick={clearBulkProjectSelection}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Batalkan Pilihan
+                </button>
+              </div>
+              <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
+                {selectedCount} project dipilih
+              </p>
+            </div>
+          ) : null}
+          {!canEdit && isMissingMode ? (
+            <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+              Role viewer hanya bisa melihat daftar project. Bulk insert dinonaktifkan.
+            </p>
+          ) : null}
+
+          <div className="mt-3 table-card">
+            <div className="data-table-shell">
+              <table className="data-table data-table--compact min-w-[760px]">
+                <thead>
+                  {isMissingMode ? (
+                    <tr>
+                      <th className="w-12">Pilih</th>
+                      <th className="w-16">No</th>
+                      <th>Nama Project</th>
+                      <th>Desa/Lokasi</th>
+                      <th>Status Material</th>
+                      <th className="text-right">Aksi</th>
+                    </tr>
+                  ) : (
+                    <tr>
+                      <th className="w-16">No</th>
+                      <th>Nama Project</th>
+                      <th>Desa/Lokasi</th>
+                      <th>Nama Pengajuan</th>
+                      <th>Nominal</th>
+                      <th>Tanggal Input</th>
+                      <th>Status</th>
+                      <th className="text-right">Aksi</th>
+                    </tr>
+                  )}
+                </thead>
+                <tbody>
+                  {pagedMasterDetailRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={isMissingMode ? 6 : 8}>
+                        <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-4 text-center text-sm text-slate-600">
+                          {isMissingMode && activeMasterMaterialRow.missingCount === 0
+                            ? `Semua project sudah memiliki material ${detail.materialLabel}.`
+                            : "Tidak ada project yang cocok dengan pencarian atau filter saat ini."}
+                        </p>
+                      </td>
+                    </tr>
+                  ) : isMissingMode ? (
+                    pagedMasterDetailRows.map((row, index) => (
+                      <tr key={`missing-detail-${row.project.projectId}-${row.detail.materialKey}`}>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={selectedBulkProjectIdSet.has(row.project.projectId)}
+                            disabled={!canEdit || isBulkSubmitting}
+                            onChange={(event) =>
+                              toggleBulkProjectSelection(row.project.projectId, event.currentTarget.checked)
+                            }
+                            aria-label={`Pilih project ${row.project.projectName}`}
+                          />
+                        </td>
+                        <td>{pageStart + index}</td>
+                        <td>
+                          <p className="font-semibold text-slate-900">{row.project.projectName}</p>
+                          <p className="mt-1 text-[11px] text-slate-500">{row.project.clientName ?? "Tanpa klien"}</p>
+                        </td>
+                        <td>{getProjectLocationLabel(row.project)}</td>
+                        <td>
+                          <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800">
+                            Belum Ada
+                          </span>
+                        </td>
+                        <td className="text-right">
+                          <Link
+                            href={row.project.recapHref}
+                            className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
+                          >
+                            Buka Rekap
+                          </Link>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    pagedMasterDetailRows.map((row, index) => {
+                      const primaryExpense = row.detail.expenses[0];
+                      return (
+                        <tr key={`detected-detail-${row.project.projectId}-${row.detail.materialKey}`}>
+                          <td>{pageStart + index}</td>
+                          <td>
+                            <p className="font-semibold text-slate-900">{row.project.projectName}</p>
+                            <p className="mt-1 text-[11px] text-slate-500">
+                              {row.project.clientName ?? "Tanpa klien"}
+                            </p>
+                          </td>
+                          <td>{getProjectLocationLabel(row.project)}</td>
+                          <td>{primaryExpense?.requesterName ?? row.detail.submissionName ?? "-"}</td>
+                          <td>{formatCurrency(row.detail.detectedAmount)}</td>
+                          <td>{primaryExpense ? formatDate(primaryExpense.expenseDate) : "-"}</td>
+                          <td>
+                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+                              Sudah Ada
+                            </span>
+                          </td>
+                          <td className="text-right">
+                            <Link
+                              href={row.project.recapHref}
+                              className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
+                            >
+                              Buka Rekap
+                            </Link>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+            <p>
+              Menampilkan {pageStart}-{pageEnd} dari {filteredMasterDetailRows.length} project.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                data-ui-button="true"
+                disabled={safeMasterDetailPage <= 1}
+                onClick={() => setMasterDetailPage((page) => Math.max(1, page - 1))}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Sebelumnya
+              </button>
+              <span className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 font-semibold text-slate-600">
+                Halaman {safeMasterDetailPage}/{masterDetailPageCount}
+              </span>
+              <button
+                type="button"
+                data-ui-button="true"
+                disabled={safeMasterDetailPage >= masterDetailPageCount}
+                onClick={() => setMasterDetailPage((page) => Math.min(masterDetailPageCount, page + 1))}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Berikutnya
+              </button>
+            </div>
+          </div>
+
+          {isMissingMode && canEdit ? (
+            <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50/75 p-3">
+              {!isBulkFormVisible ? (
+                <button
+                  type="button"
+                  data-ui-button="true"
+                  disabled={selectedCount === 0 || isBulkSubmitting}
+                  onClick={() => {
+                    setIsBulkFormVisible(true);
+                    setBulkError("");
+                    setBulkNotice(null);
+                  }}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <span className="btn-icon bg-white/20 text-white">
+                    <PlusIcon />
+                  </span>
+                  Tambahkan Material ke Project Terpilih
+                </button>
+              ) : (
+                <div className="space-y-3">
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    <label>
+                      <span className="mb-1 block text-xs font-semibold text-blue-900">Nama Pengajuan</span>
+                      <input
+                        value={bulkSubmissionName}
+                        onChange={(event) => {
+                          setBulkSubmissionName(event.currentTarget.value);
+                          setBulkError("");
+                        }}
+                        maxLength={BULK_SUBMISSION_NAME_MAX_LENGTH}
+                        placeholder="Contoh: Pengadaan Aluminium Tahap 1"
+                        disabled={isBulkSubmitting}
+                      />
+                    </label>
+                    <label>
+                      <span className="mb-1 block text-xs font-semibold text-blue-900">Nominal</span>
+                      <span className="flex overflow-hidden rounded-xl border border-slate-200 bg-white focus-within:border-blue-700">
+                        <span className="inline-flex items-center border-r border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-600">
+                          Rp
+                        </span>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={bulkNominalRaw ? formatThousands(bulkNominalRaw) : ""}
+                          onChange={(event) => {
+                            setBulkNominalRaw(normalizeDigits(event.currentTarget.value));
+                            setBulkError("");
+                          }}
+                          placeholder="25.000.000"
+                          disabled={isBulkSubmitting}
+                          className="!rounded-none !border-0 !shadow-none focus:!border-0"
+                        />
+                      </span>
+                    </label>
+                  </div>
+                  <div className="rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs text-slate-600">
+                    <p className="font-semibold text-slate-900">
+                      {selectedCount} project akan menerima material {detail.materialLabel}.
+                    </p>
+                    {selectedPreviewRows.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {selectedPreviewRows.map((row) => (
+                          <span
+                            key={`bulk-preview-${row.project.projectId}`}
+                            className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600"
+                          >
+                            {row.project.projectName}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                    {selectedBulkRows.length > 5 ? (
+                      <button
+                        type="button"
+                        data-ui-button="true"
+                        onClick={() => setShowAllSelectedBulkProjects((value) => !value)}
+                        className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-[11px] font-semibold text-blue-700 hover:bg-blue-100"
+                      >
+                        {showAllSelectedBulkProjects ? "Sembunyikan sebagian" : "Lihat seluruh project terpilih"}
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      data-ui-button="true"
+                      disabled={isBulkSubmitting}
+                      onClick={() => setIsBulkFormVisible(false)}
+                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Batal
+                    </button>
+                    <button
+                      type="button"
+                      data-ui-button="true"
+                      disabled={selectedCount === 0 || isBulkSubmitting}
+                      onClick={requestBulkMaterialSubmit}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <span className="btn-icon bg-white/20 text-white">
+                        <SaveIcon />
+                      </span>
+                      Tambahkan Material ke Project Terpilih
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : null}
+
+          {isBulkConfirmOpen ? (
+            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+              <button
+                type="button"
+                aria-label="Batal konfirmasi tambah material"
+                disabled={isBulkSubmitting}
+                onClick={() => setIsBulkConfirmOpen(false)}
+                className="absolute inset-0 bg-slate-950/60"
+              />
+              <section className="panel relative z-10 w-full max-w-lg p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-700">
+                  Konfirmasi Bulk Material
+                </p>
+                <h4 className="mt-1 text-lg font-black text-slate-950">
+                  Ya, tambahkan material?
+                </h4>
+                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
+                  <p>
+                    Material <strong>{detail.materialLabel}</strong> akan ditambahkan ke{" "}
+                    <strong>{selectedCount} project</strong> dengan rincian:
+                  </p>
+                  <dl className="mt-3 space-y-2">
+                    <div>
+                      <dt className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                        Nama Pengajuan
+                      </dt>
+                      <dd className="font-semibold text-slate-900">{bulkSubmissionName.trim()}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                        Nominal per Project
+                      </dt>
+                      <dd className="font-semibold text-slate-900">
+                        {nominalValue > 0 ? formatCurrency(nominalValue) : "-"}
+                      </dd>
+                    </div>
+                  </dl>
+                  <p className="mt-3">Apakah Anda yakin ingin melanjutkan?</p>
+                </div>
+                <div className="mt-4 flex flex-wrap justify-end gap-2">
+                  <button
+                    type="button"
+                    data-ui-button="true"
+                    disabled={isBulkSubmitting}
+                    onClick={() => setIsBulkConfirmOpen(false)}
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="button"
+                    data-ui-button="true"
+                    disabled={isBulkSubmitting}
+                    onClick={confirmBulkMaterialSubmit}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <span className="btn-icon bg-white/20 text-white">
+                      <SaveIcon />
+                    </span>
+                    {isBulkSubmitting ? "Menambahkan..." : "Ya, Tambahkan Material"}
+                  </button>
+                </div>
+              </section>
+            </div>
+          ) : null}
+        </section>
+      </div>,
+      document.body,
+    );
+  };
 
   return (
     <div className="mt-4 space-y-4">
@@ -1102,12 +1926,26 @@ export function KmpMaterialMonitorPanel({
                     <span className="rounded-lg border border-slate-200 bg-white px-2 py-1">
                       {projectCount} project
                     </span>
-                    <span className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
+                    <button
+                      type="button"
+                      data-ui-button="true"
+                      onClick={() => openMasterMaterialDetail("missing", detail.materialKey)}
+                      title="Lihat project yang belum memiliki material"
+                      className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700 hover:bg-amber-100"
+                      aria-label={`Lihat ${missingCount} project yang belum memiliki ${detail.materialLabel}`}
+                    >
                       {missingCount} belum
-                    </span>
-                    <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-emerald-700">
+                    </button>
+                    <button
+                      type="button"
+                      data-ui-button="true"
+                      onClick={() => openMasterMaterialDetail("detected", detail.materialKey)}
+                      title="Lihat project yang sudah memiliki material"
+                      className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-emerald-700 hover:bg-emerald-100"
+                      aria-label={`Lihat ${detectedCount} project yang sudah memiliki ${detail.materialLabel}`}
+                    >
                       {detectedCount} sudah
-                    </span>
+                    </button>
                   </div>
                 </article>
               ))}
@@ -1576,6 +2414,8 @@ export function KmpMaterialMonitorPanel({
           </div>
         )}
       </OptimisticExpenseCreateForm>
+
+      {renderMasterMaterialDetailModal()}
 
       {activeMaterialEditor ? (
         <MaterialEditorModal

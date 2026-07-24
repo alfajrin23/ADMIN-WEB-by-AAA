@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  KMP_CIANJUR_MATERIAL_CHECKLIST,
   getKmpCianjurMaterialAmountOptions,
   getKmpCianjurMaterialRule,
 } from "@/lib/kmp-materials";
@@ -155,6 +156,71 @@ describe("KMP Cianjur material checklist", () => {
     expect(progress?.expenses).toEqual([]);
     expect(progress?.detectedAmount).toBe(0);
     expect(progress?.isFulfilled).toBe(false);
+  });
+
+  it("marks completed KMP projects as fulfilled for every material", () => {
+    const completedProject: Project = {
+      ...project,
+      id: "kmp-completed",
+      status: "selesai",
+    };
+    const customMaterial: KmpClientMaterialConfig = {
+      id: "custom-completed",
+      clientKey: "kmp cianjur",
+      clientName: "KMP Cianjur",
+      materialKey: "custom_plafon",
+      materialName: "Custom Plafon",
+      submissionName: null,
+      standardAmount: 0,
+      minimumAmount: 0,
+      checklistType: "system",
+      checklistStatus: "auto",
+      createdAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-01T00:00:00.000Z",
+    };
+
+    const report = buildKmpCianjurMissingMaterialReport(
+      [completedProject],
+      [],
+      [customMaterial],
+    );
+    const projectReport = report.projects[0];
+
+    expect(projectReport?.missingCount).toBe(0);
+    expect(projectReport?.missingMaterialDetails).toEqual([]);
+    expect(projectReport?.totalChecklistCount).toBe(KMP_CIANJUR_MATERIAL_CHECKLIST.length + 1);
+    expect(projectReport?.completedMissingMaterialDetails).toHaveLength(projectReport?.totalChecklistCount ?? 0);
+    expect(projectReport?.detectedCount).toBe(projectReport?.totalChecklistCount);
+    expect(projectReport?.materialProgress.every((item) => item.isFulfilled)).toBe(true);
+    expect(projectReport?.detectedMaterials).toContain("Custom Plafon");
+  });
+
+  it("keeps project expense totals for completed material simulation", () => {
+    const completedProject: Project = {
+      ...project,
+      id: "kmp-completed-total",
+      status: "selesai",
+    };
+    const report = buildKmpCianjurMissingMaterialReport(
+      [completedProject],
+      [
+        createExpense({
+          id: "existing-material",
+          projectId: completedProject.id,
+          description: "Semen",
+          amount: 9_300_000,
+        }),
+        createExpense({
+          id: "existing-operational",
+          projectId: completedProject.id,
+          category: "operasional",
+          description: "Operasional proyek",
+          amount: 1_250_000,
+        }),
+      ],
+    );
+
+    expect(report.projects[0]?.projectExpenseTotal).toBe(10_550_000);
   });
 
   it("excludes generated checklist rows when resolving the majority requester", () => {

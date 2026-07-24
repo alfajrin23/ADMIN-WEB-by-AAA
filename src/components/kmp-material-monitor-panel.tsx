@@ -29,7 +29,9 @@ type KmpMaterialMonitorProject = {
   projectId: string;
   projectName: string;
   projectCode: string | null;
+  projectStatus: "aktif" | "selesai" | "tertunda";
   clientName: string | null;
+  projectExpenseTotal: number;
   detectedMaterials: string[];
   detectedMaterialDetails: Array<{
     materialKey: string;
@@ -54,6 +56,28 @@ type KmpMaterialMonitorProject = {
     isFulfilled: boolean;
   }>;
   missingMaterialDetails: Array<{
+    configId: string | null;
+    materialKey: string;
+    materialLabel: string;
+    materialName: string;
+    submissionName: string | null;
+    standardAmount: number;
+    minimumAmount: number;
+    detectedAmount: number;
+    checklistType: AmountMode;
+    checklistStatus: "auto" | "pending" | "fulfilled";
+    isCustom: boolean;
+    isFulfilled: boolean;
+    expenses: Array<{
+      id: string;
+      expenseDate: string;
+      requesterName: string | null;
+      description: string | null;
+      usageInfo: string | null;
+      amount: number;
+    }>;
+  }>;
+  completedMissingMaterialDetails: Array<{
     configId: string | null;
     materialKey: string;
     materialLabel: string;
@@ -159,7 +183,8 @@ const materialRuleByKey: ReadonlyMap<string, KmpMaterialChecklistRule> = new Map
 
 type KmpMaterialDetail =
   | KmpMaterialMonitorProject["missingMaterialDetails"][number]
-  | KmpMaterialMonitorProject["detectedMaterialDetails"][number];
+  | KmpMaterialMonitorProject["detectedMaterialDetails"][number]
+  | KmpMaterialMonitorProject["completedMissingMaterialDetails"][number];
 
 function createMaterialRuleFromDetail(detail: KmpMaterialDetail): KmpMaterialChecklistRule {
   const staticRule = materialRuleByKey.get(detail.materialKey) ?? materialRuleByLabel.get(detail.materialLabel);
@@ -196,6 +221,27 @@ function formatThousands(value: string) {
 
 function getProjectLocationLabel(project: KmpMaterialMonitorProject) {
   return project.projectCode?.trim() || project.projectName;
+}
+
+function getSelectableMaterialDetails(project: KmpMaterialMonitorProject) {
+  const detailByKey = new Map<string, KmpMaterialDetail>();
+  for (const detail of project.missingMaterialDetails) {
+    detailByKey.set(detail.materialKey, detail);
+  }
+  for (const detail of project.completedMissingMaterialDetails) {
+    detailByKey.set(detail.materialKey, detail);
+  }
+  return Array.from(detailByKey.values());
+}
+
+function getSelectionAmount(row: Pick<MaterialSelectionRow, "amountMode" | "systemAmount" | "manualAmount">) {
+  if (row.amountMode === "manual") {
+    return Number(normalizeDigits(row.manualAmount)) || 0;
+  }
+  if (row.amountMode === "system") {
+    return Number(normalizeDigits(row.systemAmount)) || 0;
+  }
+  return 0;
 }
 
 function getMasterMaterialRowSearchText(row: MasterMaterialProjectRow) {
@@ -594,6 +640,7 @@ export function KmpMaterialMonitorPanel({
   const [visibleProjectLimit, setVisibleProjectLimit] = useState(PROJECT_RENDER_BATCH_SIZE);
   const [expenseDate, setExpenseDate] = useState(today);
   const [materialDrafts, setMaterialDrafts] = useState<Record<string, MaterialDraft>>({});
+  const [selectedCompletedProjectIds, setSelectedCompletedProjectIds] = useState<string[]>([]);
   const [selectedDetectedMaterial, setSelectedDetectedMaterial] = useState<{
     projectId: string;
     materialKey: string;
@@ -697,6 +744,34 @@ export function KmpMaterialMonitorPanel({
     });
   };
 
+  const setProjectMaterialDraftSelection = (
+    project: KmpMaterialMonitorProject,
+    details: KmpMaterialDetail[],
+    selected: boolean,
+  ) => {
+    setMaterialDrafts((previous) => {
+      const next = { ...previous };
+      for (const detail of details) {
+        const rule = createMaterialRuleFromDetail(detail);
+        const key = getMaterialDraftKey(project.projectId, detail.materialLabel, detail.materialKey);
+        const current = next[key] ?? createInitialMaterialDraft(
+          detail.materialLabel,
+          rule,
+          detail.submissionName ?? "",
+          detail.standardAmount,
+        );
+        next[key] = {
+          ...current,
+          selected,
+          materialName: detail.materialName || current.materialName,
+          submissionName: current.submissionName || detail.submissionName || "",
+          amountMode: selected && current.amountMode === "none" ? getDefaultSelectedAmountMode(rule) : current.amountMode,
+        };
+      }
+      return next;
+    });
+  };
+
   const applyMaterialDraftToAllProjects = (
     detail: KmpMaterialDetail,
     sourceDraft: MaterialDraft,
@@ -733,24 +808,90 @@ export function KmpMaterialMonitorPanel({
   };
 
   const selectProjectMissingMaterials = (project: KmpMaterialMonitorProject) => {
+    setProjectMaterialDraftSelection(project, project.missingMaterialDetails, true);
+  };
+
+  const completedBackfillProjects = useMemo(
+    () =>
+      projects.filter(
+        (project) =>
+          project.projectStatus === "selesai" && project.completedMissingMaterialDetails.length > 0,
+      ),
+    [projects],
+  );
+
+  const selectedCompletedProjectIdSet = useMemo(
+    () => new Set(selectedCompletedProjectIds),
+    [selectedCompletedProjectIds],
+  );
+
+  const selectedCompletedBackfillProjects = useMemo(
+    () =>
+      completedBackfillProjects.filter((project) =>
+        selectedCompletedProjectIdSet.has(project.projectId),
+      ),
+    [completedBackfillProjects, selectedCompletedProjectIdSet],
+  );
+
+  useEffect(() => {
+    const validProjectIds = new Set(completedBackfillProjects.map((project) => project.projectId));
+    setSelectedCompletedProjectIds((current) => {
+      const next = current.filter((projectId) => validProjectIds.has(projectId));
+      return next.length === current.length ? current : next;
+    });
+  }, [completedBackfillProjects]);
+
+  const toggleCompletedBackfillProject = (project: KmpMaterialMonitorProject, checked: boolean) => {
+    setSelectedCompletedProjectIds((current) => {
+      if (checked) {
+        return current.includes(project.projectId) ? current : [...current, project.projectId];
+      }
+      return current.filter((projectId) => projectId !== project.projectId);
+    });
+    setProjectMaterialDraftSelection(project, project.completedMissingMaterialDetails, checked);
+  };
+
+  const selectAllCompletedBackfillProjects = () => {
+    setSelectedCompletedProjectIds(completedBackfillProjects.map((project) => project.projectId));
     setMaterialDrafts((previous) => {
       const next = { ...previous };
-      for (const detail of project.missingMaterialDetails) {
-        const rule = createMaterialRuleFromDetail(detail);
-        const key = getMaterialDraftKey(project.projectId, detail.materialLabel, detail.materialKey);
-        const current = next[key] ?? createInitialMaterialDraft(
-          detail.materialLabel,
-          rule,
-          detail.submissionName ?? "",
-          detail.standardAmount,
-        );
-        next[key] = {
-          ...current,
-          selected: true,
-          materialName: detail.materialName || current.materialName,
-          submissionName: current.submissionName || detail.submissionName || "",
-          amountMode: current.amountMode === "none" ? getDefaultSelectedAmountMode(rule) : current.amountMode,
-        };
+      for (const project of completedBackfillProjects) {
+        for (const detail of project.completedMissingMaterialDetails) {
+          const rule = createMaterialRuleFromDetail(detail);
+          const key = getMaterialDraftKey(project.projectId, detail.materialLabel, detail.materialKey);
+          const current = next[key] ?? createInitialMaterialDraft(
+            detail.materialLabel,
+            rule,
+            detail.submissionName ?? "",
+            detail.standardAmount,
+          );
+          next[key] = {
+            ...current,
+            selected: true,
+            materialName: detail.materialName || current.materialName,
+            submissionName: current.submissionName || detail.submissionName || "",
+            amountMode: current.amountMode === "none" ? getDefaultSelectedAmountMode(rule) : current.amountMode,
+          };
+        }
+      }
+      return next;
+    });
+  };
+
+  const clearCompletedBackfillProjects = () => {
+    setSelectedCompletedProjectIds([]);
+    setMaterialDrafts((previous) => {
+      const next = { ...previous };
+      for (const project of completedBackfillProjects) {
+        for (const detail of project.completedMissingMaterialDetails) {
+          const key = getMaterialDraftKey(project.projectId, detail.materialLabel, detail.materialKey);
+          if (next[key]) {
+            next[key] = {
+              ...next[key],
+              selected: false,
+            };
+          }
+        }
       }
       return next;
     });
@@ -942,7 +1083,7 @@ export function KmpMaterialMonitorPanel({
     const rows: MaterialSelectionRow[] = [];
 
     for (const project of projects) {
-      for (const detail of project.missingMaterialDetails) {
+      for (const detail of getSelectableMaterialDetails(project)) {
         const rule = createMaterialRuleFromDetail(detail);
 
         const draft = materialDrafts[getMaterialDraftKey(project.projectId, detail.materialLabel, detail.materialKey)] ??
@@ -977,15 +1118,40 @@ export function KmpMaterialMonitorPanel({
   );
   const selectedTotalAmount = useMemo(() => {
     return selectedMaterialRows.reduce((total, row) => {
-      if (row.amountMode === "manual") {
-        return total + (Number(normalizeDigits(row.manualAmount)) || 0);
-      }
-      if (row.amountMode === "system") {
-        return total + (Number(normalizeDigits(row.systemAmount)) || 0);
-      }
-      return total;
+      return total + getSelectionAmount(row);
     }, 0);
   }, [selectedMaterialRows]);
+  const selectedAmountByProjectId = useMemo(() => {
+    const amountByProjectId = new Map<string, number>();
+    for (const row of selectedMaterialRows) {
+      amountByProjectId.set(
+        row.projectId,
+        (amountByProjectId.get(row.projectId) ?? 0) + getSelectionAmount(row),
+      );
+    }
+    return amountByProjectId;
+  }, [selectedMaterialRows]);
+  const selectedCompletedBackfillMaterialRows = useMemo(
+    () => selectedMaterialRows.filter((row) => selectedCompletedProjectIdSet.has(row.projectId)),
+    [selectedCompletedProjectIdSet, selectedMaterialRows],
+  );
+  const completedBackfillBeforeTotal = useMemo(
+    () =>
+      selectedCompletedBackfillProjects.reduce(
+        (total, project) => total + project.projectExpenseTotal,
+        0,
+      ),
+    [selectedCompletedBackfillProjects],
+  );
+  const completedBackfillMaterialTotal = useMemo(
+    () =>
+      selectedCompletedBackfillProjects.reduce(
+        (total, project) => total + (selectedAmountByProjectId.get(project.projectId) ?? 0),
+        0,
+      ),
+    [selectedAmountByProjectId, selectedCompletedBackfillProjects],
+  );
+  const completedBackfillAfterTotal = completedBackfillBeforeTotal + completedBackfillMaterialTotal;
   const invalidManualSelectionCount = useMemo(
     () =>
       selectedMaterialRows.filter(
@@ -1004,6 +1170,336 @@ export function KmpMaterialMonitorPanel({
     return project && detail ? { project, detail } : null;
   }, [projects, selectedDetectedMaterial]);
   const activeMaterialEditor = normalizeMaterialEditorState(materialEditor);
+
+  const renderCompletedBackfillSection = () => {
+    if (completedBackfillProjects.length === 0) {
+      return null;
+    }
+
+    return (
+      <section className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700">
+              Input Material Desa 100%
+            </p>
+            <h4 className="mt-1 text-base font-black text-slate-950">
+              Desa selesai dengan material belum tercatat
+            </h4>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              data-ui-button="true"
+              disabled={!canEdit || completedBackfillProjects.length === 0}
+              onClick={selectAllCompletedBackfillProjects}
+              className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Pilih Semua Desa
+            </button>
+            <button
+              type="button"
+              data-ui-button="true"
+              disabled={!canEdit || selectedCompletedProjectIds.length === 0}
+              onClick={clearCompletedBackfillProjects}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Kosongkan
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="rounded-xl border border-emerald-200 bg-white px-3 py-2">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">
+              Desa 100%
+            </p>
+            <p className="mt-1 text-lg font-black text-slate-950">{completedBackfillProjects.length}</p>
+          </div>
+          <div className="rounded-xl border border-emerald-200 bg-white px-3 py-2">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">
+              Desa Dipilih
+            </p>
+            <p className="mt-1 text-lg font-black text-slate-950">{selectedCompletedBackfillProjects.length}</p>
+          </div>
+          <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-blue-700">
+              Material Simulasi
+            </p>
+            <p className="mt-1 text-lg font-black text-blue-950">
+              {formatCurrency(completedBackfillMaterialTotal)}
+            </p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+              Sebelum Input
+            </p>
+            <p className="mt-1 text-lg font-black text-slate-950">
+              {formatCurrency(completedBackfillBeforeTotal)}
+            </p>
+          </div>
+          <div className="rounded-xl border border-emerald-300 bg-emerald-100 px-3 py-2">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-800">
+              Sesudah Input
+            </p>
+            <p className="mt-1 text-lg font-black text-emerald-950">
+              {formatCurrency(completedBackfillAfterTotal)}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+          {completedBackfillProjects.map((project) => {
+            const isProjectSelected = selectedCompletedProjectIdSet.has(project.projectId);
+            const projectSimulationAmount = selectedAmountByProjectId.get(project.projectId) ?? 0;
+            const selectedMaterialCount = project.completedMissingMaterialDetails.filter(
+              (detail) => getMaterialDraft(project.projectId, detail).selected,
+            ).length;
+
+            return (
+              <article
+                key={`completed-backfill-${project.projectId}`}
+                className={`rounded-xl border bg-white p-3 ${
+                  isProjectSelected ? "border-emerald-300 shadow-sm" : "border-slate-200"
+                }`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <label className="flex min-w-0 flex-1 items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={isProjectSelected}
+                      disabled={!canEdit}
+                      onChange={(event) =>
+                        toggleCompletedBackfillProject(project, event.currentTarget.checked)
+                      }
+                      className="mt-1 h-4 w-4"
+                      aria-label={`Pilih desa selesai ${project.projectName}`}
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-black text-slate-950">
+                        {project.projectName}
+                      </span>
+                      <span className="mt-1 block text-[11px] font-semibold text-emerald-700">
+                        {project.completedMissingMaterialDetails.length} material belum tercatat
+                      </span>
+                    </span>
+                  </label>
+                  <Link
+                    href={project.recapHref}
+                    className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
+                  >
+                    Buka Rekap
+                  </Link>
+                </div>
+
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                      Sebelum
+                    </p>
+                    <p className="mt-1 text-xs font-black text-slate-900">
+                      {formatCurrency(project.projectExpenseTotal)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-1.5">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-blue-700">
+                      Material
+                    </p>
+                    <p className="mt-1 text-xs font-black text-blue-950">
+                      {formatCurrency(projectSimulationAmount)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">
+                      Sesudah
+                    </p>
+                    <p className="mt-1 text-xs font-black text-emerald-950">
+                      {formatCurrency(project.projectExpenseTotal + projectSimulationAmount)}
+                    </p>
+                  </div>
+                </div>
+
+                {isProjectSelected ? (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-[11px] font-semibold text-slate-600">
+                      {selectedMaterialCount}/{project.completedMissingMaterialDetails.length} material dipilih
+                    </p>
+                    {project.completedMissingMaterialDetails.map((detail) => {
+                      const rule = createMaterialRuleFromDetail(detail);
+                      const draft = getMaterialDraft(project.projectId, detail, detail.submissionName ?? "", detail.standardAmount);
+                      const amountOptions = detail.standardAmount > 0
+                        ? [{ label: "Standard", amount: detail.standardAmount }]
+                        : getKmpCianjurMaterialAmountOptions(rule);
+
+                      return (
+                        <div
+                          key={`completed-backfill-material-${project.projectId}-${detail.materialKey}`}
+                          className={`rounded-lg border p-2 ${
+                            draft.selected ? "border-blue-300 bg-blue-50/60" : "border-slate-200 bg-slate-50"
+                          }`}
+                        >
+                          <div className="flex items-start gap-2">
+                            <input
+                              type="checkbox"
+                              checked={draft.selected}
+                              disabled={!canEdit}
+                              onChange={(event) => {
+                                const checked = event.currentTarget.checked;
+                                updateMaterialDraft(project.projectId, detail, (current) => ({
+                                  ...current,
+                                  selected: checked,
+                                  amountMode:
+                                    checked && current.amountMode === "none"
+                                      ? getDefaultSelectedAmountMode(rule)
+                                      : current.amountMode,
+                                }));
+                              }}
+                              className="mt-2 h-4 w-4"
+                              aria-label={`Pilih material ${detail.materialLabel}`}
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-xs font-black text-slate-900">
+                                {detail.materialLabel}
+                              </span>
+                              <input
+                                type="text"
+                                value={draft.materialName}
+                                disabled={!canEdit || !draft.selected}
+                                onChange={(event) =>
+                                  updateMaterialDraft(project.projectId, detail, (current) => ({
+                                    ...current,
+                                    materialName: event.currentTarget.value,
+                                    selected: true,
+                                  }))
+                                }
+                                className="mt-2 !h-9 !rounded-lg text-xs font-semibold"
+                                aria-label={`Nama material ${detail.materialLabel}`}
+                              />
+                              <input
+                                type="text"
+                                value={draft.submissionName}
+                                disabled={!canEdit || !draft.selected}
+                                onChange={(event) =>
+                                  updateMaterialDraft(project.projectId, detail, (current) => ({
+                                    ...current,
+                                    submissionName: event.currentTarget.value,
+                                    selected: true,
+                                  }))
+                                }
+                                placeholder="Nama pengajuan untuk rincian"
+                                className="mt-2 !h-9 !rounded-lg text-xs font-semibold"
+                                aria-label={`Nama pengajuan ${detail.materialLabel}`}
+                              />
+                              <span className="mt-2 flex flex-wrap gap-1.5">
+                                {[
+                                  { key: "none", label: "Tanpa nominal" },
+                                  { key: "system", label: "Sistem" },
+                                  { key: "manual", label: "Manual" },
+                                ].map((item) => {
+                                  const disabled = !canEdit ||
+                                    !draft.selected ||
+                                    (item.key === "system" && amountOptions.length === 0);
+                                  return (
+                                    <button
+                                      key={item.key}
+                                      type="button"
+                                      data-ui-button="true"
+                                      disabled={disabled}
+                                      onClick={() =>
+                                        updateMaterialDraft(project.projectId, detail, (current) => ({
+                                          ...current,
+                                          selected: true,
+                                          amountMode: item.key as AmountMode,
+                                        }))
+                                      }
+                                      className={`rounded-lg border px-2 py-1 text-[10px] font-semibold ${
+                                        draft.amountMode === item.key
+                                          ? "border-blue-700 bg-blue-700 text-white"
+                                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                                      } disabled:cursor-not-allowed disabled:opacity-50`}
+                                    >
+                                      {item.label}
+                                    </button>
+                                  );
+                                })}
+                              </span>
+                              {draft.amountMode === "system" && amountOptions.length > 0 ? (
+                                amountOptions.length === 1 ? (
+                                  <span className="mt-2 block text-[11px] font-semibold text-emerald-700">
+                                    Nominal sistem: {formatCurrency(amountOptions[0].amount)}
+                                  </span>
+                                ) : (
+                                  <select
+                                    value={draft.systemAmount || String(amountOptions[0].amount)}
+                                    disabled={!canEdit || !draft.selected}
+                                    onChange={(event) =>
+                                      updateMaterialDraft(project.projectId, detail, (current) => ({
+                                        ...current,
+                                        selected: true,
+                                        amountMode: "system",
+                                        systemAmount: event.currentTarget.value,
+                                      }))
+                                    }
+                                    className="mt-2 !h-9 text-xs"
+                                    aria-label={`Nominal sistem ${detail.materialLabel}`}
+                                  >
+                                    {amountOptions.map((option) => (
+                                      <option key={`${option.label}-${option.amount}`} value={option.amount}>
+                                        {option.label} - {formatCurrency(option.amount)}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )
+                              ) : null}
+                              {draft.amountMode === "manual" ? (
+                                <span className="mt-2 flex overflow-hidden rounded-lg border border-slate-200 bg-white focus-within:border-blue-700">
+                                  <span className="inline-flex items-center border-r border-slate-200 bg-slate-50 px-2 text-[11px] font-semibold text-slate-600">
+                                    Rp
+                                  </span>
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    value={draft.manualAmount ? formatThousands(draft.manualAmount) : ""}
+                                    disabled={!canEdit || !draft.selected}
+                                    onChange={(event) =>
+                                      updateMaterialDraft(project.projectId, detail, (current) => ({
+                                        ...current,
+                                        selected: true,
+                                        amountMode: "manual",
+                                        manualAmount: normalizeDigits(event.currentTarget.value),
+                                      }))
+                                    }
+                                    placeholder="Masukkan nominal"
+                                    className="!h-9 !rounded-none !border-0 text-xs !shadow-none focus:!border-0"
+                                    aria-label={`Nominal manual ${detail.materialLabel}`}
+                                  />
+                                </span>
+                              ) : null}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-white px-3 py-2">
+          <p className="text-xs font-semibold text-blue-700">
+            {selectedCompletedBackfillMaterialRows.length} material dari desa selesai masuk simulasi input.
+          </p>
+          <KmpMaterialSubmitButton
+            canEdit={canEdit}
+            selectedCount={selectedMaterialRows.length}
+            invalidManualCount={invalidManualSelectionCount}
+          />
+        </div>
+      </section>
+    );
+  };
 
   const submitMaterialEditor = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -2073,6 +2569,8 @@ export function KmpMaterialMonitorPanel({
             </p>
           ) : null}
         </div>
+
+        {renderCompletedBackfillSection()}
 
         {filteredProjects.length === 0 ? (
           <p className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600">

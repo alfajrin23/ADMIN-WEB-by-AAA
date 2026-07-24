@@ -1528,10 +1528,13 @@ type KmpCianjurMissingMaterialProjectReport = {
   projectId: string;
   projectName: string;
   projectCode: string | null;
+  projectStatus: Project["status"];
   clientName: string | null;
+  projectExpenseTotal: number;
   detectedMaterials: string[];
   detectedMaterialDetails: KmpCianjurDetectedMaterialDetail[];
   missingMaterialDetails: KmpCianjurMaterialProgress[];
+  completedMissingMaterialDetails: KmpCianjurMaterialProgress[];
   materialProgress: KmpCianjurMaterialProgress[];
   missingMaterials: string[];
   detectedCount: number;
@@ -1902,6 +1905,10 @@ function isKmpMaterialRuleFulfilled(params: {
   return params.expenses.length > 0;
 }
 
+function isCompletedKmpMaterialProject(project: Project) {
+  return project.status === "selesai";
+}
+
 export function buildKmpCianjurMissingMaterialReport(
   projects: Project[],
   expenses: ExpenseEntry[],
@@ -1914,10 +1921,21 @@ export function buildKmpCianjurMissingMaterialReport(
 
   const expenseHaystacksByProjectId = new Map<string, string[]>();
   const materialExpensesByProjectId = new Map<string, ExpenseEntry[]>();
+  const expenseTotalByProjectId = new Map<string, number>();
   for (const expense of expenses) {
-    if (!expense.projectId || !isMaterialChecklistExpense(expense)) {
+    if (!expense.projectId) {
       continue;
     }
+
+    expenseTotalByProjectId.set(
+      expense.projectId,
+      (expenseTotalByProjectId.get(expense.projectId) ?? 0) + expense.amount,
+    );
+
+    if (!isMaterialChecklistExpense(expense)) {
+      continue;
+    }
+
     const haystack = buildExpenseMaterialHaystack(expense);
     const currentExpenses = materialExpensesByProjectId.get(expense.projectId) ?? [];
     currentExpenses.push(expense);
@@ -1933,9 +1951,11 @@ export function buildKmpCianjurMissingMaterialReport(
     const detectedMaterials: string[] = [];
     const detectedMaterialDetails: KmpCianjurDetectedMaterialDetail[] = [];
     const missingMaterialDetails: KmpCianjurMaterialProgress[] = [];
+    const completedMissingMaterialDetails: KmpCianjurMaterialProgress[] = [];
     const materialProgress: KmpCianjurMaterialProgress[] = [];
     const missingMaterials: string[] = [];
     const projectRules = buildKmpMaterialRulesForProject(project, materialConfigs);
+    const isCompletedProject = isCompletedKmpMaterialProject(project);
 
     for (const item of projectRules) {
       const detectedExpenses = materialExpenses.filter((expense, index) =>
@@ -1957,23 +1977,27 @@ export function buildKmpCianjurMissingMaterialReport(
       const hasGeneratedChecklist = detectedExpenses.some((expense) =>
         isGeneratedKmpMaterialChecklistForDetectionRule(item, expense),
       );
+      const isFulfilledByExpense = isKmpMaterialRuleFulfilled({
+        rule: item,
+        expenses: expenseRows,
+        hasGeneratedChecklist,
+      });
+      const isFulfilled =
+        isCompletedProject ||
+        isFulfilledByExpense;
       const progress: KmpCianjurMaterialProgress = {
         configId: item.configId,
         materialKey: item.materialKey,
         materialLabel: item.materialLabel,
-      materialName: item.materialName,
-      submissionName: item.submissionName,
-      standardAmount: item.standardAmount,
-      minimumAmount: item.minimumAmount,
+        materialName: item.materialName,
+        submissionName: item.submissionName,
+        standardAmount: item.standardAmount,
+        minimumAmount: item.minimumAmount,
         detectedAmount: expenseRows.reduce((sum, expense) => sum + expense.amount, 0),
         checklistType: item.checklistType,
         checklistStatus: item.checklistStatus,
         isCustom: item.isCustom,
-        isFulfilled: isKmpMaterialRuleFulfilled({
-          rule: item,
-          expenses: expenseRows,
-          hasGeneratedChecklist,
-        }),
+        isFulfilled,
         expenses: expenseRows,
       };
       materialProgress.push(progress);
@@ -1981,6 +2005,9 @@ export function buildKmpCianjurMissingMaterialReport(
       if (progress.isFulfilled) {
         detectedMaterials.push(item.materialLabel);
         detectedMaterialDetails.push(progress);
+        if (isCompletedProject && !isFulfilledByExpense) {
+          completedMissingMaterialDetails.push(progress);
+        }
       } else {
         missingMaterials.push(item.materialLabel);
         missingMaterialDetails.push(progress);
@@ -1991,10 +2018,13 @@ export function buildKmpCianjurMissingMaterialReport(
       projectId: project.id,
       projectName: project.name,
       projectCode: project.code,
+      projectStatus: project.status,
       clientName: project.clientName,
+      projectExpenseTotal: expenseTotalByProjectId.get(project.id) ?? 0,
       detectedMaterials,
       detectedMaterialDetails,
       missingMaterialDetails,
+      completedMissingMaterialDetails,
       materialProgress,
       missingMaterials,
       detectedCount: detectedMaterials.length,
@@ -2146,7 +2176,7 @@ const getCachedSupabaseKmpClientMaterialConfigs = unstable_cache(
   },
 );
 
-const getCachedSupabaseKmpProjectMaterialExpenseRows = cache(
+const getCachedSupabaseKmpProjectExpenseRows = cache(
   async (projectIdsKey: string): Promise<Record<string, unknown>[]> => {
     const projectIds = projectIdsKey
       .split("|")
@@ -2165,7 +2195,6 @@ const getCachedSupabaseKmpProjectMaterialExpenseRows = cache(
           (query) =>
             query
               .in("project_id", chunk)
-              .ilike("category", "%material%")
               .order("expense_date", { ascending: false }),
         ),
       ),
@@ -2203,16 +2232,16 @@ const getSupabaseKmpCianjurMissingMaterialReportCached = unstable_cache(
     ]);
     const kmpProjects = projects.filter((project) => isKmpCianjurClientName(project.clientName));
     const kmpProjectIdsKey = kmpProjects.map((project) => project.id).sort().join("|");
-    const materialExpenseRows = await getCachedSupabaseKmpProjectMaterialExpenseRows(kmpProjectIdsKey);
+    const expenseRows = await getCachedSupabaseKmpProjectExpenseRows(kmpProjectIdsKey);
     const projectNameMap = Object.fromEntries(
       kmpProjects.map((project) => [project.id, project.name] as const),
     );
-    const expenses = materialExpenseRows.map((row) =>
+    const expenses = expenseRows.map((row) =>
       mapExpense(row, projectNameMap[String(row.project_id ?? "")]),
     );
     return buildKmpCianjurMissingMaterialReport(kmpProjects, expenses, materialConfigs);
   },
-  ["supabase-kmp-missing-material-report-v6"],
+  ["supabase-kmp-missing-material-report-v7"],
   {
     revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
     tags: [CACHE_TAGS.projects, CACHE_TAGS.expenses, CACHE_TAGS.kmpProjectMaterials],

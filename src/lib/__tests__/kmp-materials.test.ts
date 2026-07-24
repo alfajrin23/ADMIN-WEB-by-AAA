@@ -114,6 +114,49 @@ describe("KMP Cianjur material checklist", () => {
     expect(report.projects[0]?.detectedMaterials).toContain("Custom Plafon");
   });
 
+  it("does not detect material from nominal or vendor-only matches", () => {
+    const bojongPetirProject: Project = {
+      ...project,
+      id: "bojong-petir",
+      name: "Bojong Petir",
+    };
+    const customMaterial: KmpClientMaterialConfig = {
+      id: "bojong-petir-alumunium",
+      clientKey: "kmp cianjur",
+      clientName: "KMP Cianjur",
+      materialKey: "bojong_petir_alumunium",
+      materialName: "Alumunium",
+      submissionName: null,
+      standardAmount: 46_105_000,
+      minimumAmount: 0,
+      checklistType: "system",
+      checklistStatus: "auto",
+      createdAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-01T00:00:00.000Z",
+    };
+    const report = buildKmpCianjurMissingMaterialReport(
+      [bojongPetirProject],
+      [
+        createExpense({
+          id: "bojong-petir-nominal-only",
+          projectId: bojongPetirProject.id,
+          description: "Pembelian material",
+          recipientName: "Supplier Alumunium Bojong Petir",
+          amount: 46_105_000,
+        }),
+      ],
+      [customMaterial],
+    );
+
+    const progress = report.projects[0]?.materialProgress.find(
+      (item) => item.materialKey === customMaterial.materialKey,
+    );
+
+    expect(progress?.expenses).toEqual([]);
+    expect(progress?.detectedAmount).toBe(0);
+    expect(progress?.isFulfilled).toBe(false);
+  });
+
   it("excludes generated checklist rows when resolving the majority requester", () => {
     const requesterName = buildKmpCianjurMaterialRequesterName(
       [project],

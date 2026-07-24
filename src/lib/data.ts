@@ -1622,8 +1622,6 @@ type KmpMaterialDetectionRule = {
   isCustom: boolean;
 };
 
-const KMP_CIANJUR_MATERIAL_AMOUNT_TOLERANCE = 0.2;
-
 const KMP_CIANJUR_NON_MATERIAL_SIGNAL_PATTERNS = [
   /\bhok\b/,
   /\bupah\b/,
@@ -1822,7 +1820,7 @@ function buildKmpMaterialRulesForProject(
 
 function buildExpenseMaterialHaystack(expense: ExpenseEntry) {
   return normalizeLooseText(
-    [expense.description, expense.usageInfo, expense.recipientName, expense.unitLabel].join(" "),
+    [expense.description, expense.usageInfo].join(" "),
   );
 }
 
@@ -1842,17 +1840,6 @@ function hasNonMaterialSignal(value: string) {
   return KMP_CIANJUR_NON_MATERIAL_SIGNAL_PATTERNS.some((pattern) => pattern.test(value));
 }
 
-function isGenericMaterialHaystack(value: string) {
-  if (!value) {
-    return true;
-  }
-
-  const specificTokens = value
-    .split(/\s+/)
-    .filter((token) => token.length > 0 && !KMP_CIANJUR_GENERIC_MATERIAL_TOKENS.has(token));
-  return specificTokens.length === 0;
-}
-
 function hasMaterialKeyword(haystack: string, keyword: string) {
   return ` ${haystack} `.includes(` ${keyword} `);
 }
@@ -1869,15 +1856,6 @@ function isGeneratedKmpMaterialChecklistExpense(expense: Pick<ExpenseEntry, "usa
   return normalizeLooseText(expense.usageInfo).startsWith("checklist material kmp cianjur");
 }
 
-function isGeneratedKmpMaterialChecklistForRule(
-  item: KmpMaterialChecklistRule,
-  expense: Pick<ExpenseEntry, "usageInfo">,
-) {
-  return normalizeLooseText(expense.usageInfo).startsWith(
-    normalizeLooseText(`Checklist Material KMP Cianjur - ${item.label}`),
-  );
-}
-
 function isGeneratedKmpMaterialChecklistForDetectionRule(
   item: KmpMaterialDetectionRule,
   expense: Pick<ExpenseEntry, "usageInfo">,
@@ -1892,135 +1870,16 @@ function isGeneratedKmpMaterialChecklistForDetectionRule(
     .some((prefix) => usageInfo.startsWith(prefix));
 }
 
-function getAmountDistanceFromMaterialTarget(amount: number, target: number) {
-  if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(target) || target <= 0) {
-    return null;
-  }
-  const minimum = target * (1 - KMP_CIANJUR_MATERIAL_AMOUNT_TOLERANCE);
-  const maximum = target * (1 + KMP_CIANJUR_MATERIAL_AMOUNT_TOLERANCE);
-  if (amount < minimum || amount > maximum) {
-    return null;
-  }
-  return Math.abs(amount - target) / target;
-}
-
-function getMaterialRuleAmountDistance(item: KmpMaterialChecklistRule, amount: number) {
-  const distances = (item.amountTargets ?? [])
-    .map((target) => getAmountDistanceFromMaterialTarget(amount, target))
-    .filter((distance): distance is number => distance !== null);
-  if (distances.length === 0) {
-    return null;
-  }
-  return Math.min(...distances);
-}
-
-function getDetectionRuleAmountDistance(item: KmpMaterialDetectionRule, amount: number) {
-  const distances = (item.amountTargets ?? [])
-    .map((target) => getAmountDistanceFromMaterialTarget(amount, target))
-    .filter((distance): distance is number => distance !== null);
-  if (distances.length === 0) {
-    return null;
-  }
-  return Math.min(...distances);
-}
-
-function isClosestMaterialAmountRule(
-  item: KmpMaterialChecklistRule,
-  expense: ExpenseEntry,
-  allRules: KmpMaterialChecklistRule[],
-) {
-  const itemDistance = getMaterialRuleAmountDistance(item, expense.amount);
-  if (itemDistance === null) {
-    return false;
-  }
-
-  const closestDistance = Math.min(
-    ...allRules
-      .map((rule) => getMaterialRuleAmountDistance(rule, expense.amount))
-      .filter((distance): distance is number => distance !== null),
-  );
-  return itemDistance <= closestDistance + Number.EPSILON;
-}
-
-function isClosestMaterialDetectionRule(
-  item: KmpMaterialDetectionRule,
-  expense: ExpenseEntry,
-  allRules: KmpMaterialDetectionRule[],
-) {
-  const itemDistance = getDetectionRuleAmountDistance(item, expense.amount);
-  if (itemDistance === null) {
-    return false;
-  }
-
-  const closestDistance = Math.min(
-    ...allRules
-      .map((rule) => getDetectionRuleAmountDistance(rule, expense.amount))
-      .filter((distance): distance is number => distance !== null),
-  );
-  return itemDistance <= closestDistance + Number.EPSILON;
-}
-
-function isMaterialRuleDetectedByExpense(
-  item: KmpMaterialChecklistRule,
-  expense: ExpenseEntry,
-  haystack: string,
-  allRules: KmpMaterialChecklistRule[],
-) {
-  if (isGeneratedKmpMaterialChecklistForRule(item, expense)) {
-    return true;
-  }
-
-  if (item.minimumDetectedAmount && expense.amount < item.minimumDetectedAmount) {
-    return false;
-  }
-
-  const hasKeywordMatch = item.keywords.some((keyword) => hasMaterialKeyword(haystack, keyword));
-  if (hasKeywordMatch) {
-    return true;
-  }
-
-  const hasDifferentMaterialKeyword = allRules.some((rule) =>
-    rule.key !== item.key && rule.keywords.some((keyword) => hasMaterialKeyword(haystack, keyword)),
-  );
-  if (hasDifferentMaterialKeyword) {
-    return false;
-  }
-
-  if (!isGenericMaterialHaystack(haystack)) {
-    return false;
-  }
-
-  return isClosestMaterialAmountRule(item, expense, allRules);
-}
-
 function isMaterialDetectionRuleMatchedByExpense(
   item: KmpMaterialDetectionRule,
   expense: ExpenseEntry,
   haystack: string,
-  allRules: KmpMaterialDetectionRule[],
 ) {
   if (isGeneratedKmpMaterialChecklistForDetectionRule(item, expense)) {
     return true;
   }
 
-  const hasKeywordMatch = item.keywords.some((keyword) => hasMaterialKeyword(haystack, keyword));
-  if (hasKeywordMatch) {
-    return true;
-  }
-
-  const hasDifferentMaterialKeyword = allRules.some((rule) =>
-    rule.materialKey !== item.materialKey &&
-    rule.keywords.some((keyword) => hasMaterialKeyword(haystack, keyword)),
-  );
-  if (hasDifferentMaterialKeyword) {
-    return false;
-  }
-
-  if (!isGenericMaterialHaystack(haystack)) {
-    return false;
-  }
-
-  return isClosestMaterialDetectionRule(item, expense, allRules);
+  return item.keywords.some((keyword) => hasMaterialKeyword(haystack, keyword));
 }
 
 function isKmpMaterialRuleFulfilled(params: {
@@ -2080,7 +1939,7 @@ export function buildKmpCianjurMissingMaterialReport(
 
     for (const item of projectRules) {
       const detectedExpenses = materialExpenses.filter((expense, index) =>
-        isMaterialDetectionRuleMatchedByExpense(item, expense, haystacks[index] ?? "", projectRules),
+        isMaterialDetectionRuleMatchedByExpense(item, expense, haystacks[index] ?? ""),
       );
       const expenseRows = detectedExpenses
         .map((expense) => ({

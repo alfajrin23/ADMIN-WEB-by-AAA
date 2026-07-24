@@ -1172,10 +1172,6 @@ export function KmpMaterialMonitorPanel({
   const activeMaterialEditor = normalizeMaterialEditorState(materialEditor);
 
   const renderCompletedBackfillSection = () => {
-    if (completedBackfillProjects.length === 0) {
-      return null;
-    }
-
     return (
       <section className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1248,8 +1244,13 @@ export function KmpMaterialMonitorPanel({
           </div>
         </div>
 
-        <div className="mt-3 grid gap-3 lg:grid-cols-2">
-          {completedBackfillProjects.map((project) => {
+        {completedBackfillProjects.length === 0 ? (
+          <p className="mt-3 rounded-xl border border-emerald-200 bg-white px-3 py-4 text-sm font-semibold text-emerald-700">
+            Belum ada desa KMP status selesai yang membutuhkan input material tambahan.
+          </p>
+        ) : (
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            {completedBackfillProjects.map((project) => {
             const isProjectSelected = selectedCompletedProjectIdSet.has(project.projectId);
             const projectSimulationAmount = selectedAmountByProjectId.get(project.projectId) ?? 0;
             const selectedMaterialCount = project.completedMissingMaterialDetails.filter(
@@ -1484,8 +1485,9 @@ export function KmpMaterialMonitorPanel({
                 ) : null}
               </article>
             );
-          })}
-        </div>
+            })}
+          </div>
+        )}
 
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-white px-3 py-2">
           <p className="text-xs font-semibold text-blue-700">

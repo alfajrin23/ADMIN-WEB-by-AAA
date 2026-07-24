@@ -44,6 +44,45 @@ function createExpense(
 }
 
 describe("KMP Cianjur material checklist", () => {
+  it("excludes Hollo and Wiremesh from the KMP material check", () => {
+    const removedConfigs: KmpClientMaterialConfig[] = [
+      {
+        id: "removed-hollo",
+        clientKey: "kmp cianjur",
+        clientName: "KMP Cianjur",
+        materialKey: "hollo",
+        materialName: "Hollo",
+        submissionName: null,
+        standardAmount: 69_440_000,
+        minimumAmount: 0,
+        checklistType: "system",
+        checklistStatus: "auto",
+        createdAt: "2026-05-01T00:00:00.000Z",
+        updatedAt: "2026-05-01T00:00:00.000Z",
+      },
+      {
+        id: "removed-wiremesh",
+        clientKey: "kmp cianjur",
+        clientName: "KMP Cianjur",
+        materialKey: "wiremesh",
+        materialName: "Wiremesh",
+        submissionName: null,
+        standardAmount: 10_500_000,
+        minimumAmount: 0,
+        checklistType: "system",
+        checklistStatus: "auto",
+        createdAt: "2026-05-01T00:00:00.000Z",
+        updatedAt: "2026-05-01T00:00:00.000Z",
+      },
+    ];
+    const report = buildKmpCianjurMissingMaterialReport([project], [], removedConfigs);
+
+    expect(KMP_CIANJUR_MATERIAL_CHECKLIST.map((item) => item.key)).not.toContain("hollo");
+    expect(KMP_CIANJUR_MATERIAL_CHECKLIST.map((item) => item.key)).not.toContain("wiremesh");
+    expect(report.projects[0]?.materialProgress.map((item) => item.materialKey)).not.toContain("hollo");
+    expect(report.projects[0]?.materialProgress.map((item) => item.materialKey)).not.toContain("wiremesh");
+  });
+
   it("includes Cat with the required minimum detection amount", () => {
     const rule = getKmpCianjurMaterialRule("cat");
 

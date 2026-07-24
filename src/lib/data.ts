@@ -24,6 +24,7 @@ import { readExcelDatabase } from "@/lib/excel-db";
 import { getFirestoreServerClient } from "@/lib/firebase";
 import {
   KMP_CIANJUR_MATERIAL_CHECKLIST,
+  isRemovedKmpCianjurMaterial,
   type KmpMaterialChecklistRule,
 } from "@/lib/kmp-materials";
 import { activeDataSource } from "@/lib/storage";
@@ -1806,7 +1807,13 @@ function buildKmpMaterialRulesForProject(
   configs: KmpClientMaterialConfig[],
 ) {
   const isKmpCianjurProject = isKmpCianjurClientName(project.clientName);
-  const clientConfigs = isKmpCianjurProject ? getClientMaterialConfigsForProject(configs, project) : [];
+  const clientConfigs = isKmpCianjurProject
+    ? getClientMaterialConfigsForProject(configs, project).filter(
+        (config) =>
+          !isRemovedKmpCianjurMaterial(config.materialKey) &&
+          !isRemovedKmpCianjurMaterial(config.materialName),
+      )
+    : [];
   const configByMaterialKey = getConfigByMaterialKey(clientConfigs);
   const checklistRules = isKmpCianjurProject
     ? KMP_CIANJUR_MATERIAL_CHECKLIST.map((item) =>

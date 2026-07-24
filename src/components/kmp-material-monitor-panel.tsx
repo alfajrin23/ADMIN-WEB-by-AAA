@@ -100,6 +100,7 @@ type StatusFilter = "all" | "incomplete" | "complete" | "most-detected";
 type AmountMode = "none" | "system" | "manual";
 type ChecklistStatus = "auto" | "pending" | "fulfilled";
 type MasterMaterialDetailMode = "missing" | "detected";
+type FieldMaterialAddMode = "check" | "manual";
 
 type MaterialDraft = {
   selected: boolean;
@@ -114,11 +115,17 @@ type MaterialSelectionRow = {
   projectId: string;
   projectName: string;
   materialKey: string;
+  materialLabel?: string;
   materialName: string;
   submissionName: string;
   amountMode: AmountMode;
   systemAmount: string;
   manualAmount: string;
+};
+
+type ManualMaterialDraft = MaterialSelectionRow & {
+  id: string;
+  selected: boolean;
 };
 
 type MaterialEditorState = {
@@ -190,6 +197,14 @@ function normalizeDigits(value: string) {
     return "";
   }
   return digits.replace(/^0+(?=\d)/, "") || "0";
+}
+
+function createManualMaterialKey(value: string) {
+  const normalized = normalizeText(value)
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/_+/g, "_");
+  return `manual_${normalized || "material"}_${Date.now().toString(36)}`;
 }
 
 function formatThousands(value: string) {
@@ -614,7 +629,17 @@ export function KmpMaterialMonitorPanel({
   const [visibleProjectLimit, setVisibleProjectLimit] = useState(PROJECT_RENDER_BATCH_SIZE);
   const [expenseDate, setExpenseDate] = useState(today);
   const [materialDrafts, setMaterialDrafts] = useState<Record<string, MaterialDraft>>({});
+  const [manualMaterialDrafts, setManualMaterialDrafts] = useState<ManualMaterialDraft[]>([]);
+  const [isFieldCompleteModalOpen, setIsFieldCompleteModalOpen] = useState(false);
   const [selectedFieldCompleteProjectIds, setSelectedFieldCompleteProjectIds] = useState<string[]>([]);
+  const [fieldMaterialAddMode, setFieldMaterialAddMode] = useState<FieldMaterialAddMode>("check");
+  const [fieldCheckMaterialSearch, setFieldCheckMaterialSearch] = useState("");
+  const [manualFieldMaterialProjectId, setManualFieldMaterialProjectId] = useState("");
+  const [manualFieldMaterialName, setManualFieldMaterialName] = useState("");
+  const [manualFieldSubmissionName, setManualFieldSubmissionName] = useState("");
+  const [manualFieldAmountMode, setManualFieldAmountMode] = useState<AmountMode>("manual");
+  const [manualFieldAmountRaw, setManualFieldAmountRaw] = useState("");
+  const [manualFieldError, setManualFieldError] = useState("");
   const [selectedDetectedMaterial, setSelectedDetectedMaterial] = useState<{
     projectId: string;
     materialKey: string;
@@ -812,7 +837,18 @@ export function KmpMaterialMonitorPanel({
       const next = current.filter((projectId) => validProjectIds.has(projectId));
       return next.length === current.length ? current : next;
     });
+    setManualMaterialDrafts((current) => current.filter((row) => validProjectIds.has(row.projectId)));
   }, [fieldCompleteCandidateProjects]);
+
+  useEffect(() => {
+    if (selectedFieldCompleteProjects.length === 0) {
+      setManualFieldMaterialProjectId("");
+      return;
+    }
+    if (!selectedFieldCompleteProjects.some((project) => project.projectId === manualFieldMaterialProjectId)) {
+      setManualFieldMaterialProjectId(selectedFieldCompleteProjects[0].projectId);
+    }
+  }, [manualFieldMaterialProjectId, selectedFieldCompleteProjects]);
 
   const toggleFieldCompleteProject = (project: KmpMaterialMonitorProject, checked: boolean) => {
     setSelectedFieldCompleteProjectIds((current) => {
@@ -822,6 +858,9 @@ export function KmpMaterialMonitorPanel({
       return current.filter((projectId) => projectId !== project.projectId);
     });
     setProjectMaterialDraftSelection(project, project.missingMaterialDetails, checked);
+    if (!checked) {
+      setManualMaterialDrafts((current) => current.filter((row) => row.projectId !== project.projectId));
+    }
   };
 
   const selectAllFieldCompleteProjects = () => {
@@ -853,6 +892,7 @@ export function KmpMaterialMonitorPanel({
 
   const clearFieldCompleteProjects = () => {
     setSelectedFieldCompleteProjectIds([]);
+    setManualMaterialDrafts([]);
     setMaterialDrafts((previous) => {
       const next = { ...previous };
       for (const project of fieldCompleteCandidateProjects) {
@@ -868,6 +908,83 @@ export function KmpMaterialMonitorPanel({
       }
       return next;
     });
+  };
+
+  const selectFieldCheckMaterial = (
+    project: KmpMaterialMonitorProject,
+    detail: KmpMaterialMonitorProject["missingMaterialDetails"][number],
+  ) => {
+    if (!selectedFieldCompleteProjectIdSet.has(project.projectId)) {
+      toggleFieldCompleteProject(project, true);
+    }
+    updateMaterialDraft(project.projectId, detail, (current) => ({
+      ...current,
+      selected: true,
+      amountMode: current.amountMode === "none"
+        ? getDefaultSelectedAmountMode(createMaterialRuleFromDetail(detail))
+        : current.amountMode,
+      materialName: current.materialName || detail.materialName || detail.materialLabel,
+      submissionName: current.submissionName || detail.submissionName || "",
+    }));
+  };
+
+  const updateManualMaterialDraft = (
+    id: string,
+    updater: (draft: ManualMaterialDraft) => ManualMaterialDraft,
+  ) => {
+    setManualMaterialDrafts((current) =>
+      current.map((draft) => (draft.id === id ? updater(draft) : draft)),
+    );
+  };
+
+  const removeManualMaterialDraft = (id: string) => {
+    setManualMaterialDrafts((current) => current.filter((draft) => draft.id !== id));
+  };
+
+  const resetManualFieldMaterialForm = () => {
+    setManualFieldMaterialName("");
+    setManualFieldSubmissionName("");
+    setManualFieldAmountMode("manual");
+    setManualFieldAmountRaw("");
+    setManualFieldError("");
+  };
+
+  const addManualFieldMaterial = () => {
+    const project = selectedFieldCompleteProjects.find(
+      (item) => item.projectId === manualFieldMaterialProjectId,
+    );
+    const materialName = manualFieldMaterialName.trim();
+    if (!project) {
+      setManualFieldError("Pilih desa 100% lapangan terlebih dahulu.");
+      return;
+    }
+    if (!materialName) {
+      setManualFieldError("Nama material manual wajib diisi.");
+      return;
+    }
+    if (manualFieldAmountMode === "manual" && normalizeDigits(manualFieldAmountRaw).length === 0) {
+      setManualFieldError("Isi nominal manual atau pilih tanpa nominal.");
+      return;
+    }
+
+    const materialKey = createManualMaterialKey(materialName);
+    setManualMaterialDrafts((current) => [
+      ...current,
+      {
+        id: materialKey,
+        selected: true,
+        projectId: project.projectId,
+        projectName: project.projectName,
+        materialKey,
+        materialLabel: materialName,
+        materialName,
+        submissionName: manualFieldSubmissionName.trim(),
+        amountMode: manualFieldAmountMode,
+        systemAmount: "",
+        manualAmount: normalizeDigits(manualFieldAmountRaw),
+      },
+    ]);
+    resetManualFieldMaterialForm();
   };
 
   const filteredProjects = useMemo(() => {
@@ -1069,6 +1186,7 @@ export function KmpMaterialMonitorPanel({
           projectId: project.projectId,
           projectName: project.projectName,
           materialKey: rule.key,
+          materialLabel: detail.materialLabel,
           materialName: draft.materialName.trim() || rule.label,
           submissionName: draft.submissionName.trim(),
           amountMode: draft.amountMode,
@@ -1078,8 +1196,25 @@ export function KmpMaterialMonitorPanel({
       }
     }
 
+    for (const draft of manualMaterialDrafts) {
+      if (!draft.selected) {
+        continue;
+      }
+      rows.push({
+        projectId: draft.projectId,
+        projectName: draft.projectName,
+        materialKey: draft.materialKey,
+        materialLabel: draft.materialLabel ?? draft.materialName,
+        materialName: draft.materialName.trim(),
+        submissionName: draft.submissionName.trim(),
+        amountMode: draft.amountMode,
+        systemAmount: draft.systemAmount,
+        manualAmount: draft.manualAmount,
+      });
+    }
+
     return rows;
-  }, [materialDrafts, projects]);
+  }, [manualMaterialDrafts, materialDrafts, projects]);
   const visibleProjects = useMemo(
     () => filteredProjects.slice(0, visibleProjectLimit),
     [filteredProjects, visibleProjectLimit],
@@ -1108,6 +1243,43 @@ export function KmpMaterialMonitorPanel({
     () => selectedMaterialRows.filter((row) => selectedFieldCompleteProjectIdSet.has(row.projectId)),
     [selectedFieldCompleteProjectIdSet, selectedMaterialRows],
   );
+  const fieldCheckMaterialRows = useMemo(() => {
+    const normalizedSearch = normalizeText(fieldCheckMaterialSearch);
+    return selectedFieldCompleteProjects
+      .flatMap((project) =>
+        project.missingMaterialDetails.map((detail) => ({
+          project,
+          detail,
+        })),
+      )
+      .filter(({ project, detail }) => {
+        if (!normalizedSearch) {
+          return true;
+        }
+        return normalizeText(
+          [
+            project.projectName,
+            project.projectCode ?? "",
+            detail.materialLabel,
+            detail.materialName,
+            detail.submissionName ?? "",
+          ].join(" "),
+        ).includes(normalizedSearch);
+      })
+      .sort((a, b) => {
+        const projectDiff = a.project.projectName.localeCompare(b.project.projectName, "id-ID");
+        return projectDiff !== 0 ? projectDiff : a.detail.materialLabel.localeCompare(b.detail.materialLabel, "id-ID");
+      });
+  }, [fieldCheckMaterialSearch, selectedFieldCompleteProjects]);
+  const manualMaterialDraftsByProjectId = useMemo(() => {
+    const rowsByProjectId = new Map<string, ManualMaterialDraft[]>();
+    for (const draft of manualMaterialDrafts) {
+      const current = rowsByProjectId.get(draft.projectId) ?? [];
+      current.push(draft);
+      rowsByProjectId.set(draft.projectId, current);
+    }
+    return rowsByProjectId;
+  }, [manualMaterialDrafts]);
   const fieldCompleteBeforeTotal = useMemo(
     () =>
       selectedFieldCompleteProjects.reduce(
@@ -1145,334 +1317,766 @@ export function KmpMaterialMonitorPanel({
   const activeMaterialEditor = normalizeMaterialEditorState(materialEditor);
 
   const renderFieldCompleteMaterialSection = () => {
-    return (
-      <section className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700">
-              Input Material Desa 100%
-            </p>
-            <h4 className="mt-1 text-base font-black text-slate-950">
-              Pilih desa yang sudah 100% di lapangan
-            </h4>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              data-ui-button="true"
-              disabled={!canEdit || fieldCompleteCandidateProjects.length === 0}
-              onClick={selectAllFieldCompleteProjects}
-              className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Pilih Semua Kandidat
-            </button>
-            <button
-              type="button"
-              data-ui-button="true"
-              disabled={!canEdit || selectedFieldCompleteProjectIds.length === 0}
-              onClick={clearFieldCompleteProjects}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Kosongkan
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-          <div className="rounded-xl border border-emerald-200 bg-white px-3 py-2">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">
-              Kandidat Desa
-            </p>
-            <p className="mt-1 text-lg font-black text-slate-950">{fieldCompleteCandidateProjects.length}</p>
-          </div>
-          <div className="rounded-xl border border-emerald-200 bg-white px-3 py-2">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">
-              Desa Dipilih
-            </p>
-            <p className="mt-1 text-lg font-black text-slate-950">{selectedFieldCompleteProjects.length}</p>
-          </div>
-          <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-blue-700">
-              Material Simulasi
-            </p>
-            <p className="mt-1 text-lg font-black text-blue-950">
-              {formatCurrency(fieldCompleteMaterialTotal)}
-            </p>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-              Sebelum Input
-            </p>
-            <p className="mt-1 text-lg font-black text-slate-950">
-              {formatCurrency(fieldCompleteBeforeTotal)}
-            </p>
-          </div>
-          <div className="rounded-xl border border-emerald-300 bg-emerald-100 px-3 py-2">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-800">
-              Sesudah Input
-            </p>
-            <p className="mt-1 text-lg font-black text-emerald-950">
-              {formatCurrency(fieldCompleteAfterTotal)}
-            </p>
-          </div>
-        </div>
-
-        {fieldCompleteCandidateProjects.length === 0 ? (
-          <p className="mt-3 rounded-xl border border-emerald-200 bg-white px-3 py-4 text-sm font-semibold text-emerald-700">
-            Belum ada desa KMP yang materialnya belum lengkap di web.
+    const renderSummaryCards = () => (
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="rounded-xl border border-emerald-200 bg-white px-3 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">
+            Kandidat Desa
           </p>
-        ) : (
-          <div className="mt-3 grid gap-3 lg:grid-cols-2">
-            {fieldCompleteCandidateProjects.map((project) => {
-            const isProjectSelected = selectedFieldCompleteProjectIdSet.has(project.projectId);
-            const projectSimulationAmount = selectedAmountByProjectId.get(project.projectId) ?? 0;
-            const selectedMaterialCount = project.missingMaterialDetails.filter(
-              (detail) => getMaterialDraft(project.projectId, detail).selected,
-            ).length;
+          <p className="mt-1 text-lg font-black text-slate-950">{fieldCompleteCandidateProjects.length}</p>
+        </div>
+        <div className="rounded-xl border border-emerald-200 bg-white px-3 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">
+            Desa Dipilih
+          </p>
+          <p className="mt-1 text-lg font-black text-slate-950">{selectedFieldCompleteProjects.length}</p>
+        </div>
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-blue-700">
+            Material Simulasi
+          </p>
+          <p className="mt-1 text-lg font-black text-blue-950">
+            {formatCurrency(fieldCompleteMaterialTotal)}
+          </p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+            Sebelum Input
+          </p>
+          <p className="mt-1 text-lg font-black text-slate-950">
+            {formatCurrency(fieldCompleteBeforeTotal)}
+          </p>
+        </div>
+        <div className="rounded-xl border border-emerald-300 bg-emerald-100 px-3 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-800">
+            Sesudah Input
+          </p>
+          <p className="mt-1 text-lg font-black text-emerald-950">
+            {formatCurrency(fieldCompleteAfterTotal)}
+          </p>
+        </div>
+      </div>
+    );
 
-            return (
-              <article
-                key={`field-complete-${project.projectId}`}
-                className={`rounded-xl border bg-white p-3 ${
-                  isProjectSelected ? "border-emerald-300 shadow-sm" : "border-slate-200"
-                }`}
+    return (
+      <>
+        <section className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700">
+                Input Material Desa 100%
+              </p>
+              <h4 className="mt-1 text-base font-black text-slate-950">
+                Buka modal input desa 100% lapangan
+              </h4>
+              <p className="mt-1 text-xs text-emerald-800">
+                Pilih desa yang sudah 100% di lapangan, lalu tentukan material yang ingin dimasukkan.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                data-ui-button="true"
+                disabled={fieldCompleteCandidateProjects.length === 0}
+                onClick={() => setIsFieldCompleteModalOpen(true)}
+                className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <label className="flex min-w-0 flex-1 items-start gap-2">
-                    <input
-                      type="checkbox"
-                      checked={isProjectSelected}
-                      disabled={!canEdit}
-                      onChange={(event) =>
-                        toggleFieldCompleteProject(project, event.currentTarget.checked)
-                      }
-                      className="mt-1 h-4 w-4"
-                      aria-label={`Pilih desa 100% lapangan ${project.projectName}`}
-                    />
-                    <span className="min-w-0">
-                      <span className="block text-sm font-black text-slate-950">
-                        {project.projectName}
-                      </span>
-                      <span className="mt-1 block text-[11px] font-semibold text-emerald-700">
-                        {project.missingMaterialDetails.length} material belum tercatat di web
-                      </span>
-                    </span>
-                  </label>
-                  <Link
-                    href={project.recapHref}
-                    className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
+                Buka Modal
+              </button>
+              <button
+                type="button"
+                data-ui-button="true"
+                disabled={!canEdit || selectedFieldCompleteProjectIds.length === 0}
+                onClick={clearFieldCompleteProjects}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Kosongkan
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-3">{renderSummaryCards()}</div>
+
+          {fieldCompleteCandidateProjects.length === 0 ? (
+            <p className="mt-3 rounded-xl border border-emerald-200 bg-white px-3 py-4 text-sm font-semibold text-emerald-700">
+              Belum ada desa KMP yang materialnya belum lengkap di web.
+            </p>
+          ) : (
+            <p className="mt-3 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700">
+              {selectedFieldCompleteMaterialRows.length} material dari desa 100% lapangan masuk simulasi input.
+            </p>
+          )}
+        </section>
+
+        {isFieldCompleteModalOpen ? (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center p-3">
+            <button
+              type="button"
+              aria-label="Tutup input material desa 100%"
+              onClick={() => setIsFieldCompleteModalOpen(false)}
+              className="absolute inset-0 bg-slate-950/60"
+            />
+            <section
+              className="panel relative z-10 max-h-[calc(100vh-1.5rem)] w-full max-w-7xl overflow-y-auto p-4"
+              onClick={(event) => event.stopPropagation()}
+              onMouseDown={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700">
+                    Input Material Desa 100%
+                  </p>
+                  <h3 className="mt-1 text-lg font-black text-slate-950">
+                    Desa 100% lapangan dengan material belum tercatat
+                  </h3>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    data-ui-button="true"
+                    disabled={!canEdit || fieldCompleteCandidateProjects.length === 0}
+                    onClick={selectAllFieldCompleteProjects}
+                    className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Buka Rekap
-                  </Link>
+                    Pilih Semua Kandidat
+                  </button>
+                  <button
+                    type="button"
+                    data-ui-button="true"
+                    disabled={!canEdit || selectedFieldCompleteProjectIds.length === 0}
+                    onClick={clearFieldCompleteProjects}
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Kosongkan
+                  </button>
+                  <button
+                    type="button"
+                    data-ui-button="true"
+                    onClick={() => setIsFieldCompleteModalOpen(false)}
+                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                  >
+                    <span className="btn-icon bg-slate-100 text-slate-600">
+                      <CloseIcon />
+                    </span>
+                    Tutup
+                  </button>
                 </div>
+              </div>
 
-                <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                      Sebelum
-                    </p>
-                    <p className="mt-1 text-xs font-black text-slate-900">
-                      {formatCurrency(project.projectExpenseTotal)}
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-1.5">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-blue-700">
-                      Material
-                    </p>
-                    <p className="mt-1 text-xs font-black text-blue-950">
-                      {formatCurrency(projectSimulationAmount)}
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">
-                      Sesudah
-                    </p>
-                    <p className="mt-1 text-xs font-black text-emerald-950">
-                      {formatCurrency(project.projectExpenseTotal + projectSimulationAmount)}
-                    </p>
-                  </div>
-                </div>
+              <div className="mt-3">{renderSummaryCards()}</div>
 
-                {isProjectSelected ? (
-                  <div className="mt-3 space-y-2">
-                    <p className="text-[11px] font-semibold text-slate-600">
-                      {selectedMaterialCount}/{project.missingMaterialDetails.length} material dipilih
-                    </p>
-                    {project.missingMaterialDetails.map((detail) => {
-                      const rule = createMaterialRuleFromDetail(detail);
-                      const draft = getMaterialDraft(project.projectId, detail, detail.submissionName ?? "", detail.standardAmount);
-                      const amountOptions = detail.standardAmount > 0
-                        ? [{ label: "Standard", amount: detail.standardAmount }]
-                        : getKmpCianjurMaterialAmountOptions(rule);
+              <div className="mt-4 grid gap-4 xl:grid-cols-[22rem_minmax(0,1fr)]">
+                <aside className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+                    List Desa
+                  </p>
+                  <div className="mt-3 max-h-[55vh] space-y-2 overflow-y-auto pr-1">
+                    {fieldCompleteCandidateProjects.map((project) => {
+                      const isProjectSelected = selectedFieldCompleteProjectIdSet.has(project.projectId);
+                      const projectSimulationAmount = selectedAmountByProjectId.get(project.projectId) ?? 0;
+                      const manualCount = manualMaterialDraftsByProjectId.get(project.projectId)?.length ?? 0;
+                      const selectedMaterialCount = project.missingMaterialDetails.filter(
+                        (detail) => getMaterialDraft(project.projectId, detail).selected,
+                      ).length + manualCount;
 
                       return (
-                        <div
-                          key={`field-complete-material-${project.projectId}-${detail.materialKey}`}
-                          className={`rounded-lg border p-2 ${
-                            draft.selected ? "border-blue-300 bg-blue-50/60" : "border-slate-200 bg-slate-50"
+                        <label
+                          key={`field-complete-picker-${project.projectId}`}
+                          className={`block rounded-xl border bg-white p-3 ${
+                            isProjectSelected ? "border-emerald-300" : "border-slate-200"
                           }`}
                         >
-                          <div className="flex items-start gap-2">
+                          <span className="flex items-start gap-2">
                             <input
                               type="checkbox"
-                              checked={draft.selected}
+                              checked={isProjectSelected}
                               disabled={!canEdit}
-                              onChange={(event) => {
-                                const checked = event.currentTarget.checked;
-                                updateMaterialDraft(project.projectId, detail, (current) => ({
-                                  ...current,
-                                  selected: checked,
-                                  amountMode:
-                                    checked && current.amountMode === "none"
-                                      ? getDefaultSelectedAmountMode(rule)
-                                      : current.amountMode,
-                                }));
-                              }}
-                              className="mt-2 h-4 w-4"
-                              aria-label={`Pilih material ${detail.materialLabel}`}
+                              onChange={(event) =>
+                                toggleFieldCompleteProject(project, event.currentTarget.checked)
+                              }
+                              className="mt-1 h-4 w-4"
+                              aria-label={`Pilih desa 100% lapangan ${project.projectName}`}
                             />
-                            <span className="min-w-0 flex-1">
-                              <span className="block text-xs font-black text-slate-900">
-                                {detail.materialLabel}
+                            <span className="min-w-0">
+                              <span className="block text-sm font-black text-slate-950">
+                                {project.projectName}
                               </span>
-                              <input
-                                type="text"
-                                value={draft.materialName}
-                                disabled={!canEdit || !draft.selected}
-                                onChange={(event) =>
-                                  updateMaterialDraft(project.projectId, detail, (current) => ({
-                                    ...current,
-                                    materialName: event.currentTarget.value,
-                                    selected: true,
-                                  }))
-                                }
-                                className="mt-2 !h-9 !rounded-lg text-xs font-semibold"
-                                aria-label={`Nama material ${detail.materialLabel}`}
-                              />
-                              <input
-                                type="text"
-                                value={draft.submissionName}
-                                disabled={!canEdit || !draft.selected}
-                                onChange={(event) =>
-                                  updateMaterialDraft(project.projectId, detail, (current) => ({
-                                    ...current,
-                                    submissionName: event.currentTarget.value,
-                                    selected: true,
-                                  }))
-                                }
-                                placeholder="Nama pengajuan untuk rincian"
-                                className="mt-2 !h-9 !rounded-lg text-xs font-semibold"
-                                aria-label={`Nama pengajuan ${detail.materialLabel}`}
-                              />
-                              <span className="mt-2 flex flex-wrap gap-1.5">
-                                {[
-                                  { key: "none", label: "Tanpa nominal" },
-                                  { key: "system", label: "Sistem" },
-                                  { key: "manual", label: "Manual" },
-                                ].map((item) => {
-                                  const disabled = !canEdit ||
-                                    !draft.selected ||
-                                    (item.key === "system" && amountOptions.length === 0);
-                                  return (
-                                    <button
-                                      key={item.key}
-                                      type="button"
-                                      data-ui-button="true"
-                                      disabled={disabled}
-                                      onClick={() =>
-                                        updateMaterialDraft(project.projectId, detail, (current) => ({
-                                          ...current,
-                                          selected: true,
-                                          amountMode: item.key as AmountMode,
-                                        }))
-                                      }
-                                      className={`rounded-lg border px-2 py-1 text-[10px] font-semibold ${
-                                        draft.amountMode === item.key
-                                          ? "border-blue-700 bg-blue-700 text-white"
-                                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
-                                      } disabled:cursor-not-allowed disabled:opacity-50`}
-                                    >
-                                      {item.label}
-                                    </button>
-                                  );
-                                })}
+                              <span className="mt-1 block text-[11px] font-semibold text-emerald-700">
+                                {selectedMaterialCount}/{project.missingMaterialDetails.length + manualCount} material dipilih
                               </span>
-                              {draft.amountMode === "system" && amountOptions.length > 0 ? (
-                                amountOptions.length === 1 ? (
-                                  <span className="mt-2 block text-[11px] font-semibold text-emerald-700">
-                                    Nominal sistem: {formatCurrency(amountOptions[0].amount)}
-                                  </span>
-                                ) : (
-                                  <select
-                                    value={draft.systemAmount || String(amountOptions[0].amount)}
-                                    disabled={!canEdit || !draft.selected}
-                                    onChange={(event) =>
-                                      updateMaterialDraft(project.projectId, detail, (current) => ({
-                                        ...current,
-                                        selected: true,
-                                        amountMode: "system",
-                                        systemAmount: event.currentTarget.value,
-                                      }))
-                                    }
-                                    className="mt-2 !h-9 text-xs"
-                                    aria-label={`Nominal sistem ${detail.materialLabel}`}
-                                  >
-                                    {amountOptions.map((option) => (
-                                      <option key={`${option.label}-${option.amount}`} value={option.amount}>
-                                        {option.label} - {formatCurrency(option.amount)}
-                                      </option>
-                                    ))}
-                                  </select>
-                                )
-                              ) : null}
-                              {draft.amountMode === "manual" ? (
-                                <span className="mt-2 flex overflow-hidden rounded-lg border border-slate-200 bg-white focus-within:border-blue-700">
-                                  <span className="inline-flex items-center border-r border-slate-200 bg-slate-50 px-2 text-[11px] font-semibold text-slate-600">
-                                    Rp
-                                  </span>
-                                  <input
-                                    type="text"
-                                    inputMode="numeric"
-                                    value={draft.manualAmount ? formatThousands(draft.manualAmount) : ""}
-                                    disabled={!canEdit || !draft.selected}
-                                    onChange={(event) =>
-                                      updateMaterialDraft(project.projectId, detail, (current) => ({
-                                        ...current,
-                                        selected: true,
-                                        amountMode: "manual",
-                                        manualAmount: normalizeDigits(event.currentTarget.value),
-                                      }))
-                                    }
-                                    placeholder="Masukkan nominal"
-                                    className="!h-9 !rounded-none !border-0 text-xs !shadow-none focus:!border-0"
-                                    aria-label={`Nominal manual ${detail.materialLabel}`}
-                                  />
-                                </span>
-                              ) : null}
+                              <span className="mt-1 block text-[11px] text-slate-500">
+                                Simulasi: {formatCurrency(project.projectExpenseTotal + projectSimulationAmount)}
+                              </span>
                             </span>
-                          </div>
-                        </div>
+                          </span>
+                        </label>
                       );
                     })}
                   </div>
-                ) : null}
-              </article>
-            );
-            })}
-          </div>
-        )}
+                </aside>
 
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-white px-3 py-2">
-          <p className="text-xs font-semibold text-blue-700">
-            {selectedFieldCompleteMaterialRows.length} material dari desa 100% lapangan masuk simulasi input.
-          </p>
-          <KmpMaterialSubmitButton
-            canEdit={canEdit}
-            selectedCount={selectedMaterialRows.length}
-            invalidManualCount={invalidManualSelectionCount}
-          />
-        </div>
-      </section>
+                <div className="space-y-3">
+                  <div className="rounded-2xl border border-blue-200 bg-blue-50 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-700">
+                          Tambah Material
+                        </p>
+                        <p className="mt-1 text-sm font-black text-slate-950">
+                          Pilih dari cek material atau tambah manual
+                        </p>
+                      </div>
+                      <div className="flex rounded-xl border border-blue-200 bg-white p-1">
+                        {[
+                          { key: "check", label: "Cari Cek Material" },
+                          { key: "manual", label: "Tambah Manual" },
+                        ].map((item) => (
+                          <button
+                            key={item.key}
+                            type="button"
+                            data-ui-button="true"
+                            onClick={() => {
+                              setFieldMaterialAddMode(item.key as FieldMaterialAddMode);
+                              setManualFieldError("");
+                            }}
+                            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+                              fieldMaterialAddMode === item.key
+                                ? "bg-blue-700 text-white"
+                                : "text-slate-600 hover:bg-slate-100"
+                            }`}
+                          >
+                            {item.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {selectedFieldCompleteProjects.length === 0 ? (
+                      <p className="mt-3 rounded-xl border border-blue-200 bg-white px-3 py-3 text-xs font-semibold text-blue-700">
+                        Checklist desa terlebih dahulu agar materialnya muncul.
+                      </p>
+                    ) : fieldMaterialAddMode === "check" ? (
+                      <div className="mt-3 space-y-2">
+                        <input
+                          type="text"
+                          value={fieldCheckMaterialSearch}
+                          onChange={(event) => setFieldCheckMaterialSearch(event.currentTarget.value)}
+                          placeholder="Cari nama desa atau material dari cek material"
+                          className="!h-10 !rounded-xl text-sm"
+                        />
+                        <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+                          {fieldCheckMaterialRows.length === 0 ? (
+                            <p className="rounded-xl border border-blue-200 bg-white px-3 py-3 text-xs font-semibold text-blue-700">
+                              Tidak ada material cek yang cocok.
+                            </p>
+                          ) : (
+                            fieldCheckMaterialRows.slice(0, 30).map(({ project, detail }) => {
+                              const draft = getMaterialDraft(project.projectId, detail, detail.submissionName ?? "", detail.standardAmount);
+                              return (
+                                <div
+                                  key={`field-check-search-${project.projectId}-${detail.materialKey}`}
+                                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-100 bg-white px-3 py-2"
+                                >
+                                  <span className="min-w-0">
+                                    <span className="block text-xs font-black text-slate-900">
+                                      {detail.materialLabel}
+                                    </span>
+                                    <span className="block truncate text-[11px] text-slate-500">
+                                      {project.projectName}
+                                    </span>
+                                  </span>
+                                  <button
+                                    type="button"
+                                    data-ui-button="true"
+                                    disabled={!canEdit || draft.selected}
+                                    onClick={() => selectFieldCheckMaterial(project, detail)}
+                                    className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {draft.selected ? "Dipilih" : "Pilih"}
+                                  </button>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                        <label>
+                          <span className="mb-1 block text-xs font-semibold text-blue-900">Desa</span>
+                          <select
+                            value={manualFieldMaterialProjectId}
+                            onChange={(event) => setManualFieldMaterialProjectId(event.currentTarget.value)}
+                            disabled={!canEdit || selectedFieldCompleteProjects.length === 0}
+                            className="!h-10 text-sm"
+                          >
+                            {selectedFieldCompleteProjects.map((project) => (
+                              <option key={project.projectId} value={project.projectId}>
+                                {project.projectName}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          <span className="mb-1 block text-xs font-semibold text-blue-900">Nama material manual</span>
+                          <input
+                            type="text"
+                            value={manualFieldMaterialName}
+                            onChange={(event) => {
+                              setManualFieldMaterialName(event.currentTarget.value);
+                              setManualFieldError("");
+                            }}
+                            disabled={!canEdit || selectedFieldCompleteProjects.length === 0}
+                            placeholder="Contoh: Pasir tambahan"
+                            className="!h-10 text-sm"
+                          />
+                        </label>
+                        <label>
+                          <span className="mb-1 block text-xs font-semibold text-blue-900">Nama pengajuan</span>
+                          <input
+                            type="text"
+                            value={manualFieldSubmissionName}
+                            onChange={(event) => setManualFieldSubmissionName(event.currentTarget.value)}
+                            disabled={!canEdit || selectedFieldCompleteProjects.length === 0}
+                            placeholder="Nama pengajuan untuk rincian"
+                            className="!h-10 text-sm"
+                          />
+                        </label>
+                        <div>
+                          <span className="mb-1 block text-xs font-semibold text-blue-900">Nominal</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {[
+                              { key: "none", label: "Tanpa nominal" },
+                              { key: "manual", label: "Manual" },
+                            ].map((item) => (
+                              <button
+                                key={item.key}
+                                type="button"
+                                data-ui-button="true"
+                                disabled={!canEdit || selectedFieldCompleteProjects.length === 0}
+                                onClick={() => {
+                                  setManualFieldAmountMode(item.key as AmountMode);
+                                  setManualFieldError("");
+                                }}
+                                className={`rounded-lg border px-2 py-1.5 text-[11px] font-semibold ${
+                                  manualFieldAmountMode === item.key
+                                    ? "border-blue-700 bg-blue-700 text-white"
+                                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                                } disabled:cursor-not-allowed disabled:opacity-50`}
+                              >
+                                {item.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        {manualFieldAmountMode === "manual" ? (
+                          <label className="md:col-span-2">
+                            <span className="mb-1 block text-xs font-semibold text-blue-900">Nominal manual</span>
+                            <span className="flex overflow-hidden rounded-xl border border-slate-200 bg-white focus-within:border-blue-700">
+                              <span className="inline-flex items-center border-r border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-600">
+                                Rp
+                              </span>
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                value={manualFieldAmountRaw ? formatThousands(manualFieldAmountRaw) : ""}
+                                onChange={(event) => {
+                                  setManualFieldAmountRaw(normalizeDigits(event.currentTarget.value));
+                                  setManualFieldError("");
+                                }}
+                                disabled={!canEdit || selectedFieldCompleteProjects.length === 0}
+                                placeholder="Masukkan nominal"
+                                className="!h-10 !rounded-none !border-0 text-sm !shadow-none focus:!border-0"
+                              />
+                            </span>
+                          </label>
+                        ) : null}
+                        {manualFieldError ? (
+                          <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 md:col-span-2">
+                            {manualFieldError}
+                          </p>
+                        ) : null}
+                        <div className="md:col-span-2">
+                          <button
+                            type="button"
+                            data-ui-button="true"
+                            disabled={!canEdit || selectedFieldCompleteProjects.length === 0}
+                            onClick={addManualFieldMaterial}
+                            className="rounded-xl bg-blue-700 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Tambah Manual
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {selectedFieldCompleteProjects.length === 0 ? (
+                    <p className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-5 text-sm font-semibold text-slate-600">
+                      Belum ada desa yang dichecklist.
+                    </p>
+                  ) : (
+                    <div className="grid gap-3 lg:grid-cols-2">
+                      {selectedFieldCompleteProjects.map((project) => {
+                        const projectSimulationAmount = selectedAmountByProjectId.get(project.projectId) ?? 0;
+                        const manualRows = manualMaterialDraftsByProjectId.get(project.projectId) ?? [];
+                        const selectedMaterialCount = project.missingMaterialDetails.filter(
+                          (detail) => getMaterialDraft(project.projectId, detail).selected,
+                        ).length + manualRows.filter((row) => row.selected).length;
+
+                        return (
+                          <article
+                            key={`field-complete-selected-${project.projectId}`}
+                            className="rounded-2xl border border-emerald-200 bg-white p-3"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-sm font-black text-slate-950">{project.projectName}</p>
+                                <p className="mt-1 text-[11px] font-semibold text-emerald-700">
+                                  {selectedMaterialCount}/{project.missingMaterialDetails.length + manualRows.length} material dipilih
+                                </p>
+                              </div>
+                              <Link
+                                href={project.recapHref}
+                                className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
+                              >
+                                Buka Rekap
+                              </Link>
+                            </div>
+
+                            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                              <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                                  Sebelum
+                                </p>
+                                <p className="mt-1 text-xs font-black text-slate-900">
+                                  {formatCurrency(project.projectExpenseTotal)}
+                                </p>
+                              </div>
+                              <div className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-1.5">
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-blue-700">
+                                  Material
+                                </p>
+                                <p className="mt-1 text-xs font-black text-blue-950">
+                                  {formatCurrency(projectSimulationAmount)}
+                                </p>
+                              </div>
+                              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5">
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">
+                                  Sesudah
+                                </p>
+                                <p className="mt-1 text-xs font-black text-emerald-950">
+                                  {formatCurrency(project.projectExpenseTotal + projectSimulationAmount)}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="mt-3 space-y-2">
+                              {project.missingMaterialDetails.map((detail) => {
+                                const rule = createMaterialRuleFromDetail(detail);
+                                const draft = getMaterialDraft(project.projectId, detail, detail.submissionName ?? "", detail.standardAmount);
+                                const amountOptions = detail.standardAmount > 0
+                                  ? [{ label: "Standard", amount: detail.standardAmount }]
+                                  : getKmpCianjurMaterialAmountOptions(rule);
+
+                                return (
+                                  <div
+                                    key={`field-complete-material-${project.projectId}-${detail.materialKey}`}
+                                    className={`rounded-lg border p-2 ${
+                                      draft.selected ? "border-blue-300 bg-blue-50/60" : "border-slate-200 bg-slate-50"
+                                    }`}
+                                  >
+                                    <div className="flex items-start gap-2">
+                                      <input
+                                        type="checkbox"
+                                        checked={draft.selected}
+                                        disabled={!canEdit}
+                                        onChange={(event) => {
+                                          const checked = event.currentTarget.checked;
+                                          updateMaterialDraft(project.projectId, detail, (current) => ({
+                                            ...current,
+                                            selected: checked,
+                                            amountMode:
+                                              checked && current.amountMode === "none"
+                                                ? getDefaultSelectedAmountMode(rule)
+                                                : current.amountMode,
+                                          }));
+                                        }}
+                                        className="mt-2 h-4 w-4"
+                                        aria-label={`Pilih material ${detail.materialLabel}`}
+                                      />
+                                      <span className="min-w-0 flex-1">
+                                        <span className="block text-xs font-black text-slate-900">
+                                          {detail.materialLabel}
+                                        </span>
+                                        <input
+                                          type="text"
+                                          value={draft.materialName}
+                                          disabled={!canEdit || !draft.selected}
+                                          onChange={(event) =>
+                                            updateMaterialDraft(project.projectId, detail, (current) => ({
+                                              ...current,
+                                              materialName: event.currentTarget.value,
+                                              selected: true,
+                                            }))
+                                          }
+                                          className="mt-2 !h-9 !rounded-lg text-xs font-semibold"
+                                          aria-label={`Nama material ${detail.materialLabel}`}
+                                        />
+                                        <input
+                                          type="text"
+                                          value={draft.submissionName}
+                                          disabled={!canEdit || !draft.selected}
+                                          onChange={(event) =>
+                                            updateMaterialDraft(project.projectId, detail, (current) => ({
+                                              ...current,
+                                              submissionName: event.currentTarget.value,
+                                              selected: true,
+                                            }))
+                                          }
+                                          placeholder="Nama pengajuan untuk rincian"
+                                          className="mt-2 !h-9 !rounded-lg text-xs font-semibold"
+                                          aria-label={`Nama pengajuan ${detail.materialLabel}`}
+                                        />
+                                        <span className="mt-2 flex flex-wrap gap-1.5">
+                                          {[
+                                            { key: "none", label: "Tanpa nominal" },
+                                            { key: "system", label: "Sistem" },
+                                            { key: "manual", label: "Manual" },
+                                          ].map((item) => {
+                                            const disabled = !canEdit ||
+                                              !draft.selected ||
+                                              (item.key === "system" && amountOptions.length === 0);
+                                            return (
+                                              <button
+                                                key={item.key}
+                                                type="button"
+                                                data-ui-button="true"
+                                                disabled={disabled}
+                                                onClick={() =>
+                                                  updateMaterialDraft(project.projectId, detail, (current) => ({
+                                                    ...current,
+                                                    selected: true,
+                                                    amountMode: item.key as AmountMode,
+                                                  }))
+                                                }
+                                                className={`rounded-lg border px-2 py-1 text-[10px] font-semibold ${
+                                                  draft.amountMode === item.key
+                                                    ? "border-blue-700 bg-blue-700 text-white"
+                                                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                                                } disabled:cursor-not-allowed disabled:opacity-50`}
+                                              >
+                                                {item.label}
+                                              </button>
+                                            );
+                                          })}
+                                        </span>
+                                        {draft.amountMode === "system" && amountOptions.length > 0 ? (
+                                          amountOptions.length === 1 ? (
+                                            <span className="mt-2 block text-[11px] font-semibold text-emerald-700">
+                                              Nominal sistem: {formatCurrency(amountOptions[0].amount)}
+                                            </span>
+                                          ) : (
+                                            <select
+                                              value={draft.systemAmount || String(amountOptions[0].amount)}
+                                              disabled={!canEdit || !draft.selected}
+                                              onChange={(event) =>
+                                                updateMaterialDraft(project.projectId, detail, (current) => ({
+                                                  ...current,
+                                                  selected: true,
+                                                  amountMode: "system",
+                                                  systemAmount: event.currentTarget.value,
+                                                }))
+                                              }
+                                              className="mt-2 !h-9 text-xs"
+                                              aria-label={`Nominal sistem ${detail.materialLabel}`}
+                                            >
+                                              {amountOptions.map((option) => (
+                                                <option key={`${option.label}-${option.amount}`} value={option.amount}>
+                                                  {option.label} - {formatCurrency(option.amount)}
+                                                </option>
+                                              ))}
+                                            </select>
+                                          )
+                                        ) : null}
+                                        {draft.amountMode === "manual" ? (
+                                          <span className="mt-2 flex overflow-hidden rounded-lg border border-slate-200 bg-white focus-within:border-blue-700">
+                                            <span className="inline-flex items-center border-r border-slate-200 bg-slate-50 px-2 text-[11px] font-semibold text-slate-600">
+                                              Rp
+                                            </span>
+                                            <input
+                                              type="text"
+                                              inputMode="numeric"
+                                              value={draft.manualAmount ? formatThousands(draft.manualAmount) : ""}
+                                              disabled={!canEdit || !draft.selected}
+                                              onChange={(event) =>
+                                                updateMaterialDraft(project.projectId, detail, (current) => ({
+                                                  ...current,
+                                                  selected: true,
+                                                  amountMode: "manual",
+                                                  manualAmount: normalizeDigits(event.currentTarget.value),
+                                                }))
+                                              }
+                                              placeholder="Masukkan nominal"
+                                              className="!h-9 !rounded-none !border-0 text-xs !shadow-none focus:!border-0"
+                                              aria-label={`Nominal manual ${detail.materialLabel}`}
+                                            />
+                                          </span>
+                                        ) : null}
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+
+                              {manualRows.map((draft) => (
+                                <div
+                                  key={`field-manual-material-${draft.id}`}
+                                  className={`rounded-lg border p-2 ${
+                                    draft.selected ? "border-violet-300 bg-violet-50/60" : "border-slate-200 bg-slate-50"
+                                  }`}
+                                >
+                                  <div className="flex items-start gap-2">
+                                    <input
+                                      type="checkbox"
+                                      checked={draft.selected}
+                                      disabled={!canEdit}
+                                      onChange={(event) =>
+                                        updateManualMaterialDraft(draft.id, (current) => ({
+                                          ...current,
+                                          selected: event.currentTarget.checked,
+                                        }))
+                                      }
+                                      className="mt-2 h-4 w-4"
+                                      aria-label={`Pilih material manual ${draft.materialName}`}
+                                    />
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block text-xs font-black text-slate-900">
+                                        {draft.materialName}
+                                      </span>
+                                      <input
+                                        type="text"
+                                        value={draft.materialName}
+                                        disabled={!canEdit || !draft.selected}
+                                        onChange={(event) =>
+                                          updateManualMaterialDraft(draft.id, (current) => ({
+                                            ...current,
+                                            selected: true,
+                                            materialName: event.currentTarget.value,
+                                            materialLabel: event.currentTarget.value,
+                                          }))
+                                        }
+                                        className="mt-2 !h-9 !rounded-lg text-xs font-semibold"
+                                        aria-label={`Nama material manual ${draft.materialName}`}
+                                      />
+                                      <input
+                                        type="text"
+                                        value={draft.submissionName}
+                                        disabled={!canEdit || !draft.selected}
+                                        onChange={(event) =>
+                                          updateManualMaterialDraft(draft.id, (current) => ({
+                                            ...current,
+                                            selected: true,
+                                            submissionName: event.currentTarget.value,
+                                          }))
+                                        }
+                                        placeholder="Nama pengajuan untuk rincian"
+                                        className="mt-2 !h-9 !rounded-lg text-xs font-semibold"
+                                        aria-label={`Nama pengajuan manual ${draft.materialName}`}
+                                      />
+                                      <span className="mt-2 flex flex-wrap gap-1.5">
+                                        {[
+                                          { key: "none", label: "Tanpa nominal" },
+                                          { key: "manual", label: "Manual" },
+                                        ].map((item) => (
+                                          <button
+                                            key={item.key}
+                                            type="button"
+                                            data-ui-button="true"
+                                            disabled={!canEdit || !draft.selected}
+                                            onClick={() =>
+                                              updateManualMaterialDraft(draft.id, (current) => ({
+                                                ...current,
+                                                selected: true,
+                                                amountMode: item.key as AmountMode,
+                                              }))
+                                            }
+                                            className={`rounded-lg border px-2 py-1 text-[10px] font-semibold ${
+                                              draft.amountMode === item.key
+                                                ? "border-blue-700 bg-blue-700 text-white"
+                                                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                                            } disabled:cursor-not-allowed disabled:opacity-50`}
+                                          >
+                                            {item.label}
+                                          </button>
+                                        ))}
+                                        <button
+                                          type="button"
+                                          data-ui-button="true"
+                                          disabled={!canEdit}
+                                          onClick={() => removeManualMaterialDraft(draft.id)}
+                                          className="rounded-lg border border-rose-200 bg-white px-2 py-1 text-[10px] font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                          Hapus
+                                        </button>
+                                      </span>
+                                      {draft.amountMode === "manual" ? (
+                                        <span className="mt-2 flex overflow-hidden rounded-lg border border-slate-200 bg-white focus-within:border-blue-700">
+                                          <span className="inline-flex items-center border-r border-slate-200 bg-slate-50 px-2 text-[11px] font-semibold text-slate-600">
+                                            Rp
+                                          </span>
+                                          <input
+                                            type="text"
+                                            inputMode="numeric"
+                                            value={draft.manualAmount ? formatThousands(draft.manualAmount) : ""}
+                                            disabled={!canEdit || !draft.selected}
+                                            onChange={(event) =>
+                                              updateManualMaterialDraft(draft.id, (current) => ({
+                                                ...current,
+                                                selected: true,
+                                                amountMode: "manual",
+                                                manualAmount: normalizeDigits(event.currentTarget.value),
+                                              }))
+                                            }
+                                            placeholder="Masukkan nominal"
+                                            className="!h-9 !rounded-none !border-0 text-xs !shadow-none focus:!border-0"
+                                            aria-label={`Nominal manual ${draft.materialName}`}
+                                          />
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue-200 bg-white px-3 py-3 shadow-lg">
+                    <div>
+                      <p className="text-xs font-semibold text-blue-700">
+                        {selectedFieldCompleteMaterialRows.length} material dari desa 100% lapangan masuk simulasi input.
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Total nominal: {formatCurrency(fieldCompleteMaterialTotal)}
+                      </p>
+                    </div>
+                    <KmpMaterialSubmitButton
+                      canEdit={canEdit}
+                      selectedCount={selectedMaterialRows.length}
+                      invalidManualCount={invalidManualSelectionCount}
+                    />
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        ) : null}
+      </>
     );
   };
 

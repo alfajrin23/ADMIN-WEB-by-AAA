@@ -1642,6 +1642,7 @@ type KmpMaterialChecklistEntryJson = {
   projectId?: unknown;
   projectName?: unknown;
   materialKey?: unknown;
+  materialLabel?: unknown;
   materialName?: unknown;
   submissionName?: unknown;
   amountMode?: unknown;
@@ -1874,9 +1875,11 @@ async function createKmpMaterialChecklistEntries(
     const projectId = getStringField(entry.projectId);
     const projectName = getStringField(entry.projectName);
     const materialKey = getStringField(entry.materialKey);
+    const requestedMaterialName = getStringField(entry.materialName);
+    const requestedMaterialLabel = getStringField(entry.materialLabel);
     const reportMaterial = materialByProjectAndKey.get(`${projectId}:${materialKey}`);
     const staticRule = getKmpCianjurMaterialRule(materialKey);
-    if (!projectId || (!reportMaterial && !staticRule)) {
+    if (!projectId || !materialKey || (!reportMaterial && !staticRule && !requestedMaterialName)) {
       invalidRows.push(projectName || materialKey || projectId || "Baris material");
       continue;
     }
@@ -1884,9 +1887,13 @@ async function createKmpMaterialChecklistEntries(
     const rawAmountMode = getStringField(entry.amountMode);
     const amountMode: "none" | "system" | "manual" =
       rawAmountMode === "system" || rawAmountMode === "manual" ? rawAmountMode : "none";
-    const materialLabel = reportMaterial?.materialLabel ?? staticRule?.label ?? materialKey;
+    const configuredMaterialLabel =
+      reportMaterial?.materialLabel ??
+      staticRule?.label ??
+      requestedMaterialLabel;
+    const materialLabel = configuredMaterialLabel || requestedMaterialName || materialKey;
     const standardAmount = Math.max(0, reportMaterial?.standardAmount ?? 0);
-    const materialName = getStringField(entry.materialName) || reportMaterial?.materialName || materialLabel;
+    const materialName = requestedMaterialName || reportMaterial?.materialName || materialLabel;
     const submissionName = getStringField(entry.submissionName);
     let amount = 0;
 

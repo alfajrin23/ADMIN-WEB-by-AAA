@@ -12,6 +12,14 @@ export type KmpMaterialChecklistRule = {
   minimumDetectedAmount?: number;
 };
 
+const REMOVED_KMP_CIANJUR_MATERIAL_PATTERNS = [
+  "hollo",
+  "hollow",
+  "holo",
+  "wiremesh",
+  "wire mesh",
+] as const;
+
 export const KMP_CIANJUR_MATERIAL_CHECKLIST = [
   {
     key: "semen",
@@ -66,18 +74,6 @@ export const KMP_CIANJUR_MATERIAL_CHECKLIST = [
     amountTargets: [13855500],
   },
   {
-    key: "hollo",
-    label: "Hollo",
-    keywords: ["hollo", "hollow", "holo"],
-    amountTargets: [69440000],
-  },
-  {
-    key: "wiremesh",
-    label: "Wiremesh",
-    keywords: ["wiremesh", "wire mesh"],
-    amountTargets: [10500000],
-  },
-  {
     key: "pln_kdkmp",
     label: "PLN KDKMP",
     keywords: ["pln kdkmp", "kdkmp"],
@@ -109,6 +105,18 @@ export const KMP_CIANJUR_MATERIAL_CHECKLIST = [
     minimumDetectedAmount: 5500000,
   },
 ] as const satisfies readonly KmpMaterialChecklistRule[];
+
+export function isRemovedKmpCianjurMaterial(value: string | null | undefined) {
+  const normalized = (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+  if (!normalized) {
+    return false;
+  }
+  return REMOVED_KMP_CIANJUR_MATERIAL_PATTERNS.some((pattern) => normalized === pattern);
+}
 
 export function getKmpCianjurMaterialRule(key: string): KmpMaterialChecklistRule | null {
   return KMP_CIANJUR_MATERIAL_CHECKLIST.find((item) => item.key === key) ?? null;

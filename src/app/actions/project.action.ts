@@ -1,6 +1,6 @@
 "use server";
 import { createHash, randomUUID } from "node:crypto";
-import { getString, getStringList, getNumber, getStringValues, getNumberValues, getPositiveInteger, parseYearInput, replaceDateYearKeepingMonthDay, getReturnTo, withReturnMessage, withReturnParams, isChecked, revalidateProjectPages, revalidateProjectCache, revalidateExpenseCache, revalidateAttendanceCache, requireEditorActionUser, requireAttendanceActionUser, requireImportActionUser, requireLogsActionUser, createTimestamp, createDeterministicUuid, ensureSupabaseAttendanceDraftProjectId, resolveDraftAttendanceNotes, resolveFinalAttendanceNotes, parseAttendanceStatusValue, parseWorkerTeamValue, normalizeAttendanceIdentityText, createAttendanceMutationId, createPayrollResetMutationId, resolveAutoOvertimeWage, AttendanceDuplicateCheckInput, AttendanceDuplicateCheckRow, hasSameAttendanceIdentity, findDuplicateAttendanceRecord, getExpenseSubmissionToken, createExpenseMutationId, shouldSyncExpenseCategory, parseProjectInitialCategories, buildSupabaseCategoryRows, upsertSupabaseCategories, isFirebaseNotFoundError, hasWarnedFirebaseWriteDatabaseMissing, runFirebaseWriteSafely, deleteFirebaseDocsByField, ParsedTemplateImportData, normalizeImportText, normalizeImportNumber, buildImportExpenseSignature, chunkArray, importTemplateDataToSupabase, importTemplateDataToFirebase, getParsedCategory, getSpecialistType, getParsedWorkerTeam, getParsedReimburseType, resolveAmountByMode, getExpenseTargetProjectIds, parsePositiveAmount, createHokExpenseEntries, createScraperExpenseEntries, AttendanceRecapRowInput, resolveAttendanceExportRowId, buildAttendanceRecapRowsFromFormData, ensureSupabaseWriteConfigured, getSupabaseMutationErrorMessage, returnOptimisticErrorOrRedirect, autoChecklistKmpMaterialsForCompletedProjects } from "./utils";
+import { getString, getStringList, getNumber, getStringValues, getNumberValues, getPositiveInteger, parseYearInput, replaceDateYearKeepingMonthDay, getReturnTo, withReturnMessage, withReturnParams, isChecked, revalidateProjectPages, revalidateProjectCache, revalidateExpenseCache, revalidateAttendanceCache, requireEditorActionUser, requireAttendanceActionUser, requireImportActionUser, requireLogsActionUser, createTimestamp, createDeterministicUuid, ensureSupabaseAttendanceDraftProjectId, resolveDraftAttendanceNotes, resolveFinalAttendanceNotes, parseAttendanceStatusValue, parseWorkerTeamValue, normalizeAttendanceIdentityText, createAttendanceMutationId, createPayrollResetMutationId, resolveAutoOvertimeWage, AttendanceDuplicateCheckInput, AttendanceDuplicateCheckRow, hasSameAttendanceIdentity, findDuplicateAttendanceRecord, getExpenseSubmissionToken, createExpenseMutationId, shouldSyncExpenseCategory, parseProjectInitialCategories, buildSupabaseCategoryRows, upsertSupabaseCategories, isFirebaseNotFoundError, hasWarnedFirebaseWriteDatabaseMissing, runFirebaseWriteSafely, deleteFirebaseDocsByField, ParsedTemplateImportData, normalizeImportText, normalizeImportNumber, buildImportExpenseSignature, chunkArray, importTemplateDataToSupabase, importTemplateDataToFirebase, getParsedCategory, getSpecialistType, getParsedWorkerTeam, getParsedReimburseType, resolveAmountByMode, getExpenseTargetProjectIds, parsePositiveAmount, createHokExpenseEntries, createScraperExpenseEntries, AttendanceRecapRowInput, resolveAttendanceExportRowId, buildAttendanceRecapRowsFromFormData, ensureSupabaseWriteConfigured, getSupabaseMutationErrorMessage, returnOptimisticErrorOrRedirect } from "./utils";
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -45,7 +45,6 @@ import {
   importTemplateExcelDatabaseFromBuffer,
   parseTemplateExcelData,
   parseTemplateExcelDataFromBuffer,
-  readExcelDatabase,
   insertExcelAttendance,
   insertExcelExpense,
   insertExcelPayrollReset,
@@ -174,14 +173,7 @@ export async function updateProjectAction(formData: FormData) {
     start_date: getString(formData, "start_date") || null,
     status: parsedStatus,
   };
-  let autoChecklistResult: Awaited<ReturnType<typeof autoChecklistKmpMaterialsForCompletedProjects>> | null = null;
-  let shouldAutoChecklistKmpMaterials = false;
-
   if (activeDataSource === "excel") {
-    if (payload.status === "selesai") {
-      const currentProject = readExcelDatabase().projects.find((project) => project.id === payload.id);
-      shouldAutoChecklistKmpMaterials = Boolean(currentProject && currentProject.status !== "selesai");
-    }
     updateExcelProject(payload);
   } else if (activeDataSource === "supabase") {
     const supabase = getSupabaseServerClient();
@@ -190,14 +182,6 @@ export async function updateProjectAction(formData: FormData) {
     }
     if (!ensureSupabaseWriteConfigured(returnTo, "Gagal memperbarui project.")) {
       return;
-    }
-    if (payload.status === "selesai") {
-      const { data: currentProject } = await supabase
-        .from("projects")
-        .select("status")
-        .eq("id", payload.id)
-        .maybeSingle();
-      shouldAutoChecklistKmpMaterials = Boolean(currentProject && currentProject.status !== "selesai");
     }
     const { error } = await supabase
       .from("projects")
@@ -217,10 +201,6 @@ export async function updateProjectAction(formData: FormData) {
     if (!firestore) {
       return;
     }
-    if (payload.status === "selesai") {
-      const currentProject = await firestore.collection("projects").doc(payload.id).get();
-      shouldAutoChecklistKmpMaterials = Boolean(currentProject.exists && currentProject.data()?.status !== "selesai");
-    }
     await runFirebaseWriteSafely(async () => {
       await firestore.collection("projects").doc(payload.id).set(
         {
@@ -238,15 +218,8 @@ export async function updateProjectAction(formData: FormData) {
     return;
   }
 
-  if (shouldAutoChecklistKmpMaterials) {
-    autoChecklistResult = await autoChecklistKmpMaterialsForCompletedProjects([payload.id]);
-  }
-
   revalidateProjectPages();
   revalidateProjectCache();
-  if (autoChecklistResult?.rowCount) {
-    revalidateExpenseCache();
-  }
   revalidatePath("/attendance");
   revalidatePath("/logs");
   queueActivityLog({
@@ -261,7 +234,6 @@ export async function updateProjectAction(formData: FormData) {
       client_name: payload.client_name,
       start_date: payload.start_date,
       status: payload.status,
-      auto_checked_kmp_material_count: autoChecklistResult?.rowCount ?? 0,
     },
   });
   if (returnTo) {
@@ -303,17 +275,7 @@ export async function updateManyProjectsAction(formData: FormData) {
   if (updatedFields.length === 0) {
     return;
   }
-  let autoChecklistProjectIds: string[] = [];
-  let autoChecklistResult: Awaited<ReturnType<typeof autoChecklistKmpMaterialsForCompletedProjects>> | null = null;
-
   if (activeDataSource === "excel") {
-    if (patch.status === "selesai") {
-      const currentProjects = readExcelDatabase().projects;
-      autoChecklistProjectIds = projectIds.filter((projectId) => {
-        const currentProject = currentProjects.find((project) => project.id === projectId);
-        return Boolean(currentProject && currentProject.status !== "selesai");
-      });
-    }
     updateManyExcelProjects(projectIds, patch);
   } else if (activeDataSource === "supabase") {
     const supabase = getSupabaseServerClient();
@@ -324,18 +286,6 @@ export async function updateManyProjectsAction(formData: FormData) {
     }
     if (!ensureSupabaseWriteConfigured(returnTo, "Gagal memperbarui project.", formData)) {
       return optimisticActionError(getSupabaseMutationErrorMessage("Gagal memperbarui project."));
-    }
-    if (patch.status === "selesai") {
-      const { data: currentProjects, error: currentProjectsError } = await supabase
-        .from("projects")
-        .select("id, status")
-        .in("id", projectIds);
-      if (!currentProjectsError) {
-        autoChecklistProjectIds = (currentProjects ?? [])
-          .filter((project) => project.status !== "selesai")
-          .map((project) => String(project.id ?? ""))
-          .filter(Boolean);
-      }
     }
     const { error } = await supabase.from("projects").update(patch).in("id", projectIds);
     if (error) {
@@ -349,14 +299,6 @@ export async function updateManyProjectsAction(formData: FormData) {
     const firestore = getFirestoreServerClient();
     if (!firestore) {
       return;
-    }
-    if (patch.status === "selesai") {
-      const snapshots = await Promise.all(
-        projectIds.map((projectId) => firestore.collection("projects").doc(projectId).get()),
-      );
-      autoChecklistProjectIds = snapshots
-        .filter((snapshot) => snapshot.exists && snapshot.data()?.status !== "selesai")
-        .map((snapshot) => snapshot.id);
     }
 
     await runFirebaseWriteSafely(async () => {
@@ -379,15 +321,8 @@ export async function updateManyProjectsAction(formData: FormData) {
     return;
   }
 
-  if (autoChecklistProjectIds.length > 0) {
-    autoChecklistResult = await autoChecklistKmpMaterialsForCompletedProjects(autoChecklistProjectIds);
-  }
-
   revalidateProjectPages();
   revalidateProjectCache();
-  if (autoChecklistResult?.rowCount) {
-    revalidateExpenseCache();
-  }
   revalidatePath("/attendance");
   revalidatePath("/logs");
   queueActivityLog({
@@ -398,7 +333,6 @@ export async function updateManyProjectsAction(formData: FormData) {
     payload: {
       project_ids: projectIds,
       fields: updatedFields,
-      auto_checked_kmp_material_count: autoChecklistResult?.rowCount ?? 0,
     },
   });
   if (isOptimisticUiRequest(formData)) {

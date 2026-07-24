@@ -77,28 +77,6 @@ type KmpMaterialMonitorProject = {
       amount: number;
     }>;
   }>;
-  completedMissingMaterialDetails: Array<{
-    configId: string | null;
-    materialKey: string;
-    materialLabel: string;
-    materialName: string;
-    submissionName: string | null;
-    standardAmount: number;
-    minimumAmount: number;
-    detectedAmount: number;
-    checklistType: AmountMode;
-    checklistStatus: "auto" | "pending" | "fulfilled";
-    isCustom: boolean;
-    isFulfilled: boolean;
-    expenses: Array<{
-      id: string;
-      expenseDate: string;
-      requesterName: string | null;
-      description: string | null;
-      usageInfo: string | null;
-      amount: number;
-    }>;
-  }>;
   missingMaterials: string[];
   detectedCount: number;
   missingCount: number;
@@ -183,8 +161,7 @@ const materialRuleByKey: ReadonlyMap<string, KmpMaterialChecklistRule> = new Map
 
 type KmpMaterialDetail =
   | KmpMaterialMonitorProject["missingMaterialDetails"][number]
-  | KmpMaterialMonitorProject["detectedMaterialDetails"][number]
-  | KmpMaterialMonitorProject["completedMissingMaterialDetails"][number];
+  | KmpMaterialMonitorProject["detectedMaterialDetails"][number];
 
 function createMaterialRuleFromDetail(detail: KmpMaterialDetail): KmpMaterialChecklistRule {
   const staticRule = materialRuleByKey.get(detail.materialKey) ?? materialRuleByLabel.get(detail.materialLabel);
@@ -226,9 +203,6 @@ function getProjectLocationLabel(project: KmpMaterialMonitorProject) {
 function getSelectableMaterialDetails(project: KmpMaterialMonitorProject) {
   const detailByKey = new Map<string, KmpMaterialDetail>();
   for (const detail of project.missingMaterialDetails) {
-    detailByKey.set(detail.materialKey, detail);
-  }
-  for (const detail of project.completedMissingMaterialDetails) {
     detailByKey.set(detail.materialKey, detail);
   }
   return Array.from(detailByKey.values());
@@ -640,7 +614,7 @@ export function KmpMaterialMonitorPanel({
   const [visibleProjectLimit, setVisibleProjectLimit] = useState(PROJECT_RENDER_BATCH_SIZE);
   const [expenseDate, setExpenseDate] = useState(today);
   const [materialDrafts, setMaterialDrafts] = useState<Record<string, MaterialDraft>>({});
-  const [selectedCompletedProjectIds, setSelectedCompletedProjectIds] = useState<string[]>([]);
+  const [selectedFieldCompleteProjectIds, setSelectedFieldCompleteProjectIds] = useState<string[]>([]);
   const [selectedDetectedMaterial, setSelectedDetectedMaterial] = useState<{
     projectId: string;
     materialKey: string;
@@ -811,52 +785,51 @@ export function KmpMaterialMonitorPanel({
     setProjectMaterialDraftSelection(project, project.missingMaterialDetails, true);
   };
 
-  const completedBackfillProjects = useMemo(
+  const fieldCompleteCandidateProjects = useMemo(
     () =>
       projects.filter(
-        (project) =>
-          project.projectStatus === "selesai" && project.completedMissingMaterialDetails.length > 0,
+        (project) => project.missingMaterialDetails.length > 0,
       ),
     [projects],
   );
 
-  const selectedCompletedProjectIdSet = useMemo(
-    () => new Set(selectedCompletedProjectIds),
-    [selectedCompletedProjectIds],
+  const selectedFieldCompleteProjectIdSet = useMemo(
+    () => new Set(selectedFieldCompleteProjectIds),
+    [selectedFieldCompleteProjectIds],
   );
 
-  const selectedCompletedBackfillProjects = useMemo(
+  const selectedFieldCompleteProjects = useMemo(
     () =>
-      completedBackfillProjects.filter((project) =>
-        selectedCompletedProjectIdSet.has(project.projectId),
+      fieldCompleteCandidateProjects.filter((project) =>
+        selectedFieldCompleteProjectIdSet.has(project.projectId),
       ),
-    [completedBackfillProjects, selectedCompletedProjectIdSet],
+    [fieldCompleteCandidateProjects, selectedFieldCompleteProjectIdSet],
   );
 
   useEffect(() => {
-    const validProjectIds = new Set(completedBackfillProjects.map((project) => project.projectId));
-    setSelectedCompletedProjectIds((current) => {
+    const validProjectIds = new Set(fieldCompleteCandidateProjects.map((project) => project.projectId));
+    setSelectedFieldCompleteProjectIds((current) => {
       const next = current.filter((projectId) => validProjectIds.has(projectId));
       return next.length === current.length ? current : next;
     });
-  }, [completedBackfillProjects]);
+  }, [fieldCompleteCandidateProjects]);
 
-  const toggleCompletedBackfillProject = (project: KmpMaterialMonitorProject, checked: boolean) => {
-    setSelectedCompletedProjectIds((current) => {
+  const toggleFieldCompleteProject = (project: KmpMaterialMonitorProject, checked: boolean) => {
+    setSelectedFieldCompleteProjectIds((current) => {
       if (checked) {
         return current.includes(project.projectId) ? current : [...current, project.projectId];
       }
       return current.filter((projectId) => projectId !== project.projectId);
     });
-    setProjectMaterialDraftSelection(project, project.completedMissingMaterialDetails, checked);
+    setProjectMaterialDraftSelection(project, project.missingMaterialDetails, checked);
   };
 
-  const selectAllCompletedBackfillProjects = () => {
-    setSelectedCompletedProjectIds(completedBackfillProjects.map((project) => project.projectId));
+  const selectAllFieldCompleteProjects = () => {
+    setSelectedFieldCompleteProjectIds(fieldCompleteCandidateProjects.map((project) => project.projectId));
     setMaterialDrafts((previous) => {
       const next = { ...previous };
-      for (const project of completedBackfillProjects) {
-        for (const detail of project.completedMissingMaterialDetails) {
+      for (const project of fieldCompleteCandidateProjects) {
+        for (const detail of project.missingMaterialDetails) {
           const rule = createMaterialRuleFromDetail(detail);
           const key = getMaterialDraftKey(project.projectId, detail.materialLabel, detail.materialKey);
           const current = next[key] ?? createInitialMaterialDraft(
@@ -878,12 +851,12 @@ export function KmpMaterialMonitorPanel({
     });
   };
 
-  const clearCompletedBackfillProjects = () => {
-    setSelectedCompletedProjectIds([]);
+  const clearFieldCompleteProjects = () => {
+    setSelectedFieldCompleteProjectIds([]);
     setMaterialDrafts((previous) => {
       const next = { ...previous };
-      for (const project of completedBackfillProjects) {
-        for (const detail of project.completedMissingMaterialDetails) {
+      for (const project of fieldCompleteCandidateProjects) {
+        for (const detail of project.missingMaterialDetails) {
           const key = getMaterialDraftKey(project.projectId, detail.materialLabel, detail.materialKey);
           if (next[key]) {
             next[key] = {
@@ -1131,27 +1104,27 @@ export function KmpMaterialMonitorPanel({
     }
     return amountByProjectId;
   }, [selectedMaterialRows]);
-  const selectedCompletedBackfillMaterialRows = useMemo(
-    () => selectedMaterialRows.filter((row) => selectedCompletedProjectIdSet.has(row.projectId)),
-    [selectedCompletedProjectIdSet, selectedMaterialRows],
+  const selectedFieldCompleteMaterialRows = useMemo(
+    () => selectedMaterialRows.filter((row) => selectedFieldCompleteProjectIdSet.has(row.projectId)),
+    [selectedFieldCompleteProjectIdSet, selectedMaterialRows],
   );
-  const completedBackfillBeforeTotal = useMemo(
+  const fieldCompleteBeforeTotal = useMemo(
     () =>
-      selectedCompletedBackfillProjects.reduce(
+      selectedFieldCompleteProjects.reduce(
         (total, project) => total + project.projectExpenseTotal,
         0,
       ),
-    [selectedCompletedBackfillProjects],
+    [selectedFieldCompleteProjects],
   );
-  const completedBackfillMaterialTotal = useMemo(
+  const fieldCompleteMaterialTotal = useMemo(
     () =>
-      selectedCompletedBackfillProjects.reduce(
+      selectedFieldCompleteProjects.reduce(
         (total, project) => total + (selectedAmountByProjectId.get(project.projectId) ?? 0),
         0,
       ),
-    [selectedAmountByProjectId, selectedCompletedBackfillProjects],
+    [selectedAmountByProjectId, selectedFieldCompleteProjects],
   );
-  const completedBackfillAfterTotal = completedBackfillBeforeTotal + completedBackfillMaterialTotal;
+  const fieldCompleteAfterTotal = fieldCompleteBeforeTotal + fieldCompleteMaterialTotal;
   const invalidManualSelectionCount = useMemo(
     () =>
       selectedMaterialRows.filter(
@@ -1171,7 +1144,7 @@ export function KmpMaterialMonitorPanel({
   }, [projects, selectedDetectedMaterial]);
   const activeMaterialEditor = normalizeMaterialEditorState(materialEditor);
 
-  const renderCompletedBackfillSection = () => {
+  const renderFieldCompleteMaterialSection = () => {
     return (
       <section className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1180,24 +1153,24 @@ export function KmpMaterialMonitorPanel({
               Input Material Desa 100%
             </p>
             <h4 className="mt-1 text-base font-black text-slate-950">
-              Desa selesai dengan material belum tercatat
+              Pilih desa yang sudah 100% di lapangan
             </h4>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
               data-ui-button="true"
-              disabled={!canEdit || completedBackfillProjects.length === 0}
-              onClick={selectAllCompletedBackfillProjects}
+              disabled={!canEdit || fieldCompleteCandidateProjects.length === 0}
+              onClick={selectAllFieldCompleteProjects}
               className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Pilih Semua Desa
+              Pilih Semua Kandidat
             </button>
             <button
               type="button"
               data-ui-button="true"
-              disabled={!canEdit || selectedCompletedProjectIds.length === 0}
-              onClick={clearCompletedBackfillProjects}
+              disabled={!canEdit || selectedFieldCompleteProjectIds.length === 0}
+              onClick={clearFieldCompleteProjects}
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Kosongkan
@@ -1208,22 +1181,22 @@ export function KmpMaterialMonitorPanel({
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
           <div className="rounded-xl border border-emerald-200 bg-white px-3 py-2">
             <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">
-              Desa 100%
+              Kandidat Desa
             </p>
-            <p className="mt-1 text-lg font-black text-slate-950">{completedBackfillProjects.length}</p>
+            <p className="mt-1 text-lg font-black text-slate-950">{fieldCompleteCandidateProjects.length}</p>
           </div>
           <div className="rounded-xl border border-emerald-200 bg-white px-3 py-2">
             <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">
               Desa Dipilih
             </p>
-            <p className="mt-1 text-lg font-black text-slate-950">{selectedCompletedBackfillProjects.length}</p>
+            <p className="mt-1 text-lg font-black text-slate-950">{selectedFieldCompleteProjects.length}</p>
           </div>
           <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
             <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-blue-700">
               Material Simulasi
             </p>
             <p className="mt-1 text-lg font-black text-blue-950">
-              {formatCurrency(completedBackfillMaterialTotal)}
+              {formatCurrency(fieldCompleteMaterialTotal)}
             </p>
           </div>
           <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
@@ -1231,7 +1204,7 @@ export function KmpMaterialMonitorPanel({
               Sebelum Input
             </p>
             <p className="mt-1 text-lg font-black text-slate-950">
-              {formatCurrency(completedBackfillBeforeTotal)}
+              {formatCurrency(fieldCompleteBeforeTotal)}
             </p>
           </div>
           <div className="rounded-xl border border-emerald-300 bg-emerald-100 px-3 py-2">
@@ -1239,27 +1212,27 @@ export function KmpMaterialMonitorPanel({
               Sesudah Input
             </p>
             <p className="mt-1 text-lg font-black text-emerald-950">
-              {formatCurrency(completedBackfillAfterTotal)}
+              {formatCurrency(fieldCompleteAfterTotal)}
             </p>
           </div>
         </div>
 
-        {completedBackfillProjects.length === 0 ? (
+        {fieldCompleteCandidateProjects.length === 0 ? (
           <p className="mt-3 rounded-xl border border-emerald-200 bg-white px-3 py-4 text-sm font-semibold text-emerald-700">
-            Belum ada desa KMP status selesai yang membutuhkan input material tambahan.
+            Belum ada desa KMP yang materialnya belum lengkap di web.
           </p>
         ) : (
           <div className="mt-3 grid gap-3 lg:grid-cols-2">
-            {completedBackfillProjects.map((project) => {
-            const isProjectSelected = selectedCompletedProjectIdSet.has(project.projectId);
+            {fieldCompleteCandidateProjects.map((project) => {
+            const isProjectSelected = selectedFieldCompleteProjectIdSet.has(project.projectId);
             const projectSimulationAmount = selectedAmountByProjectId.get(project.projectId) ?? 0;
-            const selectedMaterialCount = project.completedMissingMaterialDetails.filter(
+            const selectedMaterialCount = project.missingMaterialDetails.filter(
               (detail) => getMaterialDraft(project.projectId, detail).selected,
             ).length;
 
             return (
               <article
-                key={`completed-backfill-${project.projectId}`}
+                key={`field-complete-${project.projectId}`}
                 className={`rounded-xl border bg-white p-3 ${
                   isProjectSelected ? "border-emerald-300 shadow-sm" : "border-slate-200"
                 }`}
@@ -1271,17 +1244,17 @@ export function KmpMaterialMonitorPanel({
                       checked={isProjectSelected}
                       disabled={!canEdit}
                       onChange={(event) =>
-                        toggleCompletedBackfillProject(project, event.currentTarget.checked)
+                        toggleFieldCompleteProject(project, event.currentTarget.checked)
                       }
                       className="mt-1 h-4 w-4"
-                      aria-label={`Pilih desa selesai ${project.projectName}`}
+                      aria-label={`Pilih desa 100% lapangan ${project.projectName}`}
                     />
                     <span className="min-w-0">
                       <span className="block text-sm font-black text-slate-950">
                         {project.projectName}
                       </span>
                       <span className="mt-1 block text-[11px] font-semibold text-emerald-700">
-                        {project.completedMissingMaterialDetails.length} material belum tercatat
+                        {project.missingMaterialDetails.length} material belum tercatat di web
                       </span>
                     </span>
                   </label>
@@ -1323,9 +1296,9 @@ export function KmpMaterialMonitorPanel({
                 {isProjectSelected ? (
                   <div className="mt-3 space-y-2">
                     <p className="text-[11px] font-semibold text-slate-600">
-                      {selectedMaterialCount}/{project.completedMissingMaterialDetails.length} material dipilih
+                      {selectedMaterialCount}/{project.missingMaterialDetails.length} material dipilih
                     </p>
-                    {project.completedMissingMaterialDetails.map((detail) => {
+                    {project.missingMaterialDetails.map((detail) => {
                       const rule = createMaterialRuleFromDetail(detail);
                       const draft = getMaterialDraft(project.projectId, detail, detail.submissionName ?? "", detail.standardAmount);
                       const amountOptions = detail.standardAmount > 0
@@ -1334,7 +1307,7 @@ export function KmpMaterialMonitorPanel({
 
                       return (
                         <div
-                          key={`completed-backfill-material-${project.projectId}-${detail.materialKey}`}
+                          key={`field-complete-material-${project.projectId}-${detail.materialKey}`}
                           className={`rounded-lg border p-2 ${
                             draft.selected ? "border-blue-300 bg-blue-50/60" : "border-slate-200 bg-slate-50"
                           }`}
@@ -1491,7 +1464,7 @@ export function KmpMaterialMonitorPanel({
 
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-white px-3 py-2">
           <p className="text-xs font-semibold text-blue-700">
-            {selectedCompletedBackfillMaterialRows.length} material dari desa selesai masuk simulasi input.
+            {selectedFieldCompleteMaterialRows.length} material dari desa 100% lapangan masuk simulasi input.
           </p>
           <KmpMaterialSubmitButton
             canEdit={canEdit}
@@ -2572,7 +2545,7 @@ export function KmpMaterialMonitorPanel({
           ) : null}
         </div>
 
-        {renderCompletedBackfillSection()}
+        {renderFieldCompleteMaterialSection()}
 
         {filteredProjects.length === 0 ? (
           <p className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600">

@@ -1534,7 +1534,6 @@ type KmpCianjurMissingMaterialProjectReport = {
   detectedMaterials: string[];
   detectedMaterialDetails: KmpCianjurDetectedMaterialDetail[];
   missingMaterialDetails: KmpCianjurMaterialProgress[];
-  completedMissingMaterialDetails: KmpCianjurMaterialProgress[];
   materialProgress: KmpCianjurMaterialProgress[];
   missingMaterials: string[];
   detectedCount: number;
@@ -1905,10 +1904,6 @@ function isKmpMaterialRuleFulfilled(params: {
   return params.expenses.length > 0;
 }
 
-function isCompletedKmpMaterialProject(project: Project) {
-  return project.status === "selesai";
-}
-
 export function buildKmpCianjurMissingMaterialReport(
   projects: Project[],
   expenses: ExpenseEntry[],
@@ -1951,11 +1946,9 @@ export function buildKmpCianjurMissingMaterialReport(
     const detectedMaterials: string[] = [];
     const detectedMaterialDetails: KmpCianjurDetectedMaterialDetail[] = [];
     const missingMaterialDetails: KmpCianjurMaterialProgress[] = [];
-    const completedMissingMaterialDetails: KmpCianjurMaterialProgress[] = [];
     const materialProgress: KmpCianjurMaterialProgress[] = [];
     const missingMaterials: string[] = [];
     const projectRules = buildKmpMaterialRulesForProject(project, materialConfigs);
-    const isCompletedProject = isCompletedKmpMaterialProject(project);
 
     for (const item of projectRules) {
       const detectedExpenses = materialExpenses.filter((expense, index) =>
@@ -1977,14 +1970,11 @@ export function buildKmpCianjurMissingMaterialReport(
       const hasGeneratedChecklist = detectedExpenses.some((expense) =>
         isGeneratedKmpMaterialChecklistForDetectionRule(item, expense),
       );
-      const isFulfilledByExpense = isKmpMaterialRuleFulfilled({
+      const isFulfilled = isKmpMaterialRuleFulfilled({
         rule: item,
         expenses: expenseRows,
         hasGeneratedChecklist,
       });
-      const isFulfilled =
-        isCompletedProject ||
-        isFulfilledByExpense;
       const progress: KmpCianjurMaterialProgress = {
         configId: item.configId,
         materialKey: item.materialKey,
@@ -2005,9 +1995,6 @@ export function buildKmpCianjurMissingMaterialReport(
       if (progress.isFulfilled) {
         detectedMaterials.push(item.materialLabel);
         detectedMaterialDetails.push(progress);
-        if (isCompletedProject && !isFulfilledByExpense) {
-          completedMissingMaterialDetails.push(progress);
-        }
       } else {
         missingMaterials.push(item.materialLabel);
         missingMaterialDetails.push(progress);
@@ -2024,7 +2011,6 @@ export function buildKmpCianjurMissingMaterialReport(
       detectedMaterials,
       detectedMaterialDetails,
       missingMaterialDetails,
-      completedMissingMaterialDetails,
       materialProgress,
       missingMaterials,
       detectedCount: detectedMaterials.length,

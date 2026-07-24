@@ -158,7 +158,7 @@ describe("KMP Cianjur material checklist", () => {
     expect(progress?.isFulfilled).toBe(false);
   });
 
-  it("marks completed KMP projects as fulfilled for every material", () => {
+  it("does not mark web-completed KMP projects as fulfilled without material input", () => {
     const completedProject: Project = {
       ...project,
       id: "kmp-completed",
@@ -186,13 +186,12 @@ describe("KMP Cianjur material checklist", () => {
     );
     const projectReport = report.projects[0];
 
-    expect(projectReport?.missingCount).toBe(0);
-    expect(projectReport?.missingMaterialDetails).toEqual([]);
+    expect(projectReport?.missingCount).toBe(projectReport?.totalChecklistCount);
+    expect(projectReport?.missingMaterialDetails).toHaveLength(projectReport?.totalChecklistCount ?? 0);
     expect(projectReport?.totalChecklistCount).toBe(KMP_CIANJUR_MATERIAL_CHECKLIST.length + 1);
-    expect(projectReport?.completedMissingMaterialDetails).toHaveLength(projectReport?.totalChecklistCount ?? 0);
-    expect(projectReport?.detectedCount).toBe(projectReport?.totalChecklistCount);
-    expect(projectReport?.materialProgress.every((item) => item.isFulfilled)).toBe(true);
-    expect(projectReport?.detectedMaterials).toContain("Custom Plafon");
+    expect(projectReport?.detectedCount).toBe(0);
+    expect(projectReport?.materialProgress.every((item) => !item.isFulfilled)).toBe(true);
+    expect(projectReport?.missingMaterials).toContain("Custom Plafon");
   });
 
   it("keeps project expense totals for completed material simulation", () => {

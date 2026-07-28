@@ -251,6 +251,14 @@ export function ProjectRecapExpenseList({
   }, [expenseCategories, filteredExpenses]);
 
   const hasLocalFilters = Boolean(searchQuery.trim() || categoryFilter);
+  const totalProjectExpense = useMemo(
+    () => sortedExpenses.reduce((total, expense) => total + expense.amount, 0),
+    [sortedExpenses],
+  );
+  const filteredExpenseTotal = useMemo(
+    () => filteredExpenses.reduce((total, expense) => total + expense.amount, 0),
+    [filteredExpenses],
+  );
 
   return (
     <div className="space-y-4">
@@ -301,6 +309,26 @@ export function ProjectRecapExpenseList({
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="relative overflow-hidden rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-600 via-indigo-600 to-violet-700 p-4 text-white shadow-lg shadow-indigo-100">
+          <div className="absolute -right-8 -top-10 size-28 rounded-full bg-white/10" />
+          <div className="absolute -bottom-12 right-12 size-24 rounded-full bg-violet-300/10" />
+          <div className="relative z-10">
+            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-indigo-100">
+              Total Keseluruhan
+            </p>
+            <p className="mt-2 text-xl font-bold tracking-tight">
+              {formatCurrency(totalProjectExpense)}
+            </p>
+            <p className="mt-1 text-xs text-indigo-100">
+              {sortedExpenses.length} transaksi pada proyek ini
+            </p>
+            {hasLocalFilters ? (
+              <p className="mt-3 border-t border-white/20 pt-2 text-xs text-white">
+                Hasil filter: <span className="font-semibold">{formatCurrency(filteredExpenseTotal)}</span>
+              </p>
+            ) : null}
+          </div>
+        </div>
         {filteredCategoryTotals.map((item) => (
           <div key={item.category} className="soft-card-muted p-4 bg-gradient-to-br from-slate-50 to-white hover:from-indigo-50 hover:to-white transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:border-indigo-100 group relative overflow-hidden">
             <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent -translate-x-[100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>

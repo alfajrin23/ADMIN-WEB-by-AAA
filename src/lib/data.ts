@@ -2217,6 +2217,76 @@ export async function getKmpClientMaterialConfigs(
   return [];
 }
 
+export async function getKmpMaterialImportDatabaseContext() {
+  if (activeDataSource === "excel") {
+    const db = readExcelDatabase();
+    const projects = db.projects
+      .map((row) => mapProject(row))
+      .filter((project) => isKmpCianjurClientName(project.clientName));
+    const projectIds = new Set(projects.map((project) => project.id));
+    const projectNameMap = Object.fromEntries(
+      projects.map((project) => [project.id, project.name] as const),
+    );
+    const expenses = db.project_expenses
+      .filter((row) => projectIds.has(row.project_id))
+      .map((row) => mapExpense(row, projectNameMap[row.project_id]));
+    return { projects, expenses, materialConfigs: [] as KmpClientMaterialConfig[] };
+  }
+
+  if (activeDataSource === "supabase") {
+    const [allProjects, materialConfigs] = await Promise.all([
+      getCachedSupabaseProjects(),
+      getCachedSupabaseKmpClientMaterialConfigs(),
+    ]);
+    const projects = allProjects.filter((project) =>
+      isKmpCianjurClientName(project.clientName),
+    );
+    const projectIdsKey = projects.map((project) => project.id).sort().join("|");
+    const expenseRows = await getCachedSupabaseKmpProjectExpenseRows(projectIdsKey);
+    const projectNameMap = Object.fromEntries(
+      projects.map((project) => [project.id, project.name] as const),
+    );
+    const expenses = expenseRows.map((row) =>
+      mapExpense(row, projectNameMap[String(row.project_id ?? "")]),
+    );
+    return { projects, expenses, materialConfigs };
+  }
+
+  if (activeDataSource === "firebase") {
+    const [projectRows, expenseRows, materialRows] = await Promise.all([
+      getFirebaseCollectionRows("projects"),
+      getFirebaseCollectionRows("project_expenses"),
+      getFirebaseCollectionRows("kmp_client_materials"),
+    ]);
+    const projects = projectRows
+      .map((row) => mapProject(row))
+      .filter((project) => isKmpCianjurClientName(project.clientName));
+    const projectIds = new Set(projects.map((project) => project.id));
+    const projectNameMap = Object.fromEntries(
+      projects.map((project) => [project.id, project.name] as const),
+    );
+    const expenses = expenseRows
+      .filter((row) => projectIds.has(String(row.project_id ?? "")))
+      .map((row) =>
+        mapExpense(row, projectNameMap[String(row.project_id ?? "")]),
+      );
+    const materialConfigs = materialRows.map((row) =>
+      mapKmpClientMaterialConfig(row),
+    );
+    return { projects, expenses, materialConfigs };
+  }
+
+  const projects = sampleProjects.filter((project) =>
+    isKmpCianjurClientName(project.clientName),
+  );
+  const projectIds = new Set(projects.map((project) => project.id));
+  return {
+    projects,
+    expenses: sampleExpenses.filter((expense) => projectIds.has(expense.projectId)),
+    materialConfigs: [] as KmpClientMaterialConfig[],
+  };
+}
+
 const getSupabaseKmpCianjurMissingMaterialReportCached = unstable_cache(
   async (): Promise<KmpCianjurMissingMaterialReport> => {
     const [projects, materialConfigs] = await Promise.all([

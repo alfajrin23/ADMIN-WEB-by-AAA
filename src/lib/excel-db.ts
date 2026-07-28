@@ -1895,6 +1895,7 @@ export function insertExcelProject(payload: {
 }
 
 export function insertExcelExpense(payload: {
+  id?: string;
   project_id: string;
   category: CostCategory;
   specialist_type: string | null;
@@ -1910,7 +1911,7 @@ export function insertExcelExpense(payload: {
 }) {
   const db = readExcelDatabase();
   const row: ExpenseRow = {
-    id: randomUUID(),
+    id: payload.id?.trim() || randomUUID(),
     project_id: payload.project_id,
     category: payload.category,
     specialist_type: payload.specialist_type,

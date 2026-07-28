@@ -12,6 +12,7 @@ import {
   upsertKmpProjectMaterialAction,
 } from "@/app/actions/expense.action";
 import { CheckIcon, CloseIcon, EditIcon, EyeIcon, PlusIcon, SaveIcon, SearchIcon, TrashIcon } from "@/components/icons";
+import { KmpMaterialImportDialog } from "@/components/kmp-material-import/kmp-material-import-dialog";
 import { OptimisticExpenseCreateForm } from "@/components/optimistic-create-forms";
 import {
   OptimisticMutationNotice,
@@ -625,6 +626,7 @@ export function KmpMaterialMonitorPanel({
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [masterMaterialQuery, setMasterMaterialQuery] = useState("");
   const [isMasterMaterialVisible, setIsMasterMaterialVisible] = useState(false);
+  const [isExcelMaterialImportOpen, setIsExcelMaterialImportOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("incomplete");
   const [visibleProjectLimit, setVisibleProjectLimit] = useState(PROJECT_RENDER_BATCH_SIZE);
   const [expenseDate, setExpenseDate] = useState(today);
@@ -2928,14 +2930,27 @@ export function KmpMaterialMonitorPanel({
               Edit nama pengajuan, nominal deteksi, dan aturan material satu kali untuk seluruh project KMP Cianjur.
             </p>
           </div>
-          <button
-            type="button"
-            data-ui-button="true"
-            onClick={() => setIsMasterMaterialVisible((value) => !value)}
-            className="inline-flex items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100"
-          >
-            {isMasterMaterialVisible ? "Sembunyikan Edit Material" : "Tampilkan Edit Material"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {canEdit ? (
+              <button
+                type="button"
+                data-ui-button="true"
+                onClick={() => setIsExcelMaterialImportOpen(true)}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600"
+              >
+                <span aria-hidden="true">📊</span>
+                Import Material dari Excel
+              </button>
+            ) : null}
+            <button
+              type="button"
+              data-ui-button="true"
+              onClick={() => setIsMasterMaterialVisible((value) => !value)}
+              className="inline-flex items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+            >
+              {isMasterMaterialVisible ? "Sembunyikan Edit Material" : "Tampilkan Edit Material"}
+            </button>
+          </div>
         </div>
         {isMasterMaterialVisible ? (
           <>
@@ -3493,6 +3508,15 @@ export function KmpMaterialMonitorPanel({
       </OptimisticExpenseCreateForm>
 
       {renderMasterMaterialDetailModal()}
+
+      {canEdit ? (
+        <KmpMaterialImportDialog
+          open={isExcelMaterialImportOpen}
+          today={today}
+          onClose={() => setIsExcelMaterialImportOpen(false)}
+          onImported={onDataChanged}
+        />
+      ) : null}
 
       {activeMaterialEditor ? (
         <MaterialEditorModal

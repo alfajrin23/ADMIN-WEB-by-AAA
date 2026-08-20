@@ -803,6 +803,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
         initialModal={activeModal}
         projects={projects}
         canEdit={canEdit}
+        canExport={canExport}
         activeDataSource={activeDataSource}
         storageLabel={getStorageLabel()}
         closeModalHref={closeModalHref}

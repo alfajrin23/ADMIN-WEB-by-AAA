@@ -2234,7 +2234,7 @@ export async function getExpenseDetailSearchModalDataAction(input: {
   const [expenseCategories, results] = await Promise.all([
     getExpenseCategories(),
     input.hasCriteria
-      ? searchExpenseDetails(input.query, 200, {
+      ? searchExpenseDetails(input.query, 0, {
           from: input.from || undefined,
           to: input.to || undefined,
           year: input.year ?? undefined,

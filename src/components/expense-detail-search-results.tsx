@@ -9,7 +9,7 @@ import {
   updateManyExpensesAction,
 } from "@/app/actions/expense.action";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
-import { CloseIcon, EditIcon, EyeIcon, SaveIcon, TrashIcon } from "@/components/icons";
+import { CloseIcon, EditIcon, ExcelIcon, EyeIcon, SaveIcon, TrashIcon } from "@/components/icons";
 import { EditExpenseModal } from "@/components/edit-expense-modal";
 import {
   OptimisticMutationNotice,
@@ -32,6 +32,7 @@ type ExpenseDetailSearchResultsProps = {
   results: ProjectExpenseSearchResult[];
   projectSearchText?: string;
   canEdit?: boolean;
+  canExport?: boolean;
   expenseCategories?: ExpenseCategoryOption[];
   bulkEditReturnTo?: string;
 };
@@ -42,6 +43,14 @@ function normalizeFilterQuery(value: string) {
 
 function getDigits(value: string) {
   return value.replace(/\D/g, "");
+}
+
+function getClientLabel(value: string | null | undefined) {
+  return value?.trim() || "Tanpa Klien";
+}
+
+function getClientKey(value: string | null | undefined) {
+  return getClientLabel(value).toLowerCase();
 }
 
 function toCompactSearchToken(value: string) {
@@ -182,6 +191,7 @@ export function ExpenseDetailSearchResults({
   results,
   projectSearchText,
   canEdit = false,
+  canExport = false,
   expenseCategories = [],
   bulkEditReturnTo = "/projects",
 }: ExpenseDetailSearchResultsProps) {
@@ -189,8 +199,10 @@ export function ExpenseDetailSearchResults({
   const [filterInputValue, setFilterInputValue] = useState("");
   const filterDebounceRef = useRef<number | null>(null);
   const [filterProjectId, setFilterProjectId] = useState("");
+  const [filterClient, setFilterClient] = useState("");
   const [filterCategory, setFilterCategory] = useState("");
   const [filterDate, setFilterDate] = useState("");
+  const [isExporting, setIsExporting] = useState(false);
   const [isBulkEditorOpen, setIsBulkEditorOpen] = useState(false);
   const [applyCategory, setApplyCategory] = useState(false);
   const [applyExpenseDate, setApplyExpenseDate] = useState(false);
@@ -212,6 +224,21 @@ export function ExpenseDetailSearchResults({
         visibleResults.reduce((map, item) => {
           if (!map.has(item.projectId)) {
             map.set(item.projectId, item.projectName);
+          }
+          return map;
+        }, new Map<string, string>()),
+      )
+        .map(([value, label]) => ({ value, label }))
+        .sort((a, b) => a.label.localeCompare(b.label, "id-ID")),
+    [visibleResults],
+  );
+  const clientOptions = useMemo(
+    () =>
+      Array.from(
+        visibleResults.reduce((map, item) => {
+          const value = getClientKey(item.clientName);
+          if (!map.has(value)) {
+            map.set(value, getClientLabel(item.clientName));
           }
           return map;
         }, new Map<string, string>()),
@@ -242,6 +269,9 @@ export function ExpenseDetailSearchResults({
   const filteredResults = useMemo(() => {
     const normalizedFilterQuery = normalizeFilterQuery(filterQuery);
     return visibleResults.filter((item) => {
+      if (filterClient && getClientKey(item.clientName) !== filterClient) {
+        return false;
+      }
       if (filterProjectId && item.projectId !== filterProjectId) {
         return false;
       }
@@ -274,7 +304,7 @@ export function ExpenseDetailSearchResults({
       const amountDigits = getDigits(String(Math.round(Math.abs(item.amount))));
       return amountDigits.includes(queryDigits);
     });
-  }, [filterCategory, filterDate, filterProjectId, filterQuery, visibleResults]);
+  }, [filterCategory, filterClient, filterDate, filterProjectId, filterQuery, visibleResults]);
   const filteredExpenseIds = useMemo(
     () => Array.from(new Set(filteredResults.map((item) => item.expenseId))),
     [filteredResults],
@@ -288,7 +318,73 @@ export function ExpenseDetailSearchResults({
     [filteredResults],
   );
   const isBulkActionDisabled = filteredExpenseIds.length === 0;
-  const hasLocalFilters = Boolean(filterQuery || filterProjectId || filterCategory || filterDate);
+  const hasLocalFilters = Boolean(
+    filterQuery || filterClient || filterProjectId || filterCategory || filterDate,
+  );
+
+  const handleExportExcel = async () => {
+    if (filteredResults.length === 0 || isExporting) {
+      return;
+    }
+
+    setIsExporting(true);
+    try {
+      const XLSX = await import("xlsx/xlsx.mjs");
+      const headers = [
+        "Tanggal",
+        "Klien",
+        "Project",
+        "Nama Pengaju",
+        "Kategori",
+        "Keterangan",
+        "Info Penggunaan",
+        "Vendor",
+        "Nominal",
+      ];
+      const rows: Array<Array<string | number>> = [
+        ["HASIL CARI RINCIAN BIAYA"],
+        [`Diekspor ${new Date().toLocaleString("id-ID")}`],
+        [],
+        headers,
+        ...filteredResults.map((item) => [
+          item.expenseDate,
+          getClientLabel(item.clientName),
+          item.projectName,
+          item.requesterName ?? "",
+          getCostCategoryLabel(item.category),
+          item.description ?? "",
+          item.usageInfo ?? "",
+          item.recipientName ?? "",
+          item.amount,
+        ]),
+        [],
+        ["TOTAL", "", "", "", "", "", "", "", filteredTotalAmount],
+      ];
+      const worksheet = XLSX.utils.aoa_to_sheet(rows);
+      worksheet["!cols"] = [
+        { wch: 14 },
+        { wch: 24 },
+        { wch: 32 },
+        { wch: 24 },
+        { wch: 20 },
+        { wch: 42 },
+        { wch: 34 },
+        { wch: 24 },
+        { wch: 18 },
+      ];
+      worksheet["!merges"] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: headers.length - 1 } },
+      ];
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Cari Rincian");
+      XLSX.writeFile(workbook, `cari-rincian-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch {
+      window.alert("Export Excel gagal. Silakan coba lagi.");
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   useEffect(() => {
     setVisibleResults(results);
@@ -404,7 +500,11 @@ export function ExpenseDetailSearchResults({
       pendingMessage: "Memperbarui data biaya...",
       optimisticUpdate: () => {
         setVisibleResults((previous) =>
-          previous.map((item) => (item.expenseId === nextValue.expenseId ? nextValue : item)),
+          previous.map((item) =>
+            item.expenseId === nextValue.expenseId
+              ? { ...nextValue, clientName: nextValue.clientName ?? item.clientName }
+              : item,
+          ),
         );
       },
       rollback: () => {
@@ -417,7 +517,23 @@ export function ExpenseDetailSearchResults({
     <div className="space-y-2">
       <OptimisticMutationNotice notice={notice} />
       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-        <label className="mb-1 block text-xs font-semibold text-slate-600">Filter hasil pencarian</label>
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+          <label className="block text-xs font-semibold text-slate-600">Filter hasil pencarian</label>
+          {canExport ? (
+            <button
+              type="button"
+              data-ui-button="true"
+              onClick={handleExportExcel}
+              disabled={isExporting || filteredResults.length === 0}
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <span className="btn-icon bg-emerald-100 text-emerald-700">
+                <ExcelIcon />
+              </span>
+              {isExporting ? "Menyiapkan Excel..." : "Export Excel"}
+            </button>
+          ) : null}
+        </div>
         <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
           <input
             value={filterInputValue}
@@ -436,6 +552,7 @@ export function ExpenseDetailSearchResults({
               onClick={() => {
                 setFilterInputValue("");
                 setFilterQuery("");
+                setFilterClient("");
                 setFilterProjectId("");
                 setFilterCategory("");
                 setFilterDate("");
@@ -446,7 +563,15 @@ export function ExpenseDetailSearchResults({
             </button>
           ) : null}
         </div>
-        <div className="mt-2 grid gap-2 sm:grid-cols-3">
+        <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <select value={filterClient} onChange={(event) => setFilterClient(event.currentTarget.value)}>
+            <option value="">Semua klien</option>
+            {clientOptions.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </select>
           <select value={filterProjectId} onChange={(event) => setFilterProjectId(event.currentTarget.value)}>
             <option value="">Semua project</option>
             {projectOptions.map((item) => (

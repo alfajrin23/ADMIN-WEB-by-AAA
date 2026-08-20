@@ -35,6 +35,7 @@ type ProjectsModalControllerProps = {
   initialModal: ModalType | null;
   projects: Project[];
   canEdit: boolean;
+  canExport: boolean;
   activeDataSource: string;
   storageLabel: string;
   closeModalHref: string;
@@ -170,6 +171,7 @@ export function ProjectsModalController({
   initialModal,
   projects,
   canEdit,
+  canExport,
   activeDataSource,
   storageLabel,
   closeModalHref,
@@ -679,6 +681,7 @@ export function ProjectsModalController({
               results={detailData.results}
               projectSearchText={searchText}
               canEdit={canEdit}
+              canExport={canExport}
               expenseCategories={detailData.expenseCategories}
               bulkEditReturnTo={detailSearchReturnHref}
             />

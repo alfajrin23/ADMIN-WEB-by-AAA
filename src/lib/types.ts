@@ -142,6 +142,7 @@ export type ProjectExpenseSearchResult = {
   expenseId: string;
   projectId: string;
   projectName: string;
+  clientName?: string | null;
   expenseDate: string;
   requesterName: string | null;
   description: string | null;

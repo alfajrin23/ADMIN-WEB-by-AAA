@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { Suspense } from "react";
 import { logoutAction } from "@/app/auth-actions";
 import {
   AttendanceIcon,
@@ -29,13 +30,12 @@ export default async function DashboardLayout({
   children: React.ReactNode;
 }>) {
   const user = await requireAuthUser();
-  const updates = await getSystemUpdates();
 
   return (
     <div className="app-surface">
       <DashboardShell
         sidebar={
-          <aside className="panel flex flex-col p-4 lg:sticky lg:top-5 lg:h-[calc(100vh-2.5rem)]">
+          <aside className="panel flex h-full min-h-[calc(100dvh-1.5rem)] flex-col p-4 lg:sticky lg:top-5 lg:min-h-0 lg:h-[calc(100vh-2.5rem)]">
             <Link href="/" prefetch className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-md shadow-slate-900/10">
               <Image
@@ -63,7 +63,9 @@ export default async function DashboardLayout({
                 <p className="mt-1 truncate text-xs text-slate-500">@{user.username}</p>
               </div>
               <div className="flex items-center gap-1">
-                <NotificationDropdown updates={updates} />
+                <Suspense fallback={<span className="dashboard-notification-placeholder" aria-hidden="true" />}>
+                  <DashboardNotifications />
+                </Suspense>
                 <ProfileEditTrigger defaultFullName={user.fullName} />
               </div>
             </div>
@@ -121,21 +123,21 @@ export default async function DashboardLayout({
         </aside>
       }>
         <div className="min-w-0 space-y-4">
-            <header className="panel sticky top-4 z-20 px-4 py-3 backdrop-blur">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
-                  Workspace
+          <header className="dashboard-workspace-header panel sticky top-3 z-20 px-4 py-3 sm:top-4 sm:px-5">
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                  ADMIN WEB <span className="px-1 text-slate-300">/</span> WORKSPACE
                 </p>
-                <h2 className="mt-1 text-lg font-semibold tracking-[-0.03em] text-slate-950">
-                  Administrasi proyek yang lebih ringkas dan lebih mudah dibaca.
+                <h2 className="mt-1 truncate text-base font-semibold tracking-[-0.02em] text-slate-950 sm:text-lg">
+                  Administrasi proyek
                 </h2>
               </div>
-              <Link href="/" prefetch className="button-ghost button-sm">
+              <Link href="/" prefetch className="button-ghost button-sm shrink-0">
                 <span className="btn-icon bg-slate-100 text-slate-700">
                   <DashboardIcon />
                 </span>
-                Dashboard
+                Ringkasan
               </Link>
             </div>
           </header>
@@ -152,9 +154,14 @@ export default async function DashboardLayout({
             >
               Copyright by Al Fajrin A Alamsyah
             </a>
-            </footer>
-          </div>
+          </footer>
+        </div>
       </DashboardShell>
     </div>
   );
+}
+
+async function DashboardNotifications() {
+  const updates = await getSystemUpdates();
+  return <NotificationDropdown updates={updates} />;
 }

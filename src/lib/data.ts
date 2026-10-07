@@ -462,9 +462,6 @@ const SUPABASE_EXPENSE_METADATA_SELECT =
   "id, project_id, requester_name, description, usage_info, recipient_name, unit_label, category, amount, expense_date, created_at";
 const SUPABASE_EXPENSE_FULL_SELECT =
   "id, project_id, category, specialist_type, requester_name, description, recipient_name, quantity, unit_label, usage_info, unit_price, amount, expense_date, created_at";
-const SUPABASE_ATTENDANCE_DASHBOARD_SELECT =
-  "worker_name, status, kasbon_amount, attendance_date, notes";
-
 type CachedSupabaseExpenseMetadata = {
   categoryRows: Record<string, unknown>[];
   expenseRows: Record<string, unknown>[];
@@ -614,16 +611,6 @@ const getCachedSupabaseAllExpenseRows = cache(
 // Keep them request-memoized instead of persisting the whole payload in the data cache.
 const getCachedSupabaseAllAttendanceRows = cache(
   async (): Promise<Record<string, unknown>[]> => getFreshSupabaseAllAttendanceRows(),
-);
-
-const getCachedSupabaseDashboardAttendanceRows = cache(
-  async (): Promise<Record<string, unknown>[]> => {
-    const rows = await getAllSupabaseRows(
-      "attendance_records",
-      SUPABASE_ATTENDANCE_DASHBOARD_SELECT,
-    );
-    return rows.filter((row) => !isAttendanceWorkerPresetRow(row));
-  },
 );
 
 async function getFreshSupabaseAllAttendanceRows() {
@@ -3914,26 +3901,181 @@ function buildDashboardDataFromCollections(input: {
   };
 }
 
-// Tidak di-wrap dengan unstable_cache karena sub-queries sudah di-cache.
-// Expenses + attendance combined > 2MB → melebihi batas cache Next.js.
-async function getSupabaseDashboardData(): Promise<DashboardData> {
-  const [projects, metadata, attendanceRows] = await Promise.all([
-    getCachedSupabaseProjects(),
-    getCachedSupabaseExpenseMetadata(),
-    getCachedSupabaseDashboardAttendanceRows(),
+type SupabaseDashboardSummary = {
+  totalProjects?: number;
+  activeProjects?: number;
+  completedProjects?: number;
+  delayedProjects?: number;
+  activeWorkers?: number;
+  totalExpense?: number;
+  monthExpense?: number;
+  totalKasbon?: number;
+  categoryTotals?: Array<{ category?: string; total?: number }>;
+  categoryTotalsByClient?: Array<{
+    clientName?: string;
+    projectCount?: number;
+    totalExpense?: number;
+    categoryTotals?: Array<{ category?: string; total?: number }>;
+  }>;
+  projectExpenseTotals?: Array<{
+    projectId?: string;
+    projectName?: string;
+    clientName?: string;
+    projectStatus?: string;
+    transactionCount?: number;
+    totalExpense?: number;
+    latestExpenseDate?: string;
+  }>;
+};
+
+const getCachedSupabaseDashboardSummary = unstable_cache(
+  async (monthStart: string, activeSince: string): Promise<SupabaseDashboardSummary> => {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      throw new Error("Supabase is not configured.");
+    }
+
+    const startedAt = Date.now();
+    const { data, error } = await supabase.rpc("get_dashboard_summary", {
+      p_month_start: monthStart,
+      p_active_since: activeSince,
+    });
+    const durationMs = Date.now() - startedAt;
+    if (error) {
+      console.error("[dashboard] RPC summary gagal.", {
+        code: (error as { code?: string }).code,
+        durationMs,
+      });
+      throw new Error(
+        "Ringkasan dashboard belum tersedia. Terapkan migration 202610070002_dashboard_summary_rpc.sql di Supabase.",
+      );
+    }
+
+    const response = (data ?? {}) as SupabaseDashboardSummary;
+    console.info("[dashboard] RPC summary selesai.", {
+      durationMs,
+      responseBytes: Buffer.byteLength(JSON.stringify(data ?? null)),
+      projectRows: response.projectExpenseTotals?.length ?? 0,
+      clientRows: response.categoryTotalsByClient?.length ?? 0,
+    });
+    return response;
+  },
+  ["supabase-dashboard-summary"],
+  {
+    revalidate: 30,
+    tags: [CACHE_TAGS.projects, CACHE_TAGS.expenses, CACHE_TAGS.attendance],
+  },
+);
+
+function getDashboardDateArguments() {
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+    .toISOString()
+    .slice(0, 10);
+  const activeSince = new Date(now);
+  activeSince.setDate(activeSince.getDate() - 29);
+  return { monthStart, activeSince: activeSince.toISOString().slice(0, 10) };
+}
+
+function mapSupabaseDashboardSummary(summary: SupabaseDashboardSummary): DashboardData {
+  const asNumber = (value: unknown) => {
+    const parsed = Number(value ?? 0);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const categoryOptions = mergeExpenseCategoryOptions(
+    (summary.categoryTotals ?? []).map((item) => String(item.category ?? "")),
+    (summary.categoryTotalsByClient ?? []).flatMap((client) =>
+      (client.categoryTotals ?? []).map((item) => String(item.category ?? "")),
+    ),
+  );
+  const totalsByCategory = new Map(
+    (summary.categoryTotals ?? []).map((item) => [
+      toCategorySlug(String(item.category ?? "")),
+      asNumber(item.total),
+    ]),
+  );
+  const categoryTotals: CategoryTotal[] = categoryOptions.map((item) => ({
+    category: item.value,
+    label: item.label,
+    total: totalsByCategory.get(item.value) ?? 0,
+  }));
+  const categoryTotalsByClient: ClientCategoryTotal[] = (summary.categoryTotalsByClient ?? []).map(
+    (client) => {
+      const clientTotals = new Map(
+        (client.categoryTotals ?? []).map((item) => [
+          toCategorySlug(String(item.category ?? "")),
+          asNumber(item.total),
+        ]),
+      );
+      return {
+        clientName: String(client.clientName ?? "Tanpa Klien"),
+        projectCount: asNumber(client.projectCount),
+        totalExpense: asNumber(client.totalExpense),
+        categoryTotals: categoryOptions
+          .map((item) => ({
+            category: item.value,
+            label: item.label,
+            total: clientTotals.get(item.value) ?? 0,
+          }))
+          .filter((item) => item.total !== 0),
+      };
+    },
+  );
+  const projectExpenseTotals: DashboardData["projectExpenseTotals"] = (
+    summary.projectExpenseTotals ?? []
+  ).map((item) => ({
+    projectId: String(item.projectId ?? ""),
+    projectName: String(item.projectName ?? "Project"),
+    clientName: String(item.clientName ?? "Tanpa Klien"),
+    projectStatus: PROJECT_STATUSES.some((status) => status.value === item.projectStatus)
+      ? (item.projectStatus as DashboardData["projectExpenseTotals"][number]["projectStatus"])
+      : "aktif",
+    transactionCount: asNumber(item.transactionCount),
+    totalExpense: asNumber(item.totalExpense),
+    latestExpenseDate: String(item.latestExpenseDate ?? "").slice(0, 10),
+  }));
+  const statusTotals = new Map<string, number>([
+    ["aktif", asNumber(summary.activeProjects)],
+    ["selesai", asNumber(summary.completedProjects)],
+    ["tertunda", asNumber(summary.delayedProjects)],
   ]);
 
-  const projectNameMap = Object.fromEntries(
-    projects.map((project) => [project.id, project.name] as const),
-  );
-  const expenses = metadata.expenseRows.map((row) => mapExpense(row, projectNameMap[String(row.project_id)]));
-  const attendance = attendanceRows.map((row) => mapAttendance(row));
+  return {
+    totalProjects: asNumber(summary.totalProjects),
+    activeProjects: asNumber(summary.activeProjects),
+    completedProjects: asNumber(summary.completedProjects),
+    delayedProjects: asNumber(summary.delayedProjects),
+    activeWorkers: asNumber(summary.activeWorkers),
+    totalExpense: asNumber(summary.totalExpense),
+    monthExpense: asNumber(summary.monthExpense),
+    totalKasbon: asNumber(summary.totalKasbon),
+    categoryTotals,
+    categoryTotalsByClient,
+    recentExpenses: [],
+    projectExpenseTotals,
+    projectCountByClient: [],
+    projectStatusTotals: PROJECT_STATUSES.map((item) => ({
+      status: item.value,
+      label: item.label,
+      total: statusTotals.get(item.value) ?? 0,
+    })),
+    attendanceTrend: [],
+    expenseTrend: [],
+  };
+}
 
-  return buildDashboardDataFromCollections({
-    projects,
-    expenses,
-    attendance,
+async function getSupabaseDashboardData(): Promise<DashboardData> {
+  const { monthStart, activeSince } = getDashboardDateArguments();
+  const startedAt = Date.now();
+  const summary = await getCachedSupabaseDashboardSummary(monthStart, activeSince);
+  const dashboard = mapSupabaseDashboardSummary(summary);
+  console.info("[dashboard] data siap dirender.", {
+    durationMs: Date.now() - startedAt,
+    responseBytes: Buffer.byteLength(JSON.stringify(summary)),
+    projectRows: dashboard.projectExpenseTotals.length,
+    clientRows: dashboard.categoryTotalsByClient.length,
   });
+  return dashboard;
 }
 
 export async function getDashboardData(): Promise<DashboardData> {

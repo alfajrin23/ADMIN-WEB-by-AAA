@@ -77,8 +77,8 @@ export function DashboardCharts({
   const largestCategory = budgetRows[0];
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,0.88fr)_minmax(0,1.12fr)]">
-      <section className="soft-card p-4 md:p-5">
+    <div className="dashboard-chart-grid">
+      <section className="soft-card min-w-0 p-4 sm:p-5 xl:p-6">
         <div className="section-header">
           <div>
             <h3 className="section-title">Project Progress</h3>
@@ -145,7 +145,7 @@ export function DashboardCharts({
         </div>
       </section>
 
-      <section className="soft-card p-4 md:p-5">
+      <section className="soft-card min-w-0 p-4 sm:p-5 xl:p-6">
         <div className="section-header">
           <div>
             <h3 className="section-title">Budget Usage</h3>

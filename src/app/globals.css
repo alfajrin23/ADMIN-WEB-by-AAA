@@ -263,7 +263,6 @@ button:disabled {
 }
 
 .modal-card {
-  max-width: min(100%, calc(100vw - 1.5rem));
   max-height: calc(100dvh - 1.5rem);
   animation: modal-rise 220ms ease-out;
 }
@@ -3220,11 +3219,6 @@ button:disabled {
   .hero-actions > * {
     min-width: 0;
     max-width: 100%;
-  }
-
-  .modal-card {
-    max-height: calc(100dvh - 1rem);
-    padding: 1rem;
   }
 
   .data-table thead th,

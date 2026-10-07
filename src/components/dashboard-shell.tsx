@@ -35,7 +35,7 @@ export function DashboardShell({
   return (
     <OptimisticCreateStoreProvider>
       <div
-        className={`mx-auto grid min-h-screen w-full max-w-[1920px] grid-cols-1 gap-3 px-3 py-3 sm:gap-4 sm:px-5 lg:gap-5 lg:px-6 lg:py-5 2xl:px-8 transition-[grid-template-columns] duration-200 ${
+        className={`mx-auto grid min-h-screen w-full max-w-[2560px] grid-cols-1 gap-3 px-3 py-3 sm:gap-4 sm:px-5 lg:gap-5 lg:px-6 lg:py-5 2xl:px-8 transition-[grid-template-columns] duration-200 ${
           isSidebarOpen ? "lg:grid-cols-[264px_minmax(0,1fr)]" : "lg:grid-cols-[0px_minmax(0,1fr)]"
         }`}
       >

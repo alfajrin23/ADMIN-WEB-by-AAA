@@ -417,15 +417,23 @@ export function ProjectsModalController({
     })
       .then((data) => {
         if (detailRequestRef.current === requestId) {
+          if ("error" in data) {
+            setDetailError(data.error);
+            return;
+          }
           setDetailDataCache((current) => ({
             ...current,
             [detailCacheKey]: data,
           }));
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (detailRequestRef.current === requestId) {
-          setDetailError("Gagal memuat data pencarian rincian.");
+          setDetailError(
+            error instanceof Error
+              ? error.message
+              : "Gagal memuat data pencarian rincian. Periksa log server untuk detailnya.",
+          );
         }
       })
       .finally(() => {

@@ -2236,35 +2236,51 @@ export async function getExpenseDetailSearchModalDataAction(input: {
 }) {
   await requireAuthUser();
   const { getExpenseCategories, searchExpenseDetailsPage } = await import("@/lib/data");
-  const [expenseCategories, page] = await Promise.all([
-    getExpenseCategories(),
-    input.hasCriteria
-      ? searchExpenseDetailsPage({
-          query: input.query,
-          from: input.from || undefined,
-          to: input.to || undefined,
-          year: input.year ?? undefined,
-          category: input.category || undefined,
-          projectId: input.projectId || undefined,
-          client: input.client || undefined,
-          date: input.date || undefined,
-          page: input.page,
-          pageSize: 20,
-        })
-      : Promise.resolve({
-          results: [],
-          totalCount: 0,
-          totalProjects: 0,
-          totalAmount: 0,
-          page: 1,
-          pageSize: 20,
-        }),
-  ]);
+  try {
+    const [expenseCategories, page] = await Promise.all([
+      getExpenseCategories(),
+      input.hasCriteria
+        ? searchExpenseDetailsPage({
+            query: input.query,
+            from: input.from || undefined,
+            to: input.to || undefined,
+            year: input.year ?? undefined,
+            category: input.category || undefined,
+            projectId: input.projectId || undefined,
+            client: input.client || undefined,
+            date: input.date || undefined,
+            page: input.page,
+            pageSize: 20,
+          })
+        : Promise.resolve({
+            results: [],
+            totalCount: 0,
+            totalProjects: 0,
+            totalAmount: 0,
+            page: 1,
+            pageSize: 20,
+          }),
+    ]);
 
-  return {
-    expenseCategories,
-    ...page,
-  };
+    return {
+      expenseCategories,
+      ...page,
+    };
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "";
+    console.error("[expense-search] Gagal memuat data modal rincian.", error);
+    if (code === "EXPENSE_SEARCH_RPC_MISSING") {
+      return {
+        error: "Fungsi pencarian belum tersedia di Supabase. Terapkan migration 202610070001_search_expense_details_page.sql.",
+      };
+    }
+    if (code === "EXPENSE_SEARCH_RPC_PERMISSION_DENIED") {
+      return {
+        error: "Supabase menolak akses fungsi pencarian. Periksa konfigurasi service role dan izin RPC.",
+      };
+    }
+    return { error: "Gagal memuat data pencarian rincian. Periksa log server untuk detailnya." };
+  }
 }
 
 export async function getKmpMaterialReportModalDataAction() {

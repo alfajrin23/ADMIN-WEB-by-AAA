@@ -3485,6 +3485,13 @@ export async function searchExpenseDetailsPage(input: {
     });
     if (error) {
       console.warn("[expense-search] RPC pencarian rincian gagal.", error.message);
+      const errorCode = (error as { code?: string }).code;
+      if (errorCode === "PGRST202" || errorCode === "42883") {
+        throw new Error("EXPENSE_SEARCH_RPC_MISSING");
+      }
+      if (errorCode === "42501") {
+        throw new Error("EXPENSE_SEARCH_RPC_PERMISSION_DENIED");
+      }
       throw new Error("Pencarian rincian tidak dapat diproses.");
     }
 

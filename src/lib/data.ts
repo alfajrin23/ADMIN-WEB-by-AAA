@@ -42,6 +42,7 @@ import type {
   ExpenseEntry,
   Project,
   ProjectDetail,
+  ProjectExpenseSearchPage,
   ProjectExpenseSearchResult,
   SystemUpdate,
   WageProjectSummary,
@@ -3428,6 +3429,115 @@ export async function searchExpenseDetails(
     .sort(sortExpenseSearchResults),
     limit,
   );
+}
+
+export async function searchExpenseDetailsPage(input: {
+  query: string;
+  from?: string;
+  to?: string;
+  year?: number | null;
+  category?: string;
+  projectId?: string;
+  client?: string;
+  date?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<ProjectExpenseSearchPage> {
+  const requestedPageSize = Number(input.pageSize ?? 20);
+  const requestedPage = Number(input.page ?? 1);
+  const pageSize = Number.isFinite(requestedPageSize)
+    ? Math.min(50, Math.max(1, Math.floor(requestedPageSize)))
+    : 20;
+  const page = Number.isFinite(requestedPage) ? Math.max(1, Math.floor(requestedPage)) : 1;
+  const dateFilters = normalizeExpenseDetailDateFilters({
+    from: input.from,
+    to: input.to,
+    year: input.year ?? undefined,
+  });
+  if (!dateFilters.isValid) {
+    return { results: [], totalCount: 0, totalProjects: 0, totalAmount: 0, page, pageSize };
+  }
+  const filters = {
+    from: dateFilters.from,
+    to: dateFilters.to,
+    year: input.year ?? undefined,
+    category: input.category,
+    projectId: input.projectId,
+    client: input.client,
+    date: input.date,
+  };
+
+  if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      throw new Error("Supabase is not configured.");
+    }
+    const { data, error } = await supabase.rpc("search_expense_details_page", {
+      p_search_text: input.query.trim().slice(0, 120),
+      p_from: filters.from || null,
+      p_to: filters.to || null,
+      p_category: filters.category || null,
+      p_project_id: filters.projectId || null,
+      p_client: filters.client || null,
+      p_date: filters.date || null,
+      p_page: page,
+      p_page_size: pageSize,
+    });
+    if (error) {
+      console.warn("[expense-search] RPC pencarian rincian gagal.", error.message);
+      throw new Error("Pencarian rincian tidak dapat diproses.");
+    }
+
+    const result = data as {
+      rows?: Array<Record<string, unknown>>;
+      totalCount?: number;
+      totalProjects?: number;
+      totalAmount?: number;
+    } | null;
+    const rows = Array.isArray(result?.rows) ? result.rows : [];
+    return {
+      results: rows.map((row) => ({
+        expenseId: String(row.expense_id ?? ""),
+        projectId: String(row.project_id ?? ""),
+        projectName: String(row.project_name ?? "Project"),
+        clientName: typeof row.client_name === "string" ? row.client_name : null,
+        expenseDate: String(row.expense_date ?? "").slice(0, 10),
+        requesterName: typeof row.requester_name === "string" ? row.requester_name : null,
+        description: typeof row.description === "string" ? row.description : null,
+        usageInfo: typeof row.usage_info === "string" ? row.usage_info : null,
+        recipientName: typeof row.recipient_name === "string" ? row.recipient_name : null,
+        category: String(row.category ?? "") as ProjectExpenseSearchResult["category"],
+        amount: Number(row.amount ?? 0),
+      })),
+      totalCount: Number(result?.totalCount ?? 0),
+      totalProjects: Number(result?.totalProjects ?? 0),
+      totalAmount: Number(result?.totalAmount ?? 0),
+      page,
+      pageSize,
+    };
+  }
+
+  const normalizedFrom = filters.from || filters.date;
+  const allResults = await searchExpenseDetails(input.query.trim().slice(0, 120), 0, {
+    from: normalizedFrom,
+    to: filters.to || filters.date,
+    year: filters.year,
+  });
+  const matchingResults = allResults.filter((result) =>
+    (!filters.category || result.category === filters.category) &&
+    (!filters.projectId || result.projectId === filters.projectId) &&
+    (!filters.date || result.expenseDate === filters.date) &&
+    (!filters.client || (result.clientName ?? "Tanpa Klien").trim().toLowerCase() === filters.client.trim().toLowerCase()),
+  );
+  const start = (page - 1) * pageSize;
+  return {
+    results: matchingResults.slice(start, start + pageSize),
+    totalCount: matchingResults.length,
+    totalProjects: new Set(matchingResults.map((result) => result.projectId)).size,
+    totalAmount: matchingResults.reduce((total, result) => total + result.amount, 0),
+    page,
+    pageSize,
+  };
 }
 
 export async function getWageRecap(options?: {

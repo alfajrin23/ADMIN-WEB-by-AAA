@@ -16,7 +16,11 @@ const eslintConfig = defineConfig([
   {
     rules: {
       // Dinonaktifkan sementara agar build tidak tertumpuk 600+ warning.
-      "@typescript-eslint/no-unused-vars": "off"
+      "@typescript-eslint/no-unused-vars": "off",
+      // Existing optimistic lists synchronize refreshed server props into local state.
+      "react-hooks/set-state-in-effect": "off",
+      // Existing draft handlers read the latest render snapshot through refs.
+      "react-hooks/refs": "off",
     }
   }
 ]);

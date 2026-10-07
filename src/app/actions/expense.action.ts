@@ -2227,24 +2227,43 @@ export async function getExpenseDetailSearchModalDataAction(input: {
   from?: string;
   to?: string;
   year?: number | null;
+  category?: string;
+  projectId?: string;
+  client?: string;
+  date?: string;
+  page?: number;
   hasCriteria: boolean;
 }) {
   await requireAuthUser();
-  const { getExpenseCategories, searchExpenseDetails } = await import("@/lib/data");
-  const [expenseCategories, results] = await Promise.all([
+  const { getExpenseCategories, searchExpenseDetailsPage } = await import("@/lib/data");
+  const [expenseCategories, page] = await Promise.all([
     getExpenseCategories(),
     input.hasCriteria
-      ? searchExpenseDetails(input.query, 0, {
+      ? searchExpenseDetailsPage({
+          query: input.query,
           from: input.from || undefined,
           to: input.to || undefined,
           year: input.year ?? undefined,
+          category: input.category || undefined,
+          projectId: input.projectId || undefined,
+          client: input.client || undefined,
+          date: input.date || undefined,
+          page: input.page,
+          pageSize: 20,
         })
-      : Promise.resolve([]),
+      : Promise.resolve({
+          results: [],
+          totalCount: 0,
+          totalProjects: 0,
+          totalAmount: 0,
+          page: 1,
+          pageSize: 20,
+        }),
   ]);
 
   return {
     expenseCategories,
-    results,
+    ...page,
   };
 }
 

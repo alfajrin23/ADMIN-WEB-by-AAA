@@ -44,6 +44,12 @@ AUTH_SESSION_SECRET=use-a-long-random-secret
 
 `supabase/schema.sql`
 
+Untuk pencarian rincian bertahap, jalankan juga:
+
+`supabase/migrations/202610070001_search_expense_details_page.sql`
+
+Jalankan migration ini sebelum deploy kode aplikasi yang memanggil RPC pencarian.
+
 5. Jalankan local:
 
 ```bash

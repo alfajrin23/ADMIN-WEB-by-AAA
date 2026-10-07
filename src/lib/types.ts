@@ -152,6 +152,15 @@ export type ProjectExpenseSearchResult = {
   amount: number;
 };
 
+export type ProjectExpenseSearchPage = {
+  results: ProjectExpenseSearchResult[];
+  totalCount: number;
+  totalProjects: number;
+  totalAmount: number;
+  page: number;
+  pageSize: number;
+};
+
 export type DashboardData = {
   totalProjects: number;
   activeProjects: number;

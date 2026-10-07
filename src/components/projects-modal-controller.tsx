@@ -65,6 +65,11 @@ type DetailSearchState = {
   from: string;
   to: string;
   year: number | null;
+  category: string;
+  projectId: string;
+  client: string;
+  date: string;
+  page: number;
   hasCriteria: boolean;
 };
 
@@ -115,17 +120,29 @@ function buildDetailStateFromUrl(href: string, fallback: DetailSearchState): Det
       ? url.searchParams.get("detail_to") ?? ""
       : fallback.to,
     year: parsedYear,
+    category: url.searchParams.get("detail_category") ?? fallback.category,
+    projectId: url.searchParams.get("detail_project") ?? fallback.projectId,
+    client: url.searchParams.get("detail_client") ?? fallback.client,
+    date: url.searchParams.get("detail_date") ?? fallback.date,
+    page: Math.max(1, Number(url.searchParams.get("detail_page") ?? fallback.page) || 1),
     hasCriteria: Boolean(
       url.searchParams.get("detail_q")?.trim() ||
         url.searchParams.get("detail_from") ||
         url.searchParams.get("detail_to") ||
-        parsedYear,
+        parsedYear ||
+        url.searchParams.get("detail_category") ||
+        url.searchParams.get("detail_project") ||
+        url.searchParams.get("detail_client") ||
+        url.searchParams.get("detail_date"),
     ),
   };
 }
 
 function hasDetailCriteria(state: DetailSearchState) {
-  return Boolean(state.query.trim() || state.from || state.to || state.year);
+  return Boolean(
+    state.query.trim() || state.from || state.to || state.year || state.category ||
+      state.projectId || state.client || state.date,
+  );
 }
 
 function ModalDataError({ message, onRetry }: { message: string; onRetry: () => void }) {
@@ -197,6 +214,11 @@ export function ProjectsModalController({
       from: detailDateFrom,
       to: detailDateTo,
       year: detailYear,
+      category: "",
+      projectId: "",
+      client: "",
+      date: "",
+      page: 1,
       hasCriteria: hasDetailSearchCriteria,
     }),
     [detailDateFrom, detailDateTo, detailSearchQuery, detailYear, hasDetailSearchCriteria],
@@ -295,6 +317,11 @@ export function ProjectsModalController({
         from: detailState.from,
         to: detailState.to,
         year: detailState.year,
+        category: detailState.category,
+        projectId: detailState.projectId,
+        client: detailState.client,
+        date: detailState.date,
+        page: detailState.page,
         hasCriteria: detailState.hasCriteria,
       }),
     [detailState],
@@ -304,6 +331,7 @@ export function ProjectsModalController({
     const normalizedState = {
       ...nextState,
       query: nextState.query.trim(),
+      page: nextState.page || 1,
       hasCriteria: hasDetailCriteria(nextState),
     };
     setDetailState(normalizedState);
@@ -315,6 +343,7 @@ export function ProjectsModalController({
         const nextState = {
           ...current,
           ...patch,
+          page: 1,
         };
         nextState.hasCriteria = hasDetailCriteria(nextState);
         if (detailDebounceRef.current) {
@@ -329,6 +358,18 @@ export function ProjectsModalController({
     [commitDetailSearch],
   );
 
+  const updateDetailFilters = useCallback((patch: Partial<DetailSearchState>) => {
+    const nextState = { ...detailDraft, ...patch, page: 1 };
+    nextState.hasCriteria = hasDetailCriteria(nextState);
+    setDetailDraft(nextState);
+    setDetailState(nextState);
+  }, [detailDraft]);
+
+  const changeDetailPage = useCallback((page: number) => {
+    setDetailState((current) => ({ ...current, page }));
+    setDetailDraft((current) => ({ ...current, page }));
+  }, []);
+
   const resetDetailSearch = useCallback(() => {
     if (detailDebounceRef.current) {
       window.clearTimeout(detailDebounceRef.current);
@@ -338,6 +379,11 @@ export function ProjectsModalController({
       from: "",
       to: "",
       year: null,
+      category: "",
+      projectId: "",
+      client: "",
+      date: "",
+      page: 1,
       hasCriteria: false,
     };
     setDetailDraft(emptyState);
@@ -362,6 +408,11 @@ export function ProjectsModalController({
       from: detailState.from,
       to: detailState.to,
       year: detailState.year,
+      category: detailState.category,
+      projectId: detailState.projectId,
+      client: detailState.client,
+      date: detailState.date,
+      page: detailState.page,
       hasCriteria: detailState.hasCriteria,
     })
       .then((data) => {
@@ -578,6 +629,7 @@ export function ProjectsModalController({
           <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
             <input
               value={detailDraft.query}
+              maxLength={120}
               onChange={(event) => updateDetailDraft({ query: event.currentTarget.value })}
               placeholder="Contoh: hebel, proyek gudang, 1.500.000, 13/04/2026"
               autoFocus
@@ -668,17 +720,33 @@ export function ProjectsModalController({
           <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-600">
             Isi kata kunci rincian atau gunakan filter tanggal/tahun untuk mencari data di semua project.
           </p>
-        ) : detailData.results.length === 0 ? (
+        ) : detailData.totalCount === 0 ? (
           <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-4 text-sm text-amber-700">
             Data tidak ditemukan untuk filter rincian yang dipilih.
           </p>
         ) : (
           <div className="space-y-2">
             <p className="text-xs text-slate-500">
-              Ditemukan {detailData.results.length} data sesuai filter rincian.
+              Total {detailData.totalCount.toLocaleString("id-ID")} data cocok. Baris diambil bertahap dari database.
             </p>
             <ExpenseDetailSearchResults
+              key={detailCacheKey}
               results={detailData.results}
+              totalCount={detailData.totalCount}
+              totalProjects={detailData.totalProjects}
+              totalAmount={detailData.totalAmount}
+              page={detailData.page}
+              pageSize={detailData.pageSize}
+              projects={projects}
+              filters={{
+                query: detailState.query,
+                client: detailState.client,
+                projectId: detailState.projectId,
+                category: detailState.category,
+                date: detailState.date,
+              }}
+              onFilterChange={updateDetailFilters}
+              onPageChange={changeDetailPage}
               projectSearchText={searchText}
               canEdit={canEdit}
               canExport={canExport}

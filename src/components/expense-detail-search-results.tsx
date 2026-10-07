@@ -21,7 +21,7 @@ import {
   SPECIALIST_COST_PRESETS,
 } from "@/lib/constants";
 import { formatCurrency, formatDate } from "@/lib/format";
-import type { ProjectExpenseSearchResult } from "@/lib/types";
+import type { Project, ProjectExpenseSearchResult } from "@/lib/types";
 
 type ExpenseCategoryOption = {
   value: string;
@@ -30,6 +30,15 @@ type ExpenseCategoryOption = {
 
 type ExpenseDetailSearchResultsProps = {
   results: ProjectExpenseSearchResult[];
+  totalCount: number;
+  totalProjects: number;
+  totalAmount: number;
+  page: number;
+  pageSize: number;
+  projects: Project[];
+  filters: { query: string; client: string; projectId: string; category: string; date: string };
+  onFilterChange: (filters: Partial<ExpenseDetailSearchResultsProps["filters"]>) => void;
+  onPageChange: (page: number) => void;
   projectSearchText?: string;
   canEdit?: boolean;
   canExport?: boolean;
@@ -37,78 +46,8 @@ type ExpenseDetailSearchResultsProps = {
   bulkEditReturnTo?: string;
 };
 
-function normalizeFilterQuery(value: string) {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-function getDigits(value: string) {
-  return value.replace(/\D/g, "");
-}
-
 function getClientLabel(value: string | null | undefined) {
   return value?.trim() || "Tanpa Klien";
-}
-
-function getClientKey(value: string | null | undefined) {
-  return getClientLabel(value).toLowerCase();
-}
-
-function toCompactSearchToken(value: string) {
-  return value
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/gi, "")
-    .toLowerCase();
-}
-
-function buildDateSearchTokens(value: string) {
-  const dateOnly = value.slice(0, 10);
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateOnly);
-  if (!match) {
-    return [dateOnly].filter((item) => item.length > 0);
-  }
-  const [, year, month, day] = match;
-  return [
-    dateOnly,
-    `${day}-${month}-${year}`,
-    `${day}/${month}/${year}`,
-    `${year}${month}${day}`,
-    `${day}${month}${year}`,
-    `${year}-${month}`,
-  ];
-}
-
-function buildLocalSearchHaystack(item: ProjectExpenseSearchResult) {
-  const absoluteAmount = Math.round(Math.abs(item.amount));
-  const groupedAmount = absoluteAmount.toLocaleString("id-ID");
-  return [
-    ...buildDateSearchTokens(item.expenseDate),
-    `tanggal ${item.expenseDate}`,
-    item.projectName,
-    `project ${item.projectName}`,
-    `proyek ${item.projectName}`,
-    item.requesterName ?? "",
-    `pengaju ${item.requesterName ?? ""}`,
-    `atas nama ${item.requesterName ?? ""}`,
-    item.description ?? "",
-    `keterangan ${item.description ?? ""}`,
-    item.usageInfo ?? "",
-    `penggunaan ${item.usageInfo ?? ""}`,
-    `untuk ${item.usageInfo ?? ""}`,
-    item.recipientName ?? "",
-    `vendor ${item.recipientName ?? ""}`,
-    getCostCategoryLabel(item.category),
-    `kategori ${getCostCategoryLabel(item.category)}`,
-    item.category,
-    `kategori ${item.category}`,
-    String(item.amount),
-    String(absoluteAmount),
-    groupedAmount,
-    `rp ${groupedAmount}`,
-    `rp${groupedAmount}`,
-  ]
-    .join(" ")
-    .toLowerCase();
 }
 
 function createRekapHref(projectId: string, projectSearchText?: string) {
@@ -189,19 +128,23 @@ function ExpenseResultActions({
 
 export function ExpenseDetailSearchResults({
   results,
+  totalCount,
+  totalProjects,
+  totalAmount,
+  page,
+  pageSize,
+  projects,
+  filters,
+  onFilterChange,
+  onPageChange,
   projectSearchText,
   canEdit = false,
   canExport = false,
   expenseCategories = [],
   bulkEditReturnTo = "/projects",
 }: ExpenseDetailSearchResultsProps) {
-  const [filterQuery, setFilterQuery] = useState("");
-  const [filterInputValue, setFilterInputValue] = useState("");
+  const [filterInputValue, setFilterInputValue] = useState(filters.query);
   const filterDebounceRef = useRef<number | null>(null);
-  const [filterProjectId, setFilterProjectId] = useState("");
-  const [filterClient, setFilterClient] = useState("");
-  const [filterCategory, setFilterCategory] = useState("");
-  const [filterDate, setFilterDate] = useState("");
   const [isExporting, setIsExporting] = useState(false);
   const [isBulkEditorOpen, setIsBulkEditorOpen] = useState(false);
   const [applyCategory, setApplyCategory] = useState(false);
@@ -219,33 +162,15 @@ export function ExpenseDetailSearchResults({
   const currentMonth = useMemo(() => new Date().getMonth() + 1, []);
   const currentDate = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const projectOptions = useMemo(
-    () =>
-      Array.from(
-        visibleResults.reduce((map, item) => {
-          if (!map.has(item.projectId)) {
-            map.set(item.projectId, item.projectName);
-          }
-          return map;
-        }, new Map<string, string>()),
-      )
-        .map(([value, label]) => ({ value, label }))
-        .sort((a, b) => a.label.localeCompare(b.label, "id-ID")),
-    [visibleResults],
+    () => projects.map((project) => ({ value: project.id, label: project.name }))
+      .sort((a, b) => a.label.localeCompare(b.label, "id-ID")),
+    [projects],
   );
   const clientOptions = useMemo(
-    () =>
-      Array.from(
-        visibleResults.reduce((map, item) => {
-          const value = getClientKey(item.clientName);
-          if (!map.has(value)) {
-            map.set(value, getClientLabel(item.clientName));
-          }
-          return map;
-        }, new Map<string, string>()),
-      )
-        .map(([value, label]) => ({ value, label }))
-        .sort((a, b) => a.label.localeCompare(b.label, "id-ID")),
-    [visibleResults],
+    () => Array.from(new Set(projects.map((project) => getClientLabel(project.clientName))))
+      .map((label) => ({ value: label.toLowerCase(), label }))
+      .sort((a, b) => a.label.localeCompare(b.label, "id-ID")),
+    [projects],
   );
   const editingExpense = useMemo(
     () => visibleResults.find((item) => item.expenseId === editingExpenseId) ?? null,
@@ -256,70 +181,20 @@ export function ExpenseDetailSearchResults({
     for (const item of expenseCategories) {
       categoryMap.set(item.value, item.label);
     }
-    for (const item of visibleResults) {
-      if (!categoryMap.has(item.category)) {
-        categoryMap.set(item.category, getCostCategoryLabel(item.category));
-      }
-    }
     return Array.from(categoryMap.entries())
       .map(([value, label]) => ({ value, label }))
       .sort((a, b) => a.label.localeCompare(b.label, "id-ID"));
-  }, [expenseCategories, visibleResults]);
+  }, [expenseCategories]);
 
-  const filteredResults = useMemo(() => {
-    const normalizedFilterQuery = normalizeFilterQuery(filterQuery);
-    return visibleResults.filter((item) => {
-      if (filterClient && getClientKey(item.clientName) !== filterClient) {
-        return false;
-      }
-      if (filterProjectId && item.projectId !== filterProjectId) {
-        return false;
-      }
-      if (filterCategory && item.category !== filterCategory) {
-        return false;
-      }
-      if (filterDate && item.expenseDate !== filterDate) {
-        return false;
-      }
-      if (!normalizedFilterQuery) {
-        return true;
-      }
-
-      const haystack = buildLocalSearchHaystack(item);
-      if (haystack.includes(normalizedFilterQuery)) {
-        return true;
-      }
-      const queryDigits = getDigits(normalizedFilterQuery);
-      const queryTerms = normalizedFilterQuery.split(" ").filter((term) => term.length > 0);
-      if (queryTerms.length > 1 && queryTerms.every((term) => haystack.includes(term))) {
-        return true;
-      }
-      const compactQuery = toCompactSearchToken(normalizedFilterQuery);
-      if (compactQuery && toCompactSearchToken(haystack).includes(compactQuery)) {
-        return true;
-      }
-      if (!queryDigits) {
-        return false;
-      }
-      const amountDigits = getDigits(String(Math.round(Math.abs(item.amount))));
-      return amountDigits.includes(queryDigits);
-    });
-  }, [filterCategory, filterClient, filterDate, filterProjectId, filterQuery, visibleResults]);
+  const filteredResults = visibleResults;
   const filteredExpenseIds = useMemo(
     () => Array.from(new Set(filteredResults.map((item) => item.expenseId))),
     [filteredResults],
   );
-  const filteredProjectCount = useMemo(
-    () => new Set(filteredResults.map((item) => item.projectId)).size,
-    [filteredResults],
-  );
-  const filteredTotalAmount = useMemo(
-    () => filteredResults.reduce((sum, item) => sum + item.amount, 0),
-    [filteredResults],
-  );
   const isBulkActionDisabled = filteredExpenseIds.length === 0;
+  const pageTotalAmount = filteredResults.reduce((sum, item) => sum + item.amount, 0);
   const hasLocalFilters = Boolean(
-    filterQuery || filterClient || filterProjectId || filterCategory || filterDate,
+    filters.query || filters.client || filters.projectId || filters.category || filters.date,
   );
 
   const handleExportExcel = async () => {
@@ -358,7 +233,7 @@ export function ExpenseDetailSearchResults({
           item.amount,
         ]),
         [],
-        ["TOTAL", "", "", "", "", "", "", "", filteredTotalAmount],
+        ["TOTAL HALAMAN", "", "", "", "", "", "", "", pageTotalAmount],
       ];
       const worksheet = XLSX.utils.aoa_to_sheet(rows);
       worksheet["!cols"] = [
@@ -385,10 +260,6 @@ export function ExpenseDetailSearchResults({
       setIsExporting(false);
     }
   };
-
-  useEffect(() => {
-    setVisibleResults(results);
-  }, [results]);
 
   const handleDeleteSubmit = (
     event: FormEvent<HTMLFormElement>,
@@ -530,18 +401,22 @@ export function ExpenseDetailSearchResults({
               <span className="btn-icon bg-emerald-100 text-emerald-700">
                 <ExcelIcon />
               </span>
-              {isExporting ? "Menyiapkan Excel..." : "Export Excel"}
+              {isExporting ? "Menyiapkan Excel..." : "Export Halaman"}
             </button>
           ) : null}
         </div>
         <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
           <input
             value={filterInputValue}
+            maxLength={120}
             onChange={(event) => {
               const nextValue = event.currentTarget.value;
               setFilterInputValue(nextValue);
               if (filterDebounceRef.current) clearTimeout(filterDebounceRef.current);
-              filterDebounceRef.current = window.setTimeout(() => setFilterQuery(nextValue), 1000);
+              filterDebounceRef.current = window.setTimeout(
+                () => onFilterChange({ query: nextValue }),
+                500,
+              );
             }}
             placeholder="Cari tanggal, project, pengaju, keterangan, kategori, vendor, atau nominal"
             autoComplete="off"
@@ -551,11 +426,7 @@ export function ExpenseDetailSearchResults({
               type="button"
               onClick={() => {
                 setFilterInputValue("");
-                setFilterQuery("");
-                setFilterClient("");
-                setFilterProjectId("");
-                setFilterCategory("");
-                setFilterDate("");
+                onFilterChange({ query: "", client: "", projectId: "", category: "", date: "" });
               }}
               className="inline-flex items-center justify-center rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
             >
@@ -564,7 +435,7 @@ export function ExpenseDetailSearchResults({
           ) : null}
         </div>
         <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-          <select value={filterClient} onChange={(event) => setFilterClient(event.currentTarget.value)}>
+          <select value={filters.client} onChange={(event) => onFilterChange({ client: event.currentTarget.value })}>
             <option value="">Semua klien</option>
             {clientOptions.map((item) => (
               <option key={item.value} value={item.value}>
@@ -572,7 +443,7 @@ export function ExpenseDetailSearchResults({
               </option>
             ))}
           </select>
-          <select value={filterProjectId} onChange={(event) => setFilterProjectId(event.currentTarget.value)}>
+          <select value={filters.projectId} onChange={(event) => onFilterChange({ projectId: event.currentTarget.value })}>
             <option value="">Semua project</option>
             {projectOptions.map((item) => (
               <option key={item.value} value={item.value}>
@@ -580,7 +451,7 @@ export function ExpenseDetailSearchResults({
               </option>
             ))}
           </select>
-          <select value={filterCategory} onChange={(event) => setFilterCategory(event.currentTarget.value)}>
+          <select value={filters.category} onChange={(event) => onFilterChange({ category: event.currentTarget.value })}>
             <option value="">Semua kategori</option>
             {categoryOptions.map((item) => (
               <option key={item.value} value={item.value}>
@@ -590,13 +461,13 @@ export function ExpenseDetailSearchResults({
           </select>
           <input
             type="date"
-            value={filterDate}
-            onChange={(event) => setFilterDate(event.currentTarget.value)}
+            value={filters.date}
+            onChange={(event) => onFilterChange({ date: event.currentTarget.value })}
             autoComplete="off"
           />
         </div>
         <p className="mt-2 text-xs text-slate-500">
-          Menampilkan {filteredResults.length} dari {visibleResults.length} data.
+          Menampilkan {filteredResults.length} baris pada halaman {page}.
         </p>
       </div>
 
@@ -900,21 +771,32 @@ export function ExpenseDetailSearchResults({
       <div className="grid gap-2 sm:grid-cols-3">
         <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
-            Rincian Tampil
+            Total Hasil
           </p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">{filteredResults.length} data</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">{totalCount.toLocaleString("id-ID")} data</p>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
             Project Terlibat
           </p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">{filteredProjectCount} project</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">{totalProjects.toLocaleString("id-ID")} project</p>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
             Total Nominal
           </p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(filteredTotalAmount)}</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(totalAmount)}</p>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+        <p>
+          Ditampilkan {totalCount === 0 ? 0 : (page - 1) * pageSize + 1}–{Math.min(page * pageSize, totalCount)} dari {totalCount.toLocaleString("id-ID")} data. Ringkasan dihitung dari seluruh hasil pencarian.
+        </p>
+        <div className="flex items-center gap-2">
+          <button type="button" disabled={page <= 1} onClick={() => onPageChange(page - 1)} className="button-secondary button-xs disabled:opacity-50">Sebelumnya</button>
+          <span>Halaman {page} dari {Math.max(1, Math.ceil(totalCount / pageSize))}</span>
+          <button type="button" disabled={page >= Math.ceil(totalCount / pageSize)} onClick={() => onPageChange(page + 1)} className="button-secondary button-xs disabled:opacity-50">Berikutnya</button>
         </div>
       </div>
 

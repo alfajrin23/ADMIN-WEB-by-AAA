@@ -417,7 +417,7 @@ export function ProjectsModalController({
     })
       .then((data) => {
         if (detailRequestRef.current === requestId) {
-          if ("error" in data) {
+          if (data.error) {
             setDetailError(data.error);
             return;
           }

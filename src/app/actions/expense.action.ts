@@ -2271,15 +2271,38 @@ export async function getExpenseDetailSearchModalDataAction(input: {
     console.error("[expense-search] Gagal memuat data modal rincian.", error);
     if (code === "EXPENSE_SEARCH_RPC_MISSING") {
       return {
+        expenseCategories: [],
+        results: [],
+        totalCount: 0,
+        totalProjects: 0,
+        totalAmount: 0,
+        page: input.page ?? 1,
+        pageSize: 20,
         error: "Fungsi pencarian belum tersedia di Supabase. Terapkan migration 202610070001_search_expense_details_page.sql.",
       };
     }
     if (code === "EXPENSE_SEARCH_RPC_PERMISSION_DENIED") {
       return {
+        expenseCategories: [],
+        results: [],
+        totalCount: 0,
+        totalProjects: 0,
+        totalAmount: 0,
+        page: input.page ?? 1,
+        pageSize: 20,
         error: "Supabase menolak akses fungsi pencarian. Periksa konfigurasi service role dan izin RPC.",
       };
     }
-    return { error: "Gagal memuat data pencarian rincian. Periksa log server untuk detailnya." };
+    return {
+      expenseCategories: [],
+      results: [],
+      totalCount: 0,
+      totalProjects: 0,
+      totalAmount: 0,
+      page: input.page ?? 1,
+      pageSize: 20,
+      error: "Gagal memuat data pencarian rincian. Periksa log server untuk detailnya.",
+    };
   }
 }
 

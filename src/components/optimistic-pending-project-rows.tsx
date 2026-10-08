@@ -8,6 +8,7 @@ import type { Project } from "@/lib/types";
 
 type OptimisticPendingProjectRowsProps = {
   searchText: string;
+  statusFilter?: string;
   storedProjects: Project[];
 };
 
@@ -22,6 +23,7 @@ function fingerprint(project: Project) {
 
 export function OptimisticPendingProjectRows({
   searchText,
+  statusFilter = "",
   storedProjects,
 }: OptimisticPendingProjectRowsProps) {
   const { pendingProjects } = useOptimisticCreateStore();
@@ -32,6 +34,9 @@ export function OptimisticPendingProjectRows({
       if (storedFingerprints.has(fingerprint(project))) {
         return false;
       }
+      if (statusFilter && project.status !== statusFilter) {
+        return false;
+      }
       if (!normalizedQuery) {
         return true;
       }
@@ -40,7 +45,7 @@ export function OptimisticPendingProjectRows({
         .toLowerCase()
         .includes(normalizedQuery);
     });
-  }, [pendingProjects, searchText, storedProjects]);
+  }, [pendingProjects, searchText, statusFilter, storedProjects]);
 
   return rows.map((project) => (
     <tr key={project.id} className="bg-blue-50/70">

@@ -23,6 +23,7 @@ import { ProjectsSelectionToggle } from "@/components/projects-selection-toggle"
 import { OptimisticProjectsBulkEditButton } from "@/components/optimistic-projects-bulk-edit-button";
 import { OptimisticPendingProjectRows } from "@/components/optimistic-pending-project-rows";
 import { ProjectsSearchInput } from "@/components/projects-search-input";
+import { ProjectsStatusFilter } from "@/components/projects-status-filter";
 import { SuccessToast } from "@/components/success-toast";
 import {
   mergeExpenseCategoryOptions,
@@ -66,6 +67,7 @@ type ProjectPageProps = {
     expense_draft_clear?: string;
     expense_continue_draft_clear?: string;
     view?: string;
+    status?: string;
   }>;
 };
 
@@ -106,6 +108,7 @@ function createProjectsHref(params: {
   detailDateTo?: string;
   detailYear?: number | null;
   view?: ProjectView;
+  statusFilter?: string;
 }) {
   const query = new URLSearchParams();
   if (params.projectId) {
@@ -116,6 +119,9 @@ function createProjectsHref(params: {
   }
   if (params.view) {
     query.set("view", params.view);
+  }
+  if (params.statusFilter) {
+    query.set("status", params.statusFilter);
   }
   const trimmedSearch = params.searchText?.trim();
   if (trimmedSearch) {
@@ -158,6 +164,10 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
       : null;
   const viewParam = typeof params.view === "string" ? params.view : "";
   const activeView: ProjectView = viewParam === "rekap" ? "rekap" : "list";
+  const requestedStatusFilter = typeof params.status === "string" ? params.status : "";
+  const statusFilter = PROJECT_STATUSES.some((item) => item.value === requestedStatusFilter)
+    ? requestedStatusFilter
+    : "";
   const searchText = typeof params.q === "string" ? params.q.trim() : "";
   const detailSearchQuery = typeof params.detail_q === "string" ? params.detail_q.trim() : "";
   const detailDateFrom = isDateString(params.detail_from) ? String(params.detail_from) : "";
@@ -208,74 +218,88 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
     resolveClientScopeKey(project.clientName).includes("kmp cianjur"),
   );
   const kmpProjectCount = kmpProjects.length;
-  const filteredProjects = searchKeyword
-    ? projects.filter((project) => {
-        const haystack = [
-          project.name,
-          project.code ?? "",
-          project.clientName ?? "",
-          project.status,
-        ]
-          .join(" ")
-          .toLowerCase();
-        return haystack.includes(searchKeyword);
-      })
-    : projects;
+  const filteredProjects = projects.filter((project) => {
+    if (statusFilter && project.status !== statusFilter) {
+      return false;
+    }
+    if (searchKeyword) {
+      const haystack = [
+        project.name,
+        project.code ?? "",
+        project.clientName ?? "",
+        project.status,
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(searchKeyword);
+    }
+    return true;
+  });
 
   const closeModalHref = createProjectsHref({
     projectId: currentProjectQueryId,
     searchText,
+    statusFilter,
     view: activeView,
   });
   const openProjectModalHref = createProjectsHref({
     projectId: currentProjectQueryId,
     modal: "project-new",
     searchText,
+    statusFilter,
     view: activeView,
   });
   const openExpenseModalHref = createProjectsHref({
     projectId: currentProjectQueryId,
     modal: "expense-new",
     searchText,
+    statusFilter,
     view: activeView,
   });
   const expenseModalErrorReturnHref = createProjectsHref({
     projectId: currentProjectQueryId,
     modal: "expense-new",
     searchText,
+    statusFilter,
     view: activeView,
   });
   const openImportModalHref = createProjectsHref({
     projectId: currentProjectQueryId,
     modal: "excel-import",
     searchText,
+    statusFilter,
     view: activeView,
   });
   const openDetailSearchModalHref = createProjectsHref({
     projectId: currentProjectQueryId,
     modal: "detail-search",
     searchText,
+    statusFilter,
     view: activeView,
   });
   const openKmpMaterialReportHref = createProjectsHref({
     modal: "kmp-material-check",
     searchText,
+    statusFilter,
     view: "list",
   });
   const listViewHref = createProjectsHref({
     projectId: currentProjectQueryId,
     searchText,
+    statusFilter,
     view: "list",
   });
   const recapViewHref = createProjectsHref({
     projectId: currentProjectQueryId,
     searchText,
+    statusFilter,
     view: "rekap",
   });
   const detailSearchReturnHref = createProjectsHref({
     projectId: currentProjectQueryId,
     modal: "detail-search",
     searchText,
+    statusFilter,
     detailSearchQuery,
     detailDateFrom,
     detailDateTo,
@@ -496,6 +520,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
               Menampilkan {filteredProjects.length} dari {projects.length} project
             </p>
           </div>
+          <ProjectsStatusFilter initialValue={statusFilter} />
           <ProjectsSearchInput initialValue={searchText} />
           <div className="toolbar-card toolbar-card--dense mt-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -528,6 +553,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 value={createProjectsHref({
                   projectId: currentProjectQueryId,
                   searchText,
+                  statusFilter,
                   view: "list",
                 })}
               />
@@ -695,6 +721,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                           href={createProjectsHref({
                             projectId: project.id,
                             searchText,
+                            statusFilter,
                             view: "rekap",
                           })}
                           className="button-secondary button-xs"
@@ -731,6 +758,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                                         ? currentProjectQueryId
                                         : undefined,
                                     searchText,
+                                    statusFilter,
                                     view: "list",
                                   })}
                                 />
@@ -750,7 +778,11 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                     </td>
                   </tr>
                 ))}
-                <OptimisticPendingProjectRows storedProjects={projects} searchText={searchText} />
+                <OptimisticPendingProjectRows
+                  storedProjects={projects}
+                  searchText={searchText}
+                  statusFilter={statusFilter}
+                />
                 {filteredProjects.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="px-4 py-6 text-center text-slate-500">

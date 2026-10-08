@@ -132,7 +132,7 @@ export function ProjectRecapCharts({ expenses }: ProjectRecapChartsProps) {
         {monthlyTotals.length > 0 ? (
           <div className="mt-4 h-72 min-w-0">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={monthlyTotals} margin={{ top: 12, right: 12, bottom: 4, left: 4 }}>
+              <LineChart data={monthlyTotals} margin={{ top: 36, right: 76, bottom: 4, left: 4 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                 <XAxis
                   dataKey="label"
@@ -142,6 +142,7 @@ export function ProjectRecapCharts({ expenses }: ProjectRecapChartsProps) {
                   minTickGap={18}
                 />
                 <YAxis
+                  domain={[0, (dataMax: number) => (dataMax > 0 ? dataMax * 1.2 : 1)]}
                   tickLine={false}
                   axisLine={false}
                   width={76}
@@ -155,6 +156,7 @@ export function ProjectRecapCharts({ expenses }: ProjectRecapChartsProps) {
                   name="Pengeluaran"
                   stroke="#4f46e5"
                   strokeWidth={3}
+                  isAnimationActive={false}
                   dot={{ r: 3, fill: "#4f46e5", strokeWidth: 0 }}
                   activeDot={{ r: 6, strokeWidth: 0 }}
                 >

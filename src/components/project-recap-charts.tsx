@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import {
   Cell,
   CartesianGrid,
+  LabelList,
   Line,
   LineChart,
   Pie,
@@ -156,7 +157,16 @@ export function ProjectRecapCharts({ expenses }: ProjectRecapChartsProps) {
                   strokeWidth={3}
                   dot={{ r: 3, fill: "#4f46e5", strokeWidth: 0 }}
                   activeDot={{ r: 6, strokeWidth: 0 }}
-                />
+                >
+                  <LabelList
+                    dataKey="total"
+                    position="top"
+                    offset={8}
+                    fill="#475569"
+                    fontSize={10}
+                    formatter={(value) => formatCurrency(Number(value)).replace(/\s+/g, "")}
+                  />
+                </Line>
               </LineChart>
             </ResponsiveContainer>
           </div>

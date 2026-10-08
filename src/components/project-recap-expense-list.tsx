@@ -198,7 +198,15 @@ export function ProjectRecapExpenseList({
   };
 
   const categoryOptions = useMemo(
-    () => mergeExpenseCategoryOptions(expenseCategories, sortedExpenses.map((item) => item.category)),
+    () => mergeExpenseCategoryOptions(
+      expenseCategories,
+      sortedExpenses.map((item) => item.category),
+      sortedExpenses.map((item) => resolveSummaryCostCategory({
+        category: item.category,
+        description: item.description,
+        usageInfo: item.usageInfo,
+      })),
+    ),
     [expenseCategories, sortedExpenses],
   );
 
@@ -209,7 +217,12 @@ export function ProjectRecapExpenseList({
     const compactQuery = toCompactSearchToken(normalizedQuery);
 
     return sortedExpenses.filter((item) => {
-      if (categoryFilter && item.category !== categoryFilter) {
+      const summaryCategory = resolveSummaryCostCategory({
+        category: item.category,
+        description: item.description,
+        usageInfo: item.usageInfo,
+      });
+      if (categoryFilter && item.category !== categoryFilter && summaryCategory !== categoryFilter) {
         return false;
       }
 
@@ -239,9 +252,9 @@ export function ProjectRecapExpenseList({
   const firstVisibleIndex = filteredExpenses.length === 0 ? 0 : (safePage - 1) * EXPENSES_PER_PAGE;
   const pagedExpenses = filteredExpenses.slice(firstVisibleIndex, firstVisibleIndex + EXPENSES_PER_PAGE);
 
-  const filteredCategoryTotals = useMemo(() => {
+  const categoryTotals = useMemo(() => {
     const totalsByCategory = new Map<string, number>();
-    for (const expense of filteredExpenses) {
+    for (const expense of sortedExpenses) {
       const category = resolveSummaryCostCategory({
         category: expense.category,
         description: expense.description,
@@ -255,7 +268,7 @@ export function ProjectRecapExpenseList({
 
     return mergeExpenseCategoryOptions(
       expenseCategories,
-      filteredExpenses.map((item) =>
+      sortedExpenses.map((item) =>
         resolveSummaryCostCategory({
           category: item.category,
           description: item.description,
@@ -269,7 +282,7 @@ export function ProjectRecapExpenseList({
         total: totalsByCategory.get(item.value) ?? 0,
       }))
       .filter((item) => item.total !== 0);
-  }, [expenseCategories, filteredExpenses]);
+  }, [expenseCategories, sortedExpenses]);
 
   const hasLocalFilters = Boolean(searchQuery.trim() || categoryFilter);
   const totalProjectExpense = useMemo(
@@ -285,7 +298,18 @@ export function ProjectRecapExpenseList({
     <div className="space-y-4">
       <OptimisticMutationNotice notice={notice} />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        <div className="relative overflow-hidden rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-600 via-indigo-600 to-violet-700 p-4 text-white shadow-lg shadow-indigo-100">
+        <button
+          type="button"
+          aria-pressed={!categoryFilter && !searchQuery.trim()}
+          aria-label="Tampilkan semua rincian project"
+          onClick={() => {
+            setSearchQuery("");
+            setDebouncedSearchQuery("");
+            setCategoryFilter("");
+            setActivePage(1);
+          }}
+          className="group relative w-full overflow-hidden rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-600 via-indigo-600 to-violet-700 p-4 text-left text-white shadow-lg shadow-indigo-100 transition-all hover:-translate-y-0.5 hover:shadow-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+        >
           <div className="absolute -right-8 -top-10 size-28 rounded-full bg-white/10" />
           <div className="absolute -bottom-12 right-12 size-24 rounded-full bg-violet-300/10" />
           <div className="relative z-10">
@@ -304,9 +328,25 @@ export function ProjectRecapExpenseList({
               </p>
             ) : null}
           </div>
-        </div>
-        {filteredCategoryTotals.map((item) => (
-          <div key={item.category} className="soft-card-muted p-4 bg-gradient-to-br from-slate-50 to-white hover:from-indigo-50 hover:to-white transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:border-indigo-100 group relative overflow-hidden">
+        </button>
+        {categoryTotals.map((item) => (
+          <button
+            key={item.category}
+            type="button"
+            aria-pressed={categoryFilter === item.category}
+            aria-label={`Tampilkan rincian kategori ${item.label}`}
+            onClick={() => {
+              setSearchQuery("");
+              setDebouncedSearchQuery("");
+              setCategoryFilter(item.category);
+              setActivePage(1);
+            }}
+            className={`group relative w-full overflow-hidden rounded-2xl border p-4 text-left transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 ${
+              categoryFilter === item.category
+                ? "border-indigo-300 bg-indigo-50 shadow-md ring-2 ring-indigo-200"
+                : "soft-card-muted border-slate-200 bg-gradient-to-br from-slate-50 to-white hover:border-indigo-100 hover:from-indigo-50 hover:to-white"
+            }`}
+          >
             <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent -translate-x-[100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
             <p className="text-xs font-medium text-slate-500 relative z-10">
               <span
@@ -316,7 +356,7 @@ export function ProjectRecapExpenseList({
               </span>
             </p>
             <p className="mt-2 text-[15px] font-bold text-slate-900 group-hover:text-indigo-950 transition-colors duration-300 relative z-10">{formatCurrency(item.total)}</p>
-          </div>
+          </button>
         ))}
       </div>
 

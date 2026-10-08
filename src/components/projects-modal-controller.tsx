@@ -349,6 +349,7 @@ export function ProjectsModalController({
         const nextState = {
           ...current,
           ...patch,
+          ...("query" in patch ? { refineQuery: "" } : {}),
           page: 1,
         };
         nextState.hasCriteria = hasDetailCriteria(nextState);
@@ -639,7 +640,7 @@ export function ProjectsModalController({
             if (detailDebounceRef.current) {
               window.clearTimeout(detailDebounceRef.current);
             }
-            commitDetailSearch(detailDraft);
+            commitDetailSearch({ ...detailDraft, refineQuery: "" });
           }}
         >
           <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">

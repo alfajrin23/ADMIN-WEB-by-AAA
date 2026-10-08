@@ -310,6 +310,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
         </section>
       ) : null}
 
+      {activeView === "list" ? (
       <section className="soft-card p-4 md:p-5">
         <div className="grid gap-4 xl:grid-cols-[1fr_auto]">
           <div>
@@ -430,6 +431,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
           ) : null}
         </div>
       </section>
+      ) : null}
 
       <section className="soft-card p-4 md:p-5">
         <div className="button-stack">

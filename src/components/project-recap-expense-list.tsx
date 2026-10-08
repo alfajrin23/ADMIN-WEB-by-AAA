@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { deleteExpenseAction } from "@/app/actions/expense.action";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
@@ -31,6 +32,19 @@ type ProjectRecapExpenseListProps = {
   canEdit?: boolean;
   searchText?: string;
 };
+
+const ProjectRecapChartsLazy = dynamic(
+  () => import("@/components/project-recap-charts").then((module) => module.ProjectRecapCharts),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="grid gap-4 xl:grid-cols-2" aria-label="Memuat grafik project" aria-busy="true">
+        <div className="soft-card dashboard-skeleton dashboard-chart-placeholder" />
+        <div className="soft-card dashboard-skeleton dashboard-chart-placeholder" />
+      </div>
+    ),
+  },
+);
 
 function normalizeSearchText(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
@@ -263,6 +277,44 @@ export function ProjectRecapExpenseList({
   return (
     <div className="space-y-4">
       <OptimisticMutationNotice notice={notice} />
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="relative overflow-hidden rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-600 via-indigo-600 to-violet-700 p-4 text-white shadow-lg shadow-indigo-100">
+          <div className="absolute -right-8 -top-10 size-28 rounded-full bg-white/10" />
+          <div className="absolute -bottom-12 right-12 size-24 rounded-full bg-violet-300/10" />
+          <div className="relative z-10">
+            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-indigo-100">
+              Total Keseluruhan
+            </p>
+            <p className="mt-2 text-xl font-bold tracking-tight">
+              {formatCurrency(totalProjectExpense)}
+            </p>
+            <p className="mt-1 text-xs text-indigo-100">
+              {sortedExpenses.length} transaksi pada proyek ini
+            </p>
+            {hasLocalFilters ? (
+              <p className="mt-3 border-t border-white/20 pt-2 text-xs text-white">
+                Hasil filter: <span className="font-semibold">{formatCurrency(filteredExpenseTotal)}</span>
+              </p>
+            ) : null}
+          </div>
+        </div>
+        {filteredCategoryTotals.map((item) => (
+          <div key={item.category} className="soft-card-muted p-4 bg-gradient-to-br from-slate-50 to-white hover:from-indigo-50 hover:to-white transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:border-indigo-100 group relative overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent -translate-x-[100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
+            <p className="text-xs font-medium text-slate-500 relative z-10">
+              <span
+                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors duration-300 ${getCostCategoryStyle(item.category)} group-hover:bg-indigo-100 group-hover:text-indigo-700`}
+              >
+                {item.label}
+              </span>
+            </p>
+            <p className="mt-2 text-[15px] font-bold text-slate-900 group-hover:text-indigo-950 transition-colors duration-300 relative z-10">{formatCurrency(item.total)}</p>
+          </div>
+        ))}
+      </div>
+
+      <ProjectRecapChartsLazy expenses={sortedExpenses} />
+
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px_auto]">
           <div>
@@ -306,42 +358,6 @@ export function ProjectRecapExpenseList({
         <p className="mt-2 text-xs text-slate-500">
           Menampilkan {filteredExpenses.length} dari {sortedExpenses.length} transaksi biaya project.
         </p>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        <div className="relative overflow-hidden rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-600 via-indigo-600 to-violet-700 p-4 text-white shadow-lg shadow-indigo-100">
-          <div className="absolute -right-8 -top-10 size-28 rounded-full bg-white/10" />
-          <div className="absolute -bottom-12 right-12 size-24 rounded-full bg-violet-300/10" />
-          <div className="relative z-10">
-            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-indigo-100">
-              Total Keseluruhan
-            </p>
-            <p className="mt-2 text-xl font-bold tracking-tight">
-              {formatCurrency(totalProjectExpense)}
-            </p>
-            <p className="mt-1 text-xs text-indigo-100">
-              {sortedExpenses.length} transaksi pada proyek ini
-            </p>
-            {hasLocalFilters ? (
-              <p className="mt-3 border-t border-white/20 pt-2 text-xs text-white">
-                Hasil filter: <span className="font-semibold">{formatCurrency(filteredExpenseTotal)}</span>
-              </p>
-            ) : null}
-          </div>
-        </div>
-        {filteredCategoryTotals.map((item) => (
-          <div key={item.category} className="soft-card-muted p-4 bg-gradient-to-br from-slate-50 to-white hover:from-indigo-50 hover:to-white transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:border-indigo-100 group relative overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent -translate-x-[100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
-            <p className="text-xs font-medium text-slate-500 relative z-10">
-              <span
-                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors duration-300 ${getCostCategoryStyle(item.category)} group-hover:bg-indigo-100 group-hover:text-indigo-700`}
-              >
-                {item.label}
-              </span>
-            </p>
-            <p className="mt-2 text-[15px] font-bold text-slate-900 group-hover:text-indigo-950 transition-colors duration-300 relative z-10">{formatCurrency(item.total)}</p>
-          </div>
-        ))}
       </div>
 
       <div className="space-y-3 xl:hidden">

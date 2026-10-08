@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { OptimisticCreateStoreProvider } from "@/components/optimistic-create-store";
 
 export function DashboardShell({
@@ -12,6 +12,8 @@ export function DashboardShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const isProjectRecap = pathname === "/projects" && searchParams.get("view") === "rekap";
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
@@ -35,7 +37,8 @@ export function DashboardShell({
   return (
     <OptimisticCreateStoreProvider>
       <div
-        className={`mx-auto grid min-h-screen w-full max-w-[2560px] grid-cols-1 gap-3 px-3 py-3 sm:gap-4 sm:px-5 lg:gap-5 lg:px-6 lg:py-5 2xl:px-8 transition-[grid-template-columns] duration-200 ${
+        data-project-recap={isProjectRecap ? "true" : undefined}
+        className={`dashboard-shell mx-auto grid min-h-screen w-full max-w-[2560px] grid-cols-1 gap-3 px-3 py-3 sm:gap-4 sm:px-5 lg:gap-5 lg:px-6 lg:py-5 2xl:px-8 transition-[grid-template-columns] duration-200 ${
           isSidebarOpen ? "lg:grid-cols-[264px_minmax(0,1fr)]" : "lg:grid-cols-[0px_minmax(0,1fr)]"
         }`}
       >

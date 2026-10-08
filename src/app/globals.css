@@ -3142,6 +3142,14 @@ button:disabled {
   gap: 1rem;
 }
 
+.dashboard-shell[data-project-recap="true"] .dashboard-workspace-header {
+  display: none;
+}
+
+.dashboard-shell[data-project-recap="true"] .dashboard-workspace-header + main {
+  margin-block-start: 0;
+}
+
 .dashboard-chart-placeholder,
 .dashboard-skeleton {
   border: 1px solid #e2e8f0;

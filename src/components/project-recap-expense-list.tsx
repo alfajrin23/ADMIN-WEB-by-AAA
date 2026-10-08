@@ -25,6 +25,8 @@ type ExpenseCategoryOption = {
   label: string;
 };
 
+const EXPENSES_PER_PAGE = 50;
+
 type ProjectRecapExpenseListProps = {
   projectId: string;
   expenses: ExpenseEntry[];
@@ -143,6 +145,7 @@ export function ProjectRecapExpenseList({
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
+  const [activePage, setActivePage] = useState(1);
   const { pendingExpenses } = useOptimisticCreateStore();
   const mergedExpenses = useMemo(() => {
     const storedFingerprints = new Set(expenses.map(getExpenseFingerprint));
@@ -231,6 +234,10 @@ export function ProjectRecapExpenseList({
       return amountDigits.includes(queryDigits);
     });
   }, [categoryFilter, debouncedSearchQuery, sortedExpenses]);
+  const pageCount = Math.max(1, Math.ceil(filteredExpenses.length / EXPENSES_PER_PAGE));
+  const safePage = Math.min(activePage, pageCount);
+  const firstVisibleIndex = filteredExpenses.length === 0 ? 0 : (safePage - 1) * EXPENSES_PER_PAGE;
+  const pagedExpenses = filteredExpenses.slice(firstVisibleIndex, firstVisibleIndex + EXPENSES_PER_PAGE);
 
   const filteredCategoryTotals = useMemo(() => {
     const totalsByCategory = new Map<string, number>();
@@ -321,7 +328,10 @@ export function ProjectRecapExpenseList({
             <label className="mb-1 block text-xs font-semibold text-slate-600">Cari data rekap</label>
             <input
               value={searchQuery}
-              onChange={(event) => setSearchQuery(event.currentTarget.value)}
+              onChange={(event) => {
+                setSearchQuery(event.currentTarget.value);
+                setActivePage(1);
+              }}
               placeholder="Cari tanggal, nama pengaju, rincian, vendor, atau nominal"
               autoComplete="off"
             />
@@ -330,7 +340,10 @@ export function ProjectRecapExpenseList({
             <label className="mb-1 block text-xs font-semibold text-slate-600">Filter kategori</label>
             <select
               value={categoryFilter}
-              onChange={(event) => setCategoryFilter(event.currentTarget.value)}
+              onChange={(event) => {
+                setCategoryFilter(event.currentTarget.value);
+                setActivePage(1);
+              }}
             >
               <option value="">Semua kategori</option>
               {categoryOptions.map((item) => (
@@ -347,6 +360,7 @@ export function ProjectRecapExpenseList({
                 onClick={() => {
                   setSearchQuery("");
                   setCategoryFilter("");
+                  setActivePage(1);
                 }}
                 className="inline-flex w-full items-center justify-center rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
               >
@@ -356,12 +370,12 @@ export function ProjectRecapExpenseList({
           ) : null}
         </div>
         <p className="mt-2 text-xs text-slate-500">
-          Menampilkan {filteredExpenses.length} dari {sortedExpenses.length} transaksi biaya project.
+          Menampilkan {filteredExpenses.length === 0 ? 0 : firstVisibleIndex + 1}–{Math.min(firstVisibleIndex + EXPENSES_PER_PAGE, filteredExpenses.length)} dari {filteredExpenses.length} transaksi cocok ({sortedExpenses.length} total project).
         </p>
       </div>
 
       <div className="space-y-3 xl:hidden">
-        {filteredExpenses.map((item) => (
+        {pagedExpenses.map((item) => (
           <article key={item.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-md hover:border-indigo-100">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -479,7 +493,7 @@ export function ProjectRecapExpenseList({
               </tr>
             </thead>
             <tbody>
-              {filteredExpenses.map((item) => (
+              {pagedExpenses.map((item) => (
                 <tr key={item.id} className="transition-colors duration-200 hover:bg-indigo-50/50 group">
                   <td className="align-top text-[11px] whitespace-nowrap group-hover:text-indigo-900 transition-colors">{formatDate(item.expenseDate)}</td>
                   <td className="align-top break-words">{item.requesterName ?? "-"}</td>
@@ -566,6 +580,35 @@ export function ProjectRecapExpenseList({
           </table>
         </div>
       </div>
+
+      {pageCount > 1 ? (
+        <nav
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600"
+          aria-label="Halaman transaksi project"
+        >
+          <p>
+            Halaman {safePage} dari {pageCount} · {EXPENSES_PER_PAGE} transaksi per halaman
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={safePage <= 1}
+              onClick={() => setActivePage((current) => Math.max(1, Math.min(current, pageCount) - 1))}
+              className="button-secondary button-xs disabled:opacity-50"
+            >
+              Sebelumnya
+            </button>
+            <button
+              type="button"
+              disabled={safePage >= pageCount}
+              onClick={() => setActivePage((current) => Math.min(pageCount, Math.min(current, pageCount) + 1))}
+              className="button-secondary button-xs disabled:opacity-50"
+            >
+              Berikutnya
+            </button>
+          </div>
+        </nav>
+      ) : null}
     </div>
   );
 }

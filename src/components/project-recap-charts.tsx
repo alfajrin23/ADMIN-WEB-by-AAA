@@ -58,7 +58,13 @@ function getMonthIndex(expenseDate: string) {
   if (!match) {
     return null;
   }
-  return Number(match[1]) * 12 + Number(match[2]) - 1;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const latestAllowedYear = new Date().getFullYear() + 5;
+  if (year < 1900 || year > latestAllowedYear || month < 1 || month > 12) {
+    return null;
+  }
+  return year * 12 + month - 1;
 }
 
 function formatMonth(monthIndex: number) {
@@ -72,27 +78,17 @@ function formatMonth(monthIndex: number) {
 export function ProjectRecapCharts({ expenses }: ProjectRecapChartsProps) {
   const monthlyTotals = useMemo(() => {
     const totals = new Map<number, number>();
-    let firstMonth = Number.POSITIVE_INFINITY;
-    let lastMonth = Number.NEGATIVE_INFINITY;
 
     for (const expense of expenses) {
       const month = getMonthIndex(expense.expenseDate);
       if (month === null) {
         continue;
       }
-      firstMonth = Math.min(firstMonth, month);
-      lastMonth = Math.max(lastMonth, month);
       totals.set(month, (totals.get(month) ?? 0) + expense.amount);
     }
 
-    if (!Number.isFinite(firstMonth) || !Number.isFinite(lastMonth)) {
-      return [];
-    }
-
-    return Array.from({ length: lastMonth - firstMonth + 1 }, (_, offset) => {
-      const month = firstMonth + offset;
-      return { month, label: formatMonth(month), total: totals.get(month) ?? 0 };
-    });
+    return Array.from(totals, ([month, total]) => ({ month, label: formatMonth(month), total }))
+      .sort((a, b) => a.month - b.month);
   }, [expenses]);
 
   const categoryTotals = useMemo(() => {

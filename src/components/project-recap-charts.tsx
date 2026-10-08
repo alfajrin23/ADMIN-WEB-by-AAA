@@ -166,6 +166,12 @@ export function ProjectRecapCharts({ expenses }: ProjectRecapChartsProps) {
                     offset={8}
                     fill="#475569"
                     fontSize={10}
+                  fontWeight={700}
+                  stroke="#fff"
+                  strokeWidth={4}
+                  strokeLinejoin="round"
+                  paintOrder="stroke"
+                  zIndex={3000}
                     formatter={(value) => formatCurrency(Number(value)).replace(/\s+/g, "")}
                   />
                 </Line>

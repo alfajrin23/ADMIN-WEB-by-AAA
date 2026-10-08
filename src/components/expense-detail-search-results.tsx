@@ -36,7 +36,7 @@ type ExpenseDetailSearchResultsProps = {
   page: number;
   pageSize: number;
   projects: Project[];
-  filters: { query: string; client: string; projectId: string; category: string; date: string };
+  filters: { query: string; refineQuery: string; client: string; projectId: string; category: string; date: string };
   onFilterChange: (filters: Partial<ExpenseDetailSearchResultsProps["filters"]>) => void;
   onPageChange: (page: number) => void;
   projectSearchText?: string;
@@ -143,7 +143,7 @@ export function ExpenseDetailSearchResults({
   expenseCategories = [],
   bulkEditReturnTo = "/projects",
 }: ExpenseDetailSearchResultsProps) {
-  const [filterInputValue, setFilterInputValue] = useState(filters.query);
+  const [filterInputValue, setFilterInputValue] = useState(filters.refineQuery);
   const filterDebounceRef = useRef<number | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [isBulkEditorOpen, setIsBulkEditorOpen] = useState(false);
@@ -194,7 +194,7 @@ export function ExpenseDetailSearchResults({
   const isBulkActionDisabled = filteredExpenseIds.length === 0;
   const pageTotalAmount = filteredResults.reduce((sum, item) => sum + item.amount, 0);
   const hasLocalFilters = Boolean(
-    filters.query || filters.client || filters.projectId || filters.category || filters.date,
+    filters.refineQuery || filters.client || filters.projectId || filters.category || filters.date,
   );
 
   const handleExportExcel = async () => {
@@ -414,11 +414,11 @@ export function ExpenseDetailSearchResults({
               setFilterInputValue(nextValue);
               if (filterDebounceRef.current) clearTimeout(filterDebounceRef.current);
               filterDebounceRef.current = window.setTimeout(
-                () => onFilterChange({ query: nextValue }),
+                () => onFilterChange({ refineQuery: nextValue }),
                 500,
               );
             }}
-            placeholder="Cari tanggal, project, pengaju, keterangan, kategori, vendor, atau nominal"
+            placeholder="Persempit hasil: nominal, tanggal, project, pengaju, keterangan, kategori, atau vendor"
             autoComplete="off"
           />
           {hasLocalFilters ? (
@@ -426,7 +426,7 @@ export function ExpenseDetailSearchResults({
               type="button"
               onClick={() => {
                 setFilterInputValue("");
-                onFilterChange({ query: "", client: "", projectId: "", category: "", date: "" });
+                onFilterChange({ refineQuery: "", client: "", projectId: "", category: "", date: "" });
               }}
               className="inline-flex items-center justify-center rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
             >
@@ -931,6 +931,17 @@ export function ExpenseDetailSearchResults({
               ) : null}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+        <p>
+          Ditampilkan {totalCount === 0 ? 0 : (page - 1) * pageSize + 1}–{Math.min(page * pageSize, totalCount)} dari {totalCount.toLocaleString("id-ID")} data. Ringkasan dihitung dari seluruh hasil pencarian.
+        </p>
+        <div className="flex items-center gap-2">
+          <button type="button" disabled={page <= 1} onClick={() => onPageChange(page - 1)} className="button-secondary button-xs disabled:opacity-50">Sebelumnya</button>
+          <span>Halaman {page} dari {Math.max(1, Math.ceil(totalCount / pageSize))}</span>
+          <button type="button" disabled={page >= Math.ceil(totalCount / pageSize)} onClick={() => onPageChange(page + 1)} className="button-secondary button-xs disabled:opacity-50">Berikutnya</button>
         </div>
       </div>
 

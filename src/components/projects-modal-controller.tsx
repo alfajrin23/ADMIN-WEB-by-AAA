@@ -62,6 +62,7 @@ type KmpMaterialReport = Awaited<ReturnType<typeof getKmpMaterialReportModalData
 
 type DetailSearchState = {
   query: string;
+  refineQuery: string;
   from: string;
   to: string;
   year: number | null;
@@ -113,6 +114,7 @@ function buildDetailStateFromUrl(href: string, fallback: DetailSearchState): Det
   const parsedYear = /^\d{4}$/.test(yearRaw) ? Number(yearRaw) : null;
   return {
     query: url.searchParams.get("detail_q")?.trim() ?? fallback.query,
+    refineQuery: url.searchParams.get("detail_filter")?.trim() ?? fallback.refineQuery,
     from: /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get("detail_from") ?? "")
       ? url.searchParams.get("detail_from") ?? ""
       : fallback.from,
@@ -127,6 +129,7 @@ function buildDetailStateFromUrl(href: string, fallback: DetailSearchState): Det
     page: Math.max(1, Number(url.searchParams.get("detail_page") ?? fallback.page) || 1),
     hasCriteria: Boolean(
       url.searchParams.get("detail_q")?.trim() ||
+        url.searchParams.get("detail_filter")?.trim() ||
         url.searchParams.get("detail_from") ||
         url.searchParams.get("detail_to") ||
         parsedYear ||
@@ -140,7 +143,7 @@ function buildDetailStateFromUrl(href: string, fallback: DetailSearchState): Det
 
 function hasDetailCriteria(state: DetailSearchState) {
   return Boolean(
-    state.query.trim() || state.from || state.to || state.year || state.category ||
+    state.query.trim() || state.refineQuery.trim() || state.from || state.to || state.year || state.category ||
       state.projectId || state.client || state.date,
   );
 }
@@ -211,6 +214,7 @@ export function ProjectsModalController({
   const initialDetailState = useMemo<DetailSearchState>(
     () => ({
       query: detailSearchQuery,
+      refineQuery: "",
       from: detailDateFrom,
       to: detailDateTo,
       year: detailYear,
@@ -314,6 +318,7 @@ export function ProjectsModalController({
     () =>
       JSON.stringify({
         query: detailState.query,
+        refineQuery: detailState.refineQuery,
         from: detailState.from,
         to: detailState.to,
         year: detailState.year,
@@ -331,6 +336,7 @@ export function ProjectsModalController({
     const normalizedState = {
       ...nextState,
       query: nextState.query.trim(),
+      refineQuery: nextState.refineQuery.trim(),
       page: nextState.page || 1,
       hasCriteria: hasDetailCriteria(nextState),
     };
@@ -376,6 +382,7 @@ export function ProjectsModalController({
     }
     const emptyState: DetailSearchState = {
       query: "",
+      refineQuery: "",
       from: "",
       to: "",
       year: null,
@@ -405,6 +412,7 @@ export function ProjectsModalController({
     setDetailError("");
     getExpenseDetailSearchModalDataAction({
       query: detailState.query,
+      refineQuery: detailState.refineQuery,
       from: detailState.from,
       to: detailState.to,
       year: detailState.year,
@@ -748,6 +756,7 @@ export function ProjectsModalController({
               projects={projects}
               filters={{
                 query: detailState.query,
+                refineQuery: detailState.refineQuery,
                 client: detailState.client,
                 projectId: detailState.projectId,
                 category: detailState.category,

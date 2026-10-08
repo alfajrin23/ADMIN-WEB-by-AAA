@@ -2224,6 +2224,7 @@ export async function getExpenseCreateModalDataAction() {
 
 export async function getExpenseDetailSearchModalDataAction(input: {
   query: string;
+  refineQuery?: string;
   from?: string;
   to?: string;
   year?: number | null;
@@ -2242,6 +2243,7 @@ export async function getExpenseDetailSearchModalDataAction(input: {
       input.hasCriteria
         ? searchExpenseDetailsPage({
             query: input.query,
+            refineQuery: input.refineQuery,
             from: input.from || undefined,
             to: input.to || undefined,
             year: input.year ?? undefined,
@@ -2278,7 +2280,7 @@ export async function getExpenseDetailSearchModalDataAction(input: {
         totalAmount: 0,
         page: input.page ?? 1,
         pageSize: 20,
-        error: "Fungsi pencarian belum tersedia di Supabase. Terapkan migration 202610070001_search_expense_details_page.sql.",
+        error: "Fungsi pencarian belum tersedia di Supabase. Terapkan migration 202610080001_refine_expense_detail_search.sql.",
       };
     }
     if (code === "EXPENSE_SEARCH_RPC_PERMISSION_DENIED") {

@@ -3420,6 +3420,7 @@ export async function searchExpenseDetails(
 
 export async function searchExpenseDetailsPage(input: {
   query: string;
+  refineQuery?: string;
   from?: string;
   to?: string;
   year?: number | null;
@@ -3461,6 +3462,7 @@ export async function searchExpenseDetailsPage(input: {
     }
     const { data, error } = await supabase.rpc("search_expense_details_page", {
       p_search_text: input.query.trim().slice(0, 120),
+      p_filter_text: input.refineQuery?.trim().slice(0, 120) || null,
       p_from: filters.from || null,
       p_to: filters.to || null,
       p_category: filters.category || null,
@@ -3517,11 +3519,14 @@ export async function searchExpenseDetailsPage(input: {
     to: filters.to || filters.date,
     year: filters.year,
   });
+  const normalizedRefineQuery = input.refineQuery?.trim().toLowerCase().replace(/\s+/g, " ") ?? "";
+  const refineDigits = normalizedRefineQuery.replace(/\D/g, "");
   const matchingResults = allResults.filter((result) =>
     (!filters.category || result.category === filters.category) &&
     (!filters.projectId || result.projectId === filters.projectId) &&
     (!filters.date || result.expenseDate === filters.date) &&
-    (!filters.client || (result.clientName ?? "Tanpa Klien").trim().toLowerCase() === filters.client.trim().toLowerCase()),
+    (!filters.client || (result.clientName ?? "Tanpa Klien").trim().toLowerCase() === filters.client.trim().toLowerCase()) &&
+    (!normalizedRefineQuery || matchExpenseSearchQuery(result, normalizedRefineQuery, refineDigits)),
   );
   const start = (page - 1) * pageSize;
   return {

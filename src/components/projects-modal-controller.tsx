@@ -760,7 +760,7 @@ export function ProjectsModalController({
                 refineQuery: detailState.refineQuery,
                 from: detailState.from,
                 to: detailState.to,
-                year: detailState.year ? String(detailState.year) : "",
+                year: detailState.year,
                 client: detailState.client,
                 projectId: detailState.projectId,
                 category: detailState.category,

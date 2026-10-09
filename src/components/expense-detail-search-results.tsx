@@ -41,7 +41,7 @@ type ExpenseDetailSearchResultsProps = {
     refineQuery: string;
     from: string;
     to: string;
-    year: string;
+    year: number | null;
     client: string;
     projectId: string;
     category: string;
@@ -218,7 +218,7 @@ export function ExpenseDetailSearchResults({
         refineQuery: filters.refineQuery,
         from: filters.from,
         to: filters.to,
-        year: filters.year,
+        year: filters.year ? String(filters.year) : "",
         client: filters.client,
         projectId: filters.projectId,
         category: filters.category,

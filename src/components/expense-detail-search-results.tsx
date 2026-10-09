@@ -36,7 +36,17 @@ type ExpenseDetailSearchResultsProps = {
   page: number;
   pageSize: number;
   projects: Project[];
-  filters: { query: string; refineQuery: string; client: string; projectId: string; category: string; date: string };
+  filters: {
+    query: string;
+    refineQuery: string;
+    from: string;
+    to: string;
+    year: string;
+    client: string;
+    projectId: string;
+    category: string;
+    date: string;
+  };
   onFilterChange: (filters: Partial<ExpenseDetailSearchResultsProps["filters"]>) => void;
   onPageChange: (page: number) => void;
   projectSearchText?: string;
@@ -192,7 +202,6 @@ export function ExpenseDetailSearchResults({
     [filteredResults],
   );
   const isBulkActionDisabled = filteredExpenseIds.length === 0;
-  const pageTotalAmount = filteredResults.reduce((sum, item) => sum + item.amount, 0);
   const hasLocalFilters = Boolean(
     filters.refineQuery || filters.client || filters.projectId || filters.category || filters.date,
   );
@@ -204,6 +213,26 @@ export function ExpenseDetailSearchResults({
 
     setIsExporting(true);
     try {
+      const params = new URLSearchParams({
+        query: filters.query,
+        refineQuery: filters.refineQuery,
+        from: filters.from,
+        to: filters.to,
+        year: filters.year,
+        client: filters.client,
+        projectId: filters.projectId,
+        category: filters.category,
+        date: filters.date,
+      });
+      const response = await fetch(`/api/expense-details/export?${params.toString()}`);
+      if (!response.ok) {
+        throw new Error("Gagal mengambil seluruh hasil pencarian.");
+      }
+      const exportData = (await response.json()) as {
+        results: ProjectExpenseSearchResult[];
+        totalCount: number;
+        totalAmount: number;
+      };
       const XLSX = await import("xlsx/xlsx.mjs");
       const headers = [
         "Tanggal",
@@ -221,7 +250,7 @@ export function ExpenseDetailSearchResults({
         [`Diekspor ${new Date().toLocaleString("id-ID")}`],
         [],
         headers,
-        ...filteredResults.map((item) => [
+        ...exportData.results.map((item) => [
           item.expenseDate,
           getClientLabel(item.clientName),
           item.projectName,
@@ -233,7 +262,8 @@ export function ExpenseDetailSearchResults({
           item.amount,
         ]),
         [],
-        ["TOTAL HALAMAN", "", "", "", "", "", "", "", pageTotalAmount],
+        ["TOTAL DATA", exportData.totalCount],
+        ["TOTAL NOMINAL", "", "", "", "", "", "", "", exportData.totalAmount],
       ];
       const worksheet = XLSX.utils.aoa_to_sheet(rows);
       worksheet["!cols"] = [
@@ -401,7 +431,7 @@ export function ExpenseDetailSearchResults({
               <span className="btn-icon bg-emerald-100 text-emerald-700">
                 <ExcelIcon />
               </span>
-              {isExporting ? "Menyiapkan Excel..." : "Export Halaman"}
+              {isExporting ? "Menyiapkan Excel..." : "Export Semua Hasil"}
             </button>
           ) : null}
         </div>

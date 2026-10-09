@@ -758,6 +758,9 @@ export function ProjectsModalController({
               filters={{
                 query: detailState.query,
                 refineQuery: detailState.refineQuery,
+                from: detailState.from,
+                to: detailState.to,
+                year: detailState.year ? String(detailState.year) : "",
                 client: detailState.client,
                 projectId: detailState.projectId,
                 category: detailState.category,

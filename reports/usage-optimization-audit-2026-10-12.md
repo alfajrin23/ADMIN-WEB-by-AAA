@@ -33,3 +33,9 @@ Cache enam jam memberi batas teoritis empat pengisian ulang per hari per lokasi 
 - Playwright dengan Chromium: halaman login merespons 200, kolom username/password tampil, `/projects` tanpa sesi diarahkan ke login, dan tidak ada uncaught page error.
 - Pemeriksaan Playwright belum melewati autentikasi; karena itu halaman dashboard dan cache modal biaya tidak diuji end-to-end melalui browser. Tidak ada kredensial yang dipakai.
 - Database hanya dibaca. Tidak ada perubahan data atau schema.
+
+## Audit lanjutan: pencarian rincian semua project
+
+Pemeriksaan baca-saja pada 12 Oktober menemukan 14.720 transaksi. Pencarian layar mengambil satu halaman saja; uji RPC yang diminta 100 baris menerima batas aktif 50 baris dan respons JSON 16.647 byte. Fungsi SQL tetap menghitung total atas seluruh hasil cocok setiap permintaan. Ekspor tanpa filter dapat memerlukan 295 RPC pada batas lama, karena semua baris diambil bertahap dan ringkasan dihitung ulang per halaman.
+
+Optimasi lanjutan menaikkan jeda pencarian menjadi 1 detik dan menyiapkan batch ekspor 500 baris dengan fallback aman ke batas lama. Migration Supabase belum diterapkan karena akses audit tetap baca-saja; sebelum migration diterapkan, jumlah RPC ekspor tetap mengikuti batas lama. Rincian temuan ada di [audit pencarian rincian](usage-detail-search-audit-2026-10-12.md).

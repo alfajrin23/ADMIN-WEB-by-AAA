@@ -358,7 +358,7 @@ export function ProjectsModalController({
         }
         detailDebounceRef.current = window.setTimeout(() => {
           commitDetailSearch(nextState);
-        }, 650);
+        }, 1000);
         return nextState;
       });
     },

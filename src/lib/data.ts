@@ -3439,7 +3439,7 @@ export async function searchExpenseDetailsPage(input: {
   const requestedPageSize = Number(input.pageSize ?? 20);
   const requestedPage = Number(input.page ?? 1);
   const pageSize = Number.isFinite(requestedPageSize)
-    ? Math.min(50, Math.max(1, Math.floor(requestedPageSize)))
+    ? Math.min(500, Math.max(1, Math.floor(requestedPageSize)))
     : 20;
   const page = Number.isFinite(requestedPage) ? Math.max(1, Math.floor(requestedPage)) : 1;
   const dateFilters = normalizeExpenseDetailDateFilters({
@@ -3496,6 +3496,11 @@ export async function searchExpenseDetailsPage(input: {
       totalAmount?: number;
     } | null;
     const rows = Array.isArray(result?.rows) ? result.rows : [];
+    const totalCount = Number(result?.totalCount ?? 0);
+    // Older deployed RPC definitions cap pages at 50. Keep exports complete
+    // until the matching migration raises that limit to 500.
+    const effectivePageSize =
+      pageSize > 50 && rows.length === 50 && totalCount > 50 ? 50 : pageSize;
     return {
       results: rows.map((row) => ({
         expenseId: String(row.expense_id ?? ""),
@@ -3510,11 +3515,11 @@ export async function searchExpenseDetailsPage(input: {
         category: String(row.category ?? "") as ProjectExpenseSearchResult["category"],
         amount: Number(row.amount ?? 0),
       })),
-      totalCount: Number(result?.totalCount ?? 0),
+      totalCount,
       totalProjects: Number(result?.totalProjects ?? 0),
       totalAmount: Number(result?.totalAmount ?? 0),
       page,
-      pageSize,
+      pageSize: effectivePageSize,
     };
   }
 

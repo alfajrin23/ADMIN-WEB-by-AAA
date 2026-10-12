@@ -3,7 +3,7 @@ import { canExportReports, getCurrentUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 500;
 
 export async function GET(request: Request) {
   const user = await getCurrentUser();
@@ -28,17 +28,21 @@ export async function GET(request: Request) {
 
   try {
     const firstPage = await searchExpenseDetailsPage({ ...filters, page: 1, pageSize: PAGE_SIZE });
-    const remainingPageCount = Math.ceil(firstPage.totalCount / PAGE_SIZE) - 1;
+    // The live Supabase RPC may still have its older 50-row cap until the
+    // database migration is applied. Use the effective size reported by page 1.
+    const pageSize = firstPage.pageSize;
+    const totalPageCount = Math.ceil(firstPage.totalCount / pageSize);
+    const concurrentPageCount = Math.max(1, Math.min(10, Math.floor(1500 / pageSize)));
     const remainingPages = [];
-    for (let firstPageNumber = 2; firstPageNumber <= remainingPageCount + 1; firstPageNumber += 10) {
+    for (let firstPageNumber = 2; firstPageNumber <= totalPageCount; firstPageNumber += concurrentPageCount) {
       const pageNumbers = Array.from(
-        { length: Math.min(10, remainingPageCount + 2 - firstPageNumber) },
+        { length: Math.min(concurrentPageCount, totalPageCount - firstPageNumber + 1) },
         (_, index) => firstPageNumber + index,
       );
       remainingPages.push(
         ...(await Promise.all(
           pageNumbers.map((page) =>
-            searchExpenseDetailsPage({ ...filters, page, pageSize: PAGE_SIZE }),
+            searchExpenseDetailsPage({ ...filters, page, pageSize }),
           ),
         )),
       );

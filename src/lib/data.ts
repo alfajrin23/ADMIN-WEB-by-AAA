@@ -2066,34 +2066,8 @@ type KmpCianjurHokProjectPreset = {
   defaultSelected: boolean;
 };
 
-const getSupabaseKmpCianjurHokProjectPresetsCached = unstable_cache(
-  async (): Promise<KmpCianjurHokProjectPreset[]> => {
-    const [projects, metadata] = await Promise.all([
-      getCachedSupabaseProjects(),
-      getCachedSupabaseExpenseMetadata(),
-    ]);
-    const projectNameMap = Object.fromEntries(
-      projects.map((project) => [project.id, project.name] as const),
-    );
-    const expenses = metadata.expenseRows.map((row) => ({
-      projectId: String(row.project_id ?? ""),
-      projectName: projectNameMap[String(row.project_id)],
-      category: toCategorySlug(String(row.category ?? "")) || "operasional",
-      requesterName: typeof row.requester_name === "string" ? row.requester_name : null,
-      description: typeof row.description === "string" ? row.description : null,
-      usageInfo: typeof row.usage_info === "string" ? row.usage_info : null,
-    } as ExpenseEntry));
-    return buildKmpCianjurHokProjectPresets(projects, expenses);
-  },
-  ["supabase-kmp-hok-presets-v2"],
-  {
-    revalidate: SUPABASE_CACHE_REVALIDATE_SECONDS,
-    tags: [CACHE_TAGS.projects, CACHE_TAGS.expenses],
-  }
-);
-
 async function getSupabaseKmpCianjurHokProjectPresets(): Promise<KmpCianjurHokProjectPreset[]> {
-  return getSupabaseKmpCianjurHokProjectPresetsCached();
+  return (await getCachedSupabaseExpenseFormData()).hokProjectPresets;
 }
 
 export async function getKmpCianjurHokProjectPresets(): Promise<
@@ -2580,11 +2554,42 @@ function buildSupabaseExpenseDerivedData(
   };
 }
 
-// Requester/description suggestion maps can grow very large.
-// Avoid unstable_cache here to prevent 2 MB cache write failures.
-const getCachedSupabaseExpenseDerivedData = cache(
-  async (): Promise<CachedSupabaseExpenseDerivedData> =>
-    buildSupabaseExpenseDerivedData(await getCachedSupabaseExpenseMetadata()),
+type CachedSupabaseExpenseFormData = CachedSupabaseExpenseDerivedData & {
+  hokProjectPresets: KmpCianjurHokProjectPreset[];
+};
+
+// Keep this compact, history-derived form data in the shared Next.js data cache.
+// The configured database currently produces a ~0.2 MiB suggestions payload, while
+// the source expense rows are ~4.8 MiB. These values are convenience defaults, so
+// allow up to six hours of staleness and refresh them when the project catalog changes.
+const getCachedSupabaseExpenseFormData = unstable_cache(
+  async (): Promise<CachedSupabaseExpenseFormData> => {
+    const [projects, metadata] = await Promise.all([
+      getCachedSupabaseProjects(),
+      getCachedSupabaseExpenseMetadata(),
+    ]);
+    const projectNameMap = Object.fromEntries(
+      projects.map((project) => [project.id, project.name] as const),
+    );
+    const expenses = metadata.expenseRows.map((row) => ({
+      projectId: String(row.project_id ?? ""),
+      projectName: projectNameMap[String(row.project_id)],
+      category: toCategorySlug(String(row.category ?? "")) || "operasional",
+      requesterName: typeof row.requester_name === "string" ? row.requester_name : null,
+      description: typeof row.description === "string" ? row.description : null,
+      usageInfo: typeof row.usage_info === "string" ? row.usage_info : null,
+    } as ExpenseEntry));
+
+    return {
+      ...buildSupabaseExpenseDerivedData(metadata),
+      hokProjectPresets: buildKmpCianjurHokProjectPresets(projects, expenses),
+    };
+  },
+  ["supabase-expense-form-data-v1"],
+  {
+    revalidate: 6 * 60 * 60,
+    tags: [CACHE_TAGS.projects],
+  },
 );
 
 export async function getRequesterSuggestionsByProject(): Promise<Record<string, string[]>> {
@@ -2601,7 +2606,7 @@ export async function getRequesterSuggestionsByProject(): Promise<Record<string,
   }
 
   if (activeDataSource === "supabase") {
-    const { requesterSuggestionsByProject } = await getCachedSupabaseExpenseDerivedData();
+    const { requesterSuggestionsByProject } = await getCachedSupabaseExpenseFormData();
     return requesterSuggestionsByProject;
   }
 
@@ -2640,7 +2645,7 @@ export async function getDescriptionSuggestionsByProject(): Promise<Record<strin
   }
 
   if (activeDataSource === "supabase") {
-    const { descriptionSuggestionsByProject } = await getCachedSupabaseExpenseDerivedData();
+    const { descriptionSuggestionsByProject } = await getCachedSupabaseExpenseFormData();
     return descriptionSuggestionsByProject;
   }
 

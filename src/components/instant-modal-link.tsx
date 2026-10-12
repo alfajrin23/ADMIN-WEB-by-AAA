@@ -42,7 +42,7 @@ export function InstantModalLink({
   };
 
   return (
-    <Link {...props} onClick={handleClick}>
+    <Link {...props} prefetch={false} onClick={handleClick}>
       {children}
     </Link>
   );

@@ -724,6 +724,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                             statusFilter,
                             view: "rekap",
                           })}
+                          prefetch={false}
                           className="button-secondary button-xs"
                         >
                           <span className="btn-icon bg-blue-100 text-blue-700">
@@ -735,6 +736,7 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                           <>
                             <Link
                               href={`/projects/edit?id=${project.id}`}
+                              prefetch={false}
                               className="button-soft button-xs"
                             >
                               <span className="btn-icon bg-emerald-100 text-emerald-700">

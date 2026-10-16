@@ -143,6 +143,9 @@ export function ProjectRecapExpenseList({
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
+  const [monthFilter, setMonthFilter] = useState("");
+  const [dateFromFilter, setDateFromFilter] = useState("");
+  const [dateToFilter, setDateToFilter] = useState("");
   const { pendingExpenses } = useOptimisticCreateStore();
   const mergedExpenses = useMemo(() => {
     const storedFingerprints = new Set(expenses.map(getExpenseFingerprint));
@@ -207,13 +210,31 @@ export function ProjectRecapExpenseList({
     [expenseCategories, sortedExpenses],
   );
 
+  const dateFilteredExpenses = useMemo(
+    () =>
+      sortedExpenses.filter((item) => {
+        const expenseDate = item.expenseDate.slice(0, 10);
+        if (monthFilter && expenseDate.slice(0, 7) !== monthFilter) {
+          return false;
+        }
+        if (dateFromFilter && expenseDate < dateFromFilter) {
+          return false;
+        }
+        if (dateToFilter && expenseDate > dateToFilter) {
+          return false;
+        }
+        return true;
+      }),
+    [dateFromFilter, dateToFilter, monthFilter, sortedExpenses],
+  );
+
   const filteredExpenses = useMemo(() => {
     const normalizedQuery = normalizeSearchText(debouncedSearchQuery);
     const queryDigits = getDigits(normalizedQuery);
     const queryTerms = normalizedQuery.split(" ").filter((item) => item.length > 0);
     const compactQuery = toCompactSearchToken(normalizedQuery);
 
-    return sortedExpenses.filter((item) => {
+    return dateFilteredExpenses.filter((item) => {
       const summaryCategory = resolveSummaryCostCategory({
         category: item.category,
         description: item.description,
@@ -243,10 +264,10 @@ export function ProjectRecapExpenseList({
       const amountDigits = getDigits(String(Math.round(Math.abs(item.amount))));
       return amountDigits.includes(queryDigits);
     });
-  }, [categoryFilter, debouncedSearchQuery, sortedExpenses]);
+  }, [categoryFilter, dateFilteredExpenses, debouncedSearchQuery]);
   const categoryTotals = useMemo(() => {
     const totalsByCategory = new Map<string, number>();
-    for (const expense of sortedExpenses) {
+    for (const expense of dateFilteredExpenses) {
       const category = resolveSummaryCostCategory({
         category: expense.category,
         description: expense.description,
@@ -260,7 +281,7 @@ export function ProjectRecapExpenseList({
 
     return mergeExpenseCategoryOptions(
       expenseCategories,
-      sortedExpenses.map((item) =>
+      dateFilteredExpenses.map((item) =>
         resolveSummaryCostCategory({
           category: item.category,
           description: item.description,
@@ -274,12 +295,16 @@ export function ProjectRecapExpenseList({
         total: totalsByCategory.get(item.value) ?? 0,
       }))
       .filter((item) => item.total !== 0);
-  }, [expenseCategories, sortedExpenses]);
+  }, [dateFilteredExpenses, expenseCategories]);
 
-  const hasLocalFilters = Boolean(searchQuery.trim() || categoryFilter);
+  const hasAdditionalFilters = Boolean(searchQuery.trim() || categoryFilter);
+  const hasActiveFilters = Boolean(
+    searchQuery.trim() || categoryFilter || monthFilter || dateFromFilter || dateToFilter,
+  );
+  const hasDateFilters = Boolean(monthFilter || dateFromFilter || dateToFilter);
   const totalProjectExpense = useMemo(
-    () => sortedExpenses.reduce((total, expense) => total + expense.amount, 0),
-    [sortedExpenses],
+    () => dateFilteredExpenses.reduce((total, expense) => total + expense.amount, 0),
+    [dateFilteredExpenses],
   );
   const filteredExpenseTotal = useMemo(
     () => filteredExpenses.reduce((total, expense) => total + expense.amount, 0),
@@ -292,12 +317,15 @@ export function ProjectRecapExpenseList({
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <button
           type="button"
-          aria-pressed={!categoryFilter && !searchQuery.trim()}
+          aria-pressed={!hasActiveFilters}
           aria-label="Tampilkan semua rincian project"
           onClick={() => {
             setSearchQuery("");
             setDebouncedSearchQuery("");
             setCategoryFilter("");
+            setMonthFilter("");
+            setDateFromFilter("");
+            setDateToFilter("");
           }}
           className="group relative w-full overflow-hidden rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-600 via-indigo-600 to-violet-700 p-4 text-left text-white shadow-lg shadow-indigo-100 transition-all hover:-translate-y-0.5 hover:shadow-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
         >
@@ -305,15 +333,15 @@ export function ProjectRecapExpenseList({
           <div className="absolute -bottom-12 right-12 size-24 rounded-full bg-violet-300/10" />
           <div className="relative z-10">
             <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-indigo-100">
-              Total Keseluruhan
+              {hasDateFilters ? "Total Biaya Periode" : "Total Keseluruhan"}
             </p>
             <p className="mt-2 text-xl font-bold tracking-tight">
               {formatCurrency(totalProjectExpense)}
             </p>
             <p className="mt-1 text-xs text-indigo-100">
-              {sortedExpenses.length} transaksi pada proyek ini
+              {dateFilteredExpenses.length} transaksi pada proyek ini
             </p>
-            {hasLocalFilters ? (
+            {hasAdditionalFilters ? (
               <p className="mt-3 border-t border-white/20 pt-2 text-xs text-white">
                 Hasil filter: <span className="font-semibold">{formatCurrency(filteredExpenseTotal)}</span>
               </p>
@@ -350,11 +378,11 @@ export function ProjectRecapExpenseList({
         ))}
       </div>
 
-      <ProjectRecapChartsLazy expenses={sortedExpenses} />
+      <ProjectRecapChartsLazy expenses={dateFilteredExpenses} />
 
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px_auto]">
-          <div>
+        <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-[minmax(0,2fr)_minmax(180px,1fr)_minmax(180px,1fr)]">
+          <div className="xl:col-span-1">
             <label className="mb-1 block text-xs font-semibold text-slate-600">Cari data rekap</label>
             <input
               value={searchQuery}
@@ -363,6 +391,15 @@ export function ProjectRecapExpenseList({
               }}
               placeholder="Cari tanggal, nama pengaju, rincian, vendor, atau nominal"
               autoComplete="off"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Filter bulan</label>
+            <input
+              type="month"
+              value={monthFilter}
+              onChange={(event) => setMonthFilter(event.currentTarget.value)}
+              aria-label="Filter transaksi berdasarkan bulan"
             />
           </div>
           <div>
@@ -381,7 +418,27 @@ export function ProjectRecapExpenseList({
               ))}
             </select>
           </div>
-          {hasLocalFilters ? (
+        </div>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Tanggal dari</label>
+            <input
+              type="date"
+              value={dateFromFilter}
+              onChange={(event) => setDateFromFilter(event.currentTarget.value)}
+              aria-label="Filter transaksi mulai tanggal"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Tanggal sampai</label>
+            <input
+              type="date"
+              value={dateToFilter}
+              onChange={(event) => setDateToFilter(event.currentTarget.value)}
+              aria-label="Filter transaksi sampai tanggal"
+            />
+          </div>
+          {hasActiveFilters ? (
             <div className="flex items-end">
               <button
                 type="button"
@@ -389,6 +446,9 @@ export function ProjectRecapExpenseList({
                   setSearchQuery("");
                   setDebouncedSearchQuery("");
                   setCategoryFilter("");
+                  setMonthFilter("");
+                  setDateFromFilter("");
+                  setDateToFilter("");
                 }}
                 className="inline-flex w-full items-center justify-center rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
               >
@@ -398,7 +458,7 @@ export function ProjectRecapExpenseList({
           ) : null}
         </div>
         <p className="mt-2 text-xs text-slate-500">
-          Menampilkan semua {filteredExpenses.length} transaksi yang cocok dari {sortedExpenses.length} total transaksi project.
+          Menampilkan {filteredExpenses.length} transaksi yang cocok dari {dateFilteredExpenses.length} transaksi pada periode terpilih.
         </p>
       </div>
 

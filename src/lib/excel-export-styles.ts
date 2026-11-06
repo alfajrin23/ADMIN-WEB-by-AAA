@@ -9,7 +9,7 @@ export const EXCEL_REPORT_COLORS = {
   paleGreen: "E2F0D9",
   paleBlue: "DDEBF7",
   paleGray: "F3F6F9",
-  border: "D9E2F3",
+  border: "B8C7D9",
   text: "243447",
   mutedText: "5B6573",
   white: "FFFFFF",
@@ -83,6 +83,11 @@ function solidFill(hex: string) {
   return { patternType: "solid", fgColor: { rgb: hex } };
 }
 
+function cellGridBorder(color: string = EXCEL_REPORT_COLORS.border) {
+  const edge = { style: "thin", color: { rgb: color } };
+  return { top: edge, right: edge, bottom: edge, left: edge };
+}
+
 export function getExpenseCategoryExcelColor(category: string) {
   return CATEGORY_COLORS[category.trim().toLowerCase()] ?? "E7E6E6";
 }
@@ -99,7 +104,7 @@ export function styleExcelTitleRow(
       font: { name: "Aptos Display", sz: fontSize, bold: true, color: { rgb: EXCEL_REPORT_COLORS.white } },
       fill: solidFill(EXCEL_REPORT_COLORS.navy),
       alignment: { horizontal: "center", vertical: "center", wrapText: true },
-      border: { bottom: { style: "medium", color: { rgb: EXCEL_REPORT_COLORS.blue } } },
+      border: cellGridBorder(EXCEL_REPORT_COLORS.blue),
     });
   }
 }
@@ -118,7 +123,7 @@ export function styleExcelCell(
       color: { rgb: options.fontColor ?? EXCEL_REPORT_COLORS.text },
     },
     alignment: { horizontal: options.align ?? "left", vertical: "center", wrapText: true },
-    border: { bottom: { style: "thin", color: { rgb: EXCEL_REPORT_COLORS.border } } },
+    border: cellGridBorder(),
   };
   if (options.fill) {
     style.fill = solidFill(options.fill);
@@ -137,7 +142,7 @@ export function styleExcelSubtitleRow(
       font: { name: "Aptos", sz: 10, italic: true, color: { rgb: EXCEL_REPORT_COLORS.mutedText } },
       fill: solidFill(EXCEL_REPORT_COLORS.paleBlue),
       alignment: { horizontal: "left", vertical: "center", wrapText: true },
-      border: { bottom: { style: "thin", color: { rgb: EXCEL_REPORT_COLORS.border } } },
+      border: cellGridBorder(),
     });
   }
 }
@@ -154,7 +159,7 @@ export function styleExcelSectionRow(
       font: { name: "Aptos", sz: 11, bold: true, color: { rgb: EXCEL_REPORT_COLORS.white } },
       fill: solidFill(fill),
       alignment: { horizontal: "left", vertical: "center", wrapText: true },
-      border: { bottom: { style: "thin", color: { rgb: EXCEL_REPORT_COLORS.white } } },
+      border: cellGridBorder(EXCEL_REPORT_COLORS.white),
     });
   }
 }
@@ -238,10 +243,7 @@ export function styleExcelDataRows(
           vertical: "center",
           wrapText: spec?.wrapText ?? false,
         },
-        border: {
-          bottom: { style: "thin", color: { rgb: EXCEL_REPORT_COLORS.border } },
-          ...(isTotal ? { top: { style: "thin", color: { rgb: EXCEL_REPORT_COLORS.green } } } : {}),
-        },
+        border: isTotal ? cellGridBorder(EXCEL_REPORT_COLORS.green) : cellGridBorder(),
       };
       const format = spec?.format ? EXCEL_NUMBER_FORMATS[spec.format] : undefined;
       applyCellStyle(sheet, row, column, style, format);
@@ -292,12 +294,12 @@ export function styleExcelInfoSheet(sheet: XLSX.WorkSheet, rowCount: number) {
       font: { name: "Aptos", sz: 10, bold: true, color: { rgb: EXCEL_REPORT_COLORS.navy } },
       fill: solidFill(EXCEL_REPORT_COLORS.paleBlue),
       alignment: { horizontal: "left", vertical: "center", wrapText: true },
-      border: { bottom: { style: "thin", color: { rgb: EXCEL_REPORT_COLORS.border } } },
+      border: cellGridBorder(),
     });
     applyCellStyle(sheet, row, 1, {
       font: { name: "Aptos", sz: 10, color: { rgb: EXCEL_REPORT_COLORS.text } },
       alignment: { horizontal: "left", vertical: "center", wrapText: true },
-      border: { bottom: { style: "thin", color: { rgb: EXCEL_REPORT_COLORS.border } } },
+      border: cellGridBorder(),
     });
   }
   setExcelRowHeight(sheet, 0, 28);

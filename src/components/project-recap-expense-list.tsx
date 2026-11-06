@@ -4,6 +4,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { deleteExpenseAction } from "@/app/actions/expense.action";
+import { updateProjectContractValueAction } from "@/app/actions/project.action";
 import { ConfirmActionButton } from "@/components/confirm-action-button";
 import { EditIcon, TrashIcon } from "@/components/icons";
 import {
@@ -29,6 +30,8 @@ type ProjectRecapExpenseListProps = {
   projectId: string;
   expenses: ExpenseEntry[];
   expenseCategories: ExpenseCategoryOption[];
+  contractValue?: number | null;
+  contractValueReturnTo?: string;
   canEdit?: boolean;
   searchText?: string;
 };
@@ -137,6 +140,8 @@ export function ProjectRecapExpenseList({
   projectId,
   expenses,
   expenseCategories,
+  contractValue = null,
+  contractValueReturnTo = "/projects",
   canEdit = false,
   searchText,
 }: ProjectRecapExpenseListProps) {
@@ -306,6 +311,11 @@ export function ProjectRecapExpenseList({
     () => dateFilteredExpenses.reduce((total, expense) => total + expense.amount, 0),
     [dateFilteredExpenses],
   );
+  const totalOverallCos = useMemo(
+    () => sortedExpenses.reduce((total, expense) => total + expense.amount, 0),
+    [sortedExpenses],
+  );
+  const remainingBudget = contractValue === null ? null : contractValue - totalOverallCos;
   const filteredExpenseTotal = useMemo(
     () => filteredExpenses.reduce((total, expense) => total + expense.amount, 0),
     [filteredExpenses],
@@ -314,6 +324,49 @@ export function ProjectRecapExpenseList({
   return (
     <div className="space-y-4">
       <OptimisticMutationNotice notice={notice} />
+      <section className="grid gap-3 rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="rounded-xl border border-blue-100 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Nilai Kontrak</p>
+          {canEdit ? (
+            <form action={updateProjectContractValueAction} className="mt-2 space-y-2">
+              <input type="hidden" name="project_id" value={projectId} />
+              <input type="hidden" name="return_to" value={contractValueReturnTo} />
+              <label className="sr-only" htmlFor="project-contract-value">Nilai kontrak dalam rupiah</label>
+              <input
+                id="project-contract-value"
+                name="contract_value"
+                type="number"
+                min="0"
+                step="1"
+                inputMode="numeric"
+                defaultValue={contractValue ?? ""}
+                placeholder="Masukkan nilai kontrak"
+                className="w-full"
+              />
+              <button type="submit" className="button-secondary button-xs">
+                Simpan Nilai Kontrak
+              </button>
+              <p className="text-[11px] text-slate-500">Kosongkan lalu simpan untuk menghapus nilai kontrak.</p>
+            </form>
+          ) : (
+            <p className="mt-2 text-lg font-bold text-slate-900">
+              {contractValue === null ? "Belum diatur" : formatCurrency(contractValue)}
+            </p>
+          )}
+        </div>
+        <div className="rounded-xl border border-indigo-100 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Keseluruhan COS</p>
+          <p className="mt-2 text-lg font-bold text-slate-900">{formatCurrency(totalOverallCos)}</p>
+          <p className="mt-1 text-[11px] text-slate-500">Akumulasi seluruh transaksi biaya project.</p>
+        </div>
+        <div className="rounded-xl border border-emerald-100 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sisa Anggaran</p>
+          <p className={`mt-2 text-lg font-bold ${remainingBudget !== null && remainingBudget < 0 ? "text-rose-700" : "text-emerald-700"}`}>
+            {remainingBudget === null ? "-" : formatCurrency(remainingBudget)}
+          </p>
+          <p className="mt-1 text-[11px] text-slate-500">Nilai kontrak dikurangi total keseluruhan COS.</p>
+        </div>
+      </section>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <button
           type="button"

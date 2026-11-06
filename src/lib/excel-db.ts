@@ -29,6 +29,7 @@ type ProjectRow = {
   code: string | null;
   client_name: string | null;
   start_date: string | null;
+  contract_value?: number | null;
   status: ProjectStatus;
   created_at: string;
 };
@@ -93,6 +94,7 @@ export type ImportedTemplateWorkbookData = {
     code: string | null;
     client_name: string | null;
     start_date: string | null;
+    contract_value?: number | null;
     status: ProjectStatus;
   }>;
   project_expenses: Array<{
@@ -594,6 +596,11 @@ function readWorkbook() {
 function parseProjects(rawRows: Record<string, unknown>[]): ProjectRow[] {
   return rawRows
     .map((row) => {
+      const rawContractValue = row.contract_value;
+      const parsedContractValue =
+        rawContractValue === null || rawContractValue === undefined || rawContractValue === ""
+          ? null
+          : Number(rawContractValue);
       const statusValue = String(row.status);
       const status: ProjectStatus = PROJECT_STATUSES.some(
         (item) => item.value === statusValue,
@@ -607,6 +614,10 @@ function parseProjects(rawRows: Record<string, unknown>[]): ProjectRow[] {
         code: toStringOrNull(row.code),
         client_name: toStringOrNull(row.client_name),
         start_date: toStringOrNull(row.start_date),
+        contract_value:
+          parsedContractValue !== null && Number.isSafeInteger(parsedContractValue) && parsedContractValue >= 0
+            ? parsedContractValue
+            : null,
         status,
         created_at: String(row.created_at ?? new Date().toISOString()),
       };
@@ -1961,6 +1972,18 @@ export function updateExcelProject(payload: {
   return updated;
 }
 
+export function updateExcelProjectContractValue(projectId: string, contractValue: number | null) {
+  const db = readExcelDatabase();
+  const project = db.projects.find((row) => row.id === projectId);
+  if (!project) {
+    return null;
+  }
+
+  project.contract_value = contractValue;
+  writeDatabase(db);
+  return project;
+}
+
 export function updateManyExcelProjects(
   projectIds: string[],
   patch: Partial<{
@@ -2568,6 +2591,7 @@ function toImportedTemplateData(rows: {
       code: project.code,
       client_name: project.client_name,
       start_date: project.start_date,
+      contract_value: project.contract_value ?? null,
       status: project.status,
     })),
     project_expenses: rows.project_expenses.map((expense) => ({
@@ -2614,7 +2638,21 @@ export function parseTemplateExcelData(templatePath?: string) {
 
 function importWorkbookToDatabase(workbook: XLSX.WorkBook) {
   const rows = parseTemplateWorkbookRows(workbook);
-  const projects = rows.projects;
+  const existingProjects = readExcelDatabase().projects;
+  const existingContractValuesById = new Map(
+    existingProjects.map((project) => [project.id, project.contract_value ?? null] as const),
+  );
+  const existingContractValuesByName = new Map(
+    existingProjects.map((project) => [project.name.trim().toLowerCase().replace(/\s+/g, " "), project.contract_value ?? null] as const),
+  );
+  const projects = rows.projects.map((project) => ({
+    ...project,
+    contract_value:
+      project.contract_value ??
+      existingContractValuesById.get(project.id) ??
+      existingContractValuesByName.get(project.name.trim().toLowerCase().replace(/\s+/g, " ")) ??
+      null,
+  }));
   const project_expenses = rows.project_expenses;
   const attendance_records: AttendanceRow[] = [];
   const payroll_resets: PayrollResetRow[] = [];

@@ -827,6 +827,13 @@ export default async function ProjectsPage({ searchParams }: ProjectPageProps) {
                 projectId={selectedProject.project.id}
                 expenses={selectedProject.expenses}
                 expenseCategories={recapExpenseCategories}
+                contractValue={selectedProject.project.contractValue}
+                contractValueReturnTo={createProjectsHref({
+                  projectId: selectedProject.project.id,
+                  searchText,
+                  statusFilter,
+                  view: "rekap",
+                })}
                 canEdit={canEdit}
                 searchText={searchText}
               />

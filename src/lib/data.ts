@@ -457,7 +457,7 @@ async function getAllSupabaseRowsResult(
 
 const SUPABASE_CACHE_REVALIDATE_SECONDS = 60;
 const SUPABASE_PROJECT_SELECT =
-  "id, name, code, client_name, start_date, status, created_at";
+  "id, name, code, client_name, start_date, contract_value, status, created_at";
 const SUPABASE_EXPENSE_METADATA_SELECT =
   "id, project_id, requester_name, description, usage_info, recipient_name, unit_label, category, amount, expense_date, created_at";
 const SUPABASE_EXPENSE_FULL_SELECT =
@@ -1251,12 +1251,21 @@ function applyPayrollResets(
 }
 
 function mapProject(row: Record<string, unknown>): Project {
+  const rawContractValue = row.contract_value;
+  const parsedContractValue =
+    rawContractValue === null || rawContractValue === undefined || rawContractValue === ""
+      ? null
+      : Number(rawContractValue);
   return {
     id: String(row.id ?? ""),
     name: String(row.name ?? ""),
     code: typeof row.code === "string" ? row.code : null,
     clientName: typeof row.client_name === "string" ? row.client_name : null,
     startDate: typeof row.start_date === "string" ? row.start_date : null,
+    contractValue:
+      parsedContractValue !== null && Number.isSafeInteger(parsedContractValue) && parsedContractValue >= 0
+        ? parsedContractValue
+        : null,
     status:
       row.status === "aktif" || row.status === "selesai" || row.status === "tertunda"
         ? row.status

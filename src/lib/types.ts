@@ -12,6 +12,7 @@ export type Project = {
   code: string | null;
   clientName: string | null;
   startDate: string | null;
+  contractValue?: number | null;
   status: ProjectStatus;
   createdAt: string;
 };

@@ -57,6 +57,7 @@ import {
   updateManyExcelExpenses,
   updateManyExcelProjects,
   updateExcelProject,
+  updateExcelProjectContractValue,
 } from "@/lib/excel-db";
 import { getFirestoreServerClient } from "@/lib/firebase";
 import { getCurrentJakartaDate } from "@/lib/date";
@@ -239,6 +240,76 @@ export async function updateProjectAction(formData: FormData) {
   if (returnTo) {
     redirect(withReturnMessage(returnTo, "success", `Project "${payload.name}" berhasil diperbarui.`));
   }
+}
+export async function updateProjectContractValueAction(formData: FormData) {
+  const actor = await requireEditorActionUser();
+  const projectId = getString(formData, "project_id");
+  const rawContractValue = getString(formData, "contract_value");
+  const returnTo = getReturnTo(formData) ?? "/projects";
+  if (!projectId) {
+    redirect(withReturnMessage(returnTo, "error", "Project tidak ditemukan."));
+  }
+
+  const contractValue = rawContractValue ? Number(rawContractValue) : null;
+  if (contractValue !== null && (!Number.isSafeInteger(contractValue) || contractValue < 0)) {
+    redirect(withReturnMessage(returnTo, "error", "Nilai kontrak harus berupa angka rupiah bulat dan tidak negatif."));
+  }
+
+  let projectName = projectId;
+  if (activeDataSource === "excel") {
+    const updated = updateExcelProjectContractValue(projectId, contractValue);
+    if (!updated) {
+      redirect(withReturnMessage(returnTo, "error", "Project tidak ditemukan."));
+    }
+    projectName = updated.name;
+  } else if (activeDataSource === "supabase") {
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
+      redirect(withReturnMessage(returnTo, "error", "Supabase belum terkonfigurasi."));
+    }
+    if (!ensureSupabaseWriteConfigured(returnTo, "Gagal memperbarui nilai kontrak.")) {
+      return;
+    }
+    const { data, error } = await supabase
+      .from("projects")
+      .update({ contract_value: contractValue })
+      .eq("id", projectId)
+      .select("name")
+      .maybeSingle();
+    if (error || !data) {
+      redirect(withReturnMessage(returnTo, "error", getSupabaseMutationErrorMessage("Gagal memperbarui nilai kontrak.")));
+    }
+    projectName = data.name;
+  } else if (activeDataSource === "firebase") {
+    const firestore = getFirestoreServerClient();
+    if (!firestore) {
+      redirect(withReturnMessage(returnTo, "error", "Firebase belum terkonfigurasi."));
+    }
+    await runFirebaseWriteSafely(async () => {
+      const projectRef = firestore.collection("projects").doc(projectId);
+      const snapshot = await projectRef.get();
+      if (!snapshot.exists) {
+        redirect(withReturnMessage(returnTo, "error", "Project tidak ditemukan."));
+      }
+      projectName = String(snapshot.data()?.name ?? projectId);
+      await projectRef.set({ contract_value: contractValue }, { merge: true });
+    });
+  } else {
+    redirect(withReturnMessage(returnTo, "error", "Penyimpanan project tidak tersedia."));
+  }
+
+  revalidateProjectPages();
+  revalidateProjectCache();
+  queueActivityLog({
+    actor,
+    actionType: "update",
+    module: "project",
+    entityId: projectId,
+    entityName: projectName,
+    description: `Memperbarui nilai kontrak project "${projectName}".`,
+    payload: { contract_value: contractValue },
+  });
+  redirect(withReturnMessage(returnTo, "success", `Nilai kontrak project "${projectName}" berhasil diperbarui.`));
 }
 export async function updateManyProjectsAction(formData: FormData) {
   const actor = await requireEditorActionUser();

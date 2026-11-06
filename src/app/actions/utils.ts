@@ -818,6 +818,7 @@ export async function importTemplateDataToSupabase(parsed: ParsedTemplateImportD
       code: project.code,
       client_name: project.client_name,
       start_date: project.start_date,
+      contract_value: project.contract_value ?? null,
       status: project.status,
     }));
 
@@ -977,6 +978,7 @@ export async function importTemplateDataToFirebase(parsed: ParsedTemplateImportD
             code: project.code,
             client_name: project.client_name,
             start_date: project.start_date,
+            contract_value: project.contract_value ?? null,
             status: project.status,
             created_at: createTimestamp(),
           },

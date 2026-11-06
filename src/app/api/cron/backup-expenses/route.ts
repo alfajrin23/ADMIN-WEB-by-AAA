@@ -1,16 +1,28 @@
 import { Buffer } from "node:buffer";
 import { PassThrough } from "node:stream";
-import * as XLSX from "xlsx/xlsx.mjs";
+import XLSX from "@/lib/xlsx-style";
+import type { WorkBook, WorkSheet } from "xlsx";
 import { google } from "googleapis";
 import { createDetailReportWorkbook } from "@/lib/excel-db";
 import { getExpenseCategories, getProjectReportDetail, getProjects } from "@/lib/data";
 import { buildReportCategoryOptions, buildReportCategoryTotals } from "@/lib/expense-report";
+import {
+  getExpenseCategoryExcelColor,
+  setExcelAutoFilter,
+  setExcelPrintLayout,
+  setExcelRowHeight,
+  styleExcelDataRows,
+  styleExcelHeaderRow,
+  styleExcelInfoSheet,
+  styleExcelSubtitleRow,
+  styleExcelTitleRow,
+} from "@/lib/excel-export-styles";
 
 export const runtime = "nodejs";
 
 const GOOGLE_DRIVE_FOLDER_ID = "1Gl8GL6aH0AFLEKazCrKbaWfpdeUD6q2M";
 
-function appendUniqueSheet(workbook: XLSX.WorkBook, worksheet: XLSX.WorkSheet, baseName: string) {
+function appendUniqueSheet(workbook: WorkBook, worksheet: WorkSheet, baseName: string) {
   const cleanedBase = baseName.replace(/[\\/?*[\]:]/g, " ").trim() || "Sheet";
   let candidate = cleanedBase.slice(0, 31);
   let index = 2;
@@ -143,18 +155,65 @@ export async function GET(request: Request) {
     ];
 
     const summarySheet = XLSX.utils.aoa_to_sheet(summarySheetRows);
+    const lastSummaryColumn = summaryHeaders.length - 1;
+    const summaryHeaderRow = 3;
+    const summaryDataStartRow = summaryHeaderRow + 1;
+    const summaryTotalRow = summaryDataStartRow + summaryRows.length - 1;
     summarySheet["!merges"] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: summaryHeaders.length - 1 } },
-      { s: { r: 1, c: 0 }, e: { r: 1, c: summaryHeaders.length - 1 } },
+      { s: { r: 0, c: 0 }, e: { r: 0, c: lastSummaryColumn } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: lastSummaryColumn } },
     ];
-    summarySheet["!cols"] = [{ wch: 34 }, ...summaryCategoryOptions.map(() => ({ wch: 18 })), { wch: 20 }];
+    summarySheet["!cols"] = [
+      { wch: 34 },
+      ...summaryCategoryOptions.map(() => ({ wch: 18 })),
+      { wch: 20 },
+    ];
+    const summaryCategoryFills = Object.fromEntries(
+      summaryCategoryOptions.map((category, index) => [
+        index + 1,
+        getExpenseCategoryExcelColor(category.value),
+      ]),
+    );
+    styleExcelTitleRow(summarySheet, 0, 0, lastSummaryColumn);
+    styleExcelSubtitleRow(summarySheet, 1, 0, lastSummaryColumn);
+    styleExcelHeaderRow(summarySheet, summaryHeaderRow, 0, lastSummaryColumn, {
+      fills: summaryCategoryFills,
+      totalColumn: lastSummaryColumn,
+    });
+    styleExcelDataRows(summarySheet, {
+      startRow: summaryDataStartRow,
+      endRow: summaryTotalRow,
+      firstColumn: 0,
+      lastColumn: lastSummaryColumn,
+      columns: [
+        { column: 0, wrapText: true },
+        ...summaryCategoryOptions.map((category, index) => ({
+          column: index + 1,
+          format: "currency" as const,
+          align: "right" as const,
+          fill: getExpenseCategoryExcelColor(category.value),
+        })),
+        { column: lastSummaryColumn, format: "currency", align: "right", fill: "E2F0D9" },
+      ],
+      grandTotalRows: [summaryTotalRow],
+    });
+    setExcelRowHeight(summarySheet, 0, 32);
+    setExcelRowHeight(summarySheet, 1, 22);
+    setExcelRowHeight(summarySheet, summaryHeaderRow, 38);
+    for (let row = summaryDataStartRow; row <= summaryTotalRow; row += 1) {
+      setExcelRowHeight(summarySheet, row, 22);
+    }
+    setExcelAutoFilter(summarySheet, summaryHeaderRow, 0, summaryTotalRow - 1, lastSummaryColumn);
+    setExcelPrintLayout(summarySheet);
     appendUniqueSheet(workbook, summarySheet, "Rekap Keseluruhan");
 
-    const infoSheet = XLSX.utils.aoa_to_sheet([
+    const infoRows = [
       ["LAPORAN", "RINCIAN BIAYA SEMUA PROJECT"],
       ["DICETAK", new Date().toLocaleString("id-ID")],
-    ]);
+    ];
+    const infoSheet = XLSX.utils.aoa_to_sheet(infoRows);
     infoSheet["!cols"] = [{ wch: 14 }, { wch: 55 }];
+    styleExcelInfoSheet(infoSheet, infoRows.length);
     appendUniqueSheet(workbook, infoSheet, "Info");
 
     const bytes = XLSX.write(workbook, { type: "buffer", bookType: "xlsx", cellStyles: true });

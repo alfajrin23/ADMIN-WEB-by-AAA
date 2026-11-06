@@ -1,8 +1,19 @@
 import { Buffer } from "node:buffer";
-import * as XLSX from "xlsx/xlsx.mjs";
+import XLSX from "@/lib/xlsx-style";
 import { getExpenseCategories, getProjectReportDetail, getProjects } from "@/lib/data";
 import { canExportReports, getCurrentUser } from "@/lib/auth";
 import { buildReportCategoryOptions, buildReportCategoryTotals } from "@/lib/expense-report";
+import {
+  getExpenseCategoryExcelColor,
+  setExcelAutoFilter,
+  setExcelPrintLayout,
+  setExcelRowHeight,
+  styleExcelDataRows,
+  styleExcelHeaderRow,
+  styleExcelInfoSheet,
+  styleExcelSubtitleRow,
+  styleExcelTitleRow,
+} from "@/lib/excel-export-styles";
 
 export const runtime = "nodejs";
 
@@ -106,35 +117,78 @@ export async function GET(request: Request) {
     grandTotal += row.total;
   }
 
-  const sheetRows: Array<Record<string, string | number>> = summaryRows.map((row, index) => {
-    const baseRow: Record<string, string | number> = {
-      NO: index + 1,
-      PROJECT: row.projectName,
-    };
-    for (const category of categoryOptions) {
-      baseRow[`KATEGORI: ${category.label}`] = row.totalsByCategory[category.value] ?? 0;
-    }
-    baseRow.TOTAL = row.total;
-    return baseRow;
-  });
-
-  const totalRow: Record<string, string | number> = {
-    NO: "",
-    PROJECT: "TOTAL",
-  };
-  for (const category of categoryOptions) {
-    totalRow[`KATEGORI: ${category.label}`] = grandTotalsByCategory[category.value] ?? 0;
-  }
-  totalRow.TOTAL = grandTotal;
-  sheetRows.push(totalRow);
-
-  const worksheet = XLSX.utils.json_to_sheet(sheetRows);
+  const lastColumn = categoryOptions.length + 2;
+  const headerRow = 4;
+  const dataStartRow = headerRow + 1;
+  const totalRow = dataStartRow + summaryRows.length;
+  const reportRows: Array<Array<string | number>> = [
+    [summaryRows.length === 1 ? "REKAP BIAYA PROJECT" : "REKAP KESELURUHAN BIAYA PROJECT"],
+    [requestedProjectIds.length > 0 ? `${requestedProjectIds.length} project terpilih` : "Semua project"],
+    [`Dicetak ${formatDateTimeText()}`],
+    [],
+    ["NO", "PROJECT", ...categoryOptions.map((item) => item.label.toUpperCase()), "TOTAL"],
+    ...summaryRows.map((row, index) => {
+      return [
+        index + 1,
+        row.projectName,
+        ...categoryOptions.map((category) => row.totalsByCategory[category.value] ?? 0),
+        row.total,
+      ];
+    }),
+    ["", "TOTAL", ...categoryOptions.map((item) => grandTotalsByCategory[item.value] ?? 0), grandTotal],
+  ];
+  const worksheet = XLSX.utils.aoa_to_sheet(reportRows);
+  worksheet["!merges"] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: lastColumn } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: lastColumn } },
+    { s: { r: 2, c: 0 }, e: { r: 2, c: lastColumn } },
+  ];
   worksheet["!cols"] = [
     { wch: 6 },
     { wch: 36 },
-    ...categoryOptions.map(() => ({ wch: 18 })),
-    { wch: 18 },
+    ...categoryOptions.map((item) => ({ wch: Math.max(16, Math.min(24, item.label.length + 4)) })),
+    { wch: 20 },
   ];
+  const categoryHeaderFills = Object.fromEntries(
+    categoryOptions.map((category, index) => [
+      index + 2,
+      getExpenseCategoryExcelColor(category.value),
+    ]),
+  );
+  styleExcelTitleRow(worksheet, 0, 0, lastColumn);
+  styleExcelSubtitleRow(worksheet, 1, 0, lastColumn);
+  styleExcelSubtitleRow(worksheet, 2, 0, lastColumn);
+  styleExcelHeaderRow(worksheet, headerRow, 0, lastColumn, {
+    fills: categoryHeaderFills,
+    totalColumn: lastColumn,
+  });
+  styleExcelDataRows(worksheet, {
+    startRow: dataStartRow,
+    endRow: totalRow,
+    firstColumn: 0,
+    lastColumn,
+    columns: [
+      { column: 0, format: "integer", align: "center" },
+      { column: 1, wrapText: true },
+      ...categoryOptions.map((category, index) => ({
+        column: index + 2,
+        format: "currency" as const,
+        align: "right" as const,
+        fill: getExpenseCategoryExcelColor(category.value),
+      })),
+      { column: lastColumn, format: "currency", align: "right", fill: "E2F0D9" },
+    ],
+    grandTotalRows: [totalRow],
+  });
+  setExcelRowHeight(worksheet, 0, 32);
+  setExcelRowHeight(worksheet, 1, 22);
+  setExcelRowHeight(worksheet, 2, 22);
+  setExcelRowHeight(worksheet, headerRow, 38);
+  for (let row = dataStartRow; row <= totalRow; row += 1) {
+    setExcelRowHeight(worksheet, row, 22);
+  }
+  setExcelAutoFilter(worksheet, headerRow, 0, totalRow - 1, lastColumn);
+  setExcelPrintLayout(worksheet);
 
   const workbook = XLSX.utils.book_new();
   const firstProjectName = summaryRows[0]?.projectName ?? "Project";
@@ -153,9 +207,10 @@ export async function GET(request: Request) {
   ];
   const metaSheet = XLSX.utils.aoa_to_sheet(metaRows);
   metaSheet["!cols"] = [{ wch: 14 }, { wch: 50 }];
+  styleExcelInfoSheet(metaSheet, metaRows.length);
   XLSX.utils.book_append_sheet(workbook, metaSheet, "Info");
 
-  const bytes = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+  const bytes = XLSX.write(workbook, { type: "buffer", bookType: "xlsx", cellStyles: true });
   const filePrefix = resolveFilePrefix(summaryRows.map((item) => item.projectName));
   return new Response(Buffer.from(bytes), {
     headers: {

@@ -20,6 +20,17 @@ import {
   getCostCategoryStyle,
   SPECIALIST_COST_PRESETS,
 } from "@/lib/constants";
+import {
+  getExpenseCategoryExcelColor,
+  setExcelAutoFilter,
+  setExcelPrintLayout,
+  setExcelRowHeight,
+  styleExcelCell,
+  styleExcelDataRows,
+  styleExcelHeaderRow,
+  styleExcelSubtitleRow,
+  styleExcelTitleRow,
+} from "@/lib/excel-export-styles";
 import { formatCurrency, formatDate } from "@/lib/format";
 import type { Project, ProjectExpenseSearchResult } from "@/lib/types";
 
@@ -233,7 +244,7 @@ export function ExpenseDetailSearchResults({
         totalCount: number;
         totalAmount: number;
       };
-      const XLSX = await import("xlsx/xlsx.mjs");
+      const { default: XLSX } = await import("@/lib/xlsx-style");
       const headers = [
         "Tanggal",
         "Klien",
@@ -251,7 +262,7 @@ export function ExpenseDetailSearchResults({
         [],
         headers,
         ...exportData.results.map((item) => [
-          item.expenseDate,
+          formatDate(item.expenseDate),
           getClientLabel(item.clientName),
           item.projectName,
           item.requesterName ?? "",
@@ -281,9 +292,72 @@ export function ExpenseDetailSearchResults({
         { s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } },
         { s: { r: 1, c: 0 }, e: { r: 1, c: headers.length - 1 } },
       ];
+      const headerRow = 3;
+      const dataStartRow = headerRow + 1;
+      const dataEndRow = dataStartRow + exportData.results.length - 1;
+      const totalCountRow = dataStartRow + exportData.results.length + 1;
+      const totalAmountRow = totalCountRow + 1;
+      styleExcelTitleRow(worksheet, 0, 0, headers.length - 1);
+      styleExcelSubtitleRow(worksheet, 1, 0, headers.length - 1);
+      styleExcelHeaderRow(worksheet, headerRow, 0, headers.length - 1, {
+        totalColumn: headers.length - 1,
+      });
+      if (exportData.results.length > 0) {
+        styleExcelDataRows(worksheet, {
+          startRow: dataStartRow,
+          endRow: dataEndRow,
+          firstColumn: 0,
+          lastColumn: headers.length - 1,
+          columns: [
+            { column: 0, align: "center" },
+            { column: 1, wrapText: true },
+            { column: 2, wrapText: true },
+            { column: 3, wrapText: true },
+            { column: 4, wrapText: true },
+            { column: 5, wrapText: true },
+            { column: 6, wrapText: true },
+            { column: 7, wrapText: true },
+            { column: 8, format: "currency", align: "right", fill: "E2F0D9" },
+          ],
+        });
+        exportData.results.forEach((item, index) => {
+          styleExcelCell(worksheet, dataStartRow + index, 4, {
+            fill: getExpenseCategoryExcelColor(item.category),
+            bold: true,
+          });
+        });
+        setExcelAutoFilter(worksheet, headerRow, 0, dataEndRow, headers.length - 1);
+      }
+      styleExcelDataRows(worksheet, {
+        startRow: totalCountRow,
+        endRow: totalCountRow,
+        firstColumn: 0,
+        lastColumn: headers.length - 1,
+        columns: [{ column: 1, format: "integer", align: "right" }],
+        totalRows: [totalCountRow],
+      });
+      styleExcelDataRows(worksheet, {
+        startRow: totalAmountRow,
+        endRow: totalAmountRow,
+        firstColumn: 0,
+        lastColumn: headers.length - 1,
+        columns: [{ column: 8, format: "currency", align: "right" }],
+        grandTotalRows: [totalAmountRow],
+      });
+      setExcelRowHeight(worksheet, 0, 32);
+      setExcelRowHeight(worksheet, 1, 22);
+      setExcelRowHeight(worksheet, headerRow, 36);
+      for (let row = dataStartRow; row <= dataEndRow; row += 1) {
+        setExcelRowHeight(worksheet, row, 30);
+      }
+      setExcelPrintLayout(worksheet);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, "Cari Rincian");
-      XLSX.writeFile(workbook, `cari-rincian-${new Date().toISOString().slice(0, 10)}.xlsx`);
+      XLSX.writeFile(
+        workbook,
+        `cari-rincian-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        { cellStyles: true },
+      );
     } catch {
       window.alert("Export Excel gagal. Silakan coba lagi.");
     } finally {

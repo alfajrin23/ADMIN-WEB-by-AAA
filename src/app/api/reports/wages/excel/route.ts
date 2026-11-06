@@ -1,17 +1,22 @@
 import { Buffer } from "node:buffer";
-import * as XLSX from "xlsx/xlsx.mjs";
+import XLSX from "@/lib/xlsx-style";
+import type { Range } from "xlsx";
 import { canExportReports, getCurrentUser } from "@/lib/auth";
 import { buildWageReportData } from "@/lib/wage-report";
-import { formatCurrency } from "@/lib/format";
+import { formatDate } from "@/lib/format";
+import {
+  EXCEL_REPORT_COLORS,
+  setExcelAutoFilter,
+  setExcelPrintLayout,
+  setExcelRowHeight,
+  styleExcelDataRows,
+  styleExcelHeaderRow,
+  styleExcelSectionRow,
+  styleExcelSubtitleRow,
+  styleExcelTitleRow,
+} from "@/lib/excel-export-styles";
 
-function formatHours(value: number) {
-  if (!Number.isFinite(value) || value <= 0) {
-    return "0";
-  }
-  return Number.isInteger(value) ? String(value) : value.toLocaleString("id-ID");
-}
-
-function makeMerge(startRow: number, startCol: number, endRow: number, endCol: number): XLSX.Range {
+function makeMerge(startRow: number, startCol: number, endRow: number, endCol: number): Range {
   return {
     s: { r: startRow, c: startCol },
     e: { r: endRow, c: endCol },
@@ -64,7 +69,7 @@ export async function GET(request: Request) {
   const generatedFileDate = getGeneratedFileDate();
 
   const rows: Array<Array<string | number>> = [];
-  const merges: XLSX.Range[] = [];
+  const merges: Range[] = [];
 
   rows.push([reportTitle.toUpperCase()]);
   merges.push(makeMerge(0, 0, 0, 9));
@@ -106,26 +111,26 @@ export async function GET(request: Request) {
 
   printableWorkers.forEach((row, index) => {
     rows.push([
-      String(index + 1),
+      index + 1,
       row.workerName,
-      String(row.daysWorked),
-      formatHours(row.overtimeHours),
-      formatCurrency(row.overtimeRate),
-      formatCurrency(row.totalOvertimePay),
-      formatCurrency(row.dailyRate),
-      formatCurrency(row.totalWage),
-      formatCurrency(row.totalKasbon),
-      formatCurrency(row.totalPaid),
+      row.daysWorked,
+      row.overtimeHours,
+      row.overtimeRate,
+      row.totalOvertimePay,
+      row.dailyRate,
+      row.totalWage,
+      row.totalKasbon,
+      row.totalPaid,
     ]);
   });
 
   const summaryRowStart = rows.length;
-  rows.push(["JUMLAH UPAH", "", "", "", "", "", "", "", "", formatCurrency(totalUpah)]);
-  rows.push(["JUMLAH LEMBUR", "", "", "", "", "", "", "", "", formatCurrency(totalLembur)]);
-  rows.push(["REIMBURSE MATERIAL", "", "", "", "", "", "", "", "", formatCurrency(totalReimburse)]);
-  rows.push(["SUBTOTAL", "", "", "", "", "", "", "", "", formatCurrency(subtotal)]);
-  rows.push(["KASBON TEAM (JIKA ADA)", "", "", "", "", "", "", "", "", formatCurrency(totalKasbon)]);
-  rows.push(["TOTAL KESELURUHAN", "", "", "", "", "", "", "", "", formatCurrency(totalKeseluruhan)]);
+  rows.push(["JUMLAH UPAH", "", "", "", "", "", "", "", "", totalUpah]);
+  rows.push(["JUMLAH LEMBUR", "", "", "", "", "", "", "", "", totalLembur]);
+  rows.push(["REIMBURSE MATERIAL", "", "", "", "", "", "", "", "", totalReimburse]);
+  rows.push(["SUBTOTAL", "", "", "", "", "", "", "", "", subtotal]);
+  rows.push(["KASBON TEAM (JIKA ADA)", "", "", "", "", "", "", "", "", totalKasbon]);
+  rows.push(["TOTAL KESELURUHAN", "", "", "", "", "", "", "", "", totalKeseluruhan]);
   for (let i = 0; i < 6; i += 1) {
     merges.push(makeMerge(summaryRowStart + i, 0, summaryRowStart + i, 8));
   }
@@ -143,17 +148,17 @@ export async function GET(request: Request) {
 
   printableReimburseRows.forEach((row, index) => {
     rows.push([
-      String(index + 1),
-      row.date,
+      index + 1,
+      formatDate(row.date),
       row.description,
-      String(row.qty || 0),
-      formatCurrency(row.unitPrice),
-      formatCurrency(row.total),
+      row.qty || 0,
+      row.unitPrice,
+      row.total,
     ]);
   });
 
   const reimburseTotalRow = rows.length;
-  rows.push(["TOTAL REIMBURSE", "", "", "", "", formatCurrency(totalReimburse)]);
+  rows.push(["TOTAL REIMBURSE", "", "", "", "", totalReimburse]);
   merges.push(makeMerge(reimburseTotalRow, 0, reimburseTotalRow, 4));
 
   const workbook = XLSX.utils.book_new();
@@ -171,9 +176,86 @@ export async function GET(request: Request) {
     { wch: 18 },
     { wch: 20 },
   ];
+  const workerHeaderRow = 3;
+  const workerStartRow = workerHeaderRow + 1;
+  const workerEndRow = workerStartRow + printableWorkers.length - 1;
+  const summaryRows = Array.from({ length: 6 }, (_, index) => summaryRowStart + index);
+  styleExcelTitleRow(sheet, 0, 0, 9, 15);
+  styleExcelSubtitleRow(sheet, 1, 0, 9);
+  styleExcelHeaderRow(sheet, workerHeaderRow, 0, 9, {
+    fills: {
+      2: EXCEL_REPORT_COLORS.paleBlue,
+      3: "E4DFEC",
+      4: "FCE4D6",
+      5: "FCE4D6",
+      6: EXCEL_REPORT_COLORS.paleGreen,
+      7: EXCEL_REPORT_COLORS.paleGreen,
+      8: "F4CCCC",
+    },
+    totalColumn: 9,
+  });
+  styleExcelDataRows(sheet, {
+    startRow: workerStartRow,
+    endRow: workerEndRow,
+    firstColumn: 0,
+    lastColumn: 9,
+    columns: [
+      { column: 0, format: "integer", align: "center" },
+      { column: 1, wrapText: true },
+      { column: 2, format: "decimal", align: "right" },
+      { column: 3, format: "decimal", align: "right" },
+      ...[4, 5, 6, 7, 8, 9].map((column) => ({
+        column,
+        format: "currency" as const,
+        align: "right" as const,
+        fill: column === 9 ? EXCEL_REPORT_COLORS.paleGreen : undefined,
+      })),
+    ],
+  });
+  styleExcelDataRows(sheet, {
+    startRow: summaryRows[0]!,
+    endRow: summaryRows[summaryRows.length - 1]!,
+    firstColumn: 0,
+    lastColumn: 9,
+    columns: [{ column: 9, format: "currency", align: "right" }],
+    totalRows: summaryRows.slice(0, -1),
+    grandTotalRows: [summaryRows.at(-1)!],
+  });
+  styleExcelSectionRow(sheet, reimburseTitleRow, 0, 5);
+  const reimburseHeaderRow = reimburseTitleRow + 1;
+  const reimburseStartRow = reimburseHeaderRow + 1;
+  styleExcelHeaderRow(sheet, reimburseHeaderRow, 0, 5, {
+    fills: { 1: EXCEL_REPORT_COLORS.paleBlue, 2: "FFF2CC", 3: EXCEL_REPORT_COLORS.paleGreen },
+    totalColumn: 5,
+  });
+  styleExcelDataRows(sheet, {
+    startRow: reimburseStartRow,
+    endRow: reimburseTotalRow,
+    firstColumn: 0,
+    lastColumn: 5,
+    columns: [
+      { column: 0, format: "integer", align: "center" },
+      { column: 1, align: "center" },
+      { column: 2, wrapText: true },
+      { column: 3, format: "decimal", align: "right" },
+      { column: 4, format: "currency", align: "right" },
+      { column: 5, format: "currency", align: "right" },
+    ],
+    totalRows: [reimburseTotalRow],
+  });
+  setExcelRowHeight(sheet, 0, 32);
+  setExcelRowHeight(sheet, 1, 22);
+  setExcelRowHeight(sheet, workerHeaderRow, 42);
+  for (let row = workerStartRow; row <= reimburseTotalRow; row += 1) {
+    if (row !== reimburseTitleRow && row !== reimburseHeaderRow) {
+      setExcelRowHeight(sheet, row, row >= reimburseStartRow ? 30 : 22);
+    }
+  }
+  setExcelAutoFilter(sheet, workerHeaderRow, 0, workerEndRow, 9);
+  setExcelPrintLayout(sheet);
   XLSX.utils.book_append_sheet(workbook, sheet, "Rekap Upah");
 
-  const bytes = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+  const bytes = XLSX.write(workbook, { type: "buffer", bookType: "xlsx", cellStyles: true });
   return new Response(Buffer.from(bytes), {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

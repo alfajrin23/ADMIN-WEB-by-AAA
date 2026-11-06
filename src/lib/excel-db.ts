@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import * as XLSX from "xlsx/xlsx.mjs";
+import XLSXStyle from "@/lib/xlsx-style";
 import {
   ATTENDANCE_STATUSES,
   COST_CATEGORIES,
@@ -12,6 +13,15 @@ import {
 } from "@/lib/constants";
 import type { ExpenseCategoryOption } from "@/lib/constants";
 import { buildReportCategoryOptions, createEmptyCategoryTotals } from "@/lib/expense-report";
+import {
+  EXCEL_REPORT_COLORS,
+  getExpenseCategoryExcelColor,
+  setExcelPrintLayout,
+  setExcelRowHeight,
+  styleExcelDataRows,
+  styleExcelHeaderRow,
+  styleExcelTitleRow,
+} from "@/lib/excel-export-styles";
 import { excelDbPath } from "@/lib/storage";
 import type {
   AttendanceStatus,
@@ -1285,7 +1295,7 @@ function writeWorkbookFile(workbook: XLSX.WorkBook) {
       `.${path.basename(excelDbPath, path.extname(excelDbPath))}.${process.pid}.${Date.now()}.${attempt}.tmp.xlsx`,
     );
     try {
-      XLSX.writeFile(workbook, tempPath);
+      XLSXStyle.writeFile(workbook, tempPath, { cellStyles: true });
       fs.copyFileSync(tempPath, excelDbPath);
       fs.rmSync(tempPath, { force: true });
       return;
@@ -1340,27 +1350,8 @@ function cloneSheetStyle(style: XLSX.CellObject["s"]) {
   return style ? (JSON.parse(JSON.stringify(style)) as XLSX.CellObject["s"]) : undefined;
 }
 
-function rgbFillToHex(fill: readonly [number, number, number]) {
-  return fill
-    .map((value) => Math.round(Math.max(0, Math.min(1, value)) * 255).toString(16).padStart(2, "0"))
-    .join("")
-    .toUpperCase();
-}
-
-const DETAIL_SHEET_HEADER_FILL = "E5E5E5";
-const DETAIL_SHEET_TOTAL_FILL = "F4D774";
-const DETAIL_SHEET_CATEGORY_FILLS = [
-  "E8DBB0",
-  "DBB8DB",
-  "C7CCDE",
-  "CACACE",
-  "C9D7C2",
-  "E3CFC0",
-  "E8CC6B",
-  "91C2E0",
-  "DCE8C7",
-  "FADD9E",
-] as const;
+const DETAIL_SHEET_HEADER_FILL = EXCEL_REPORT_COLORS.blue;
+const DETAIL_SHEET_TOTAL_FILL = EXCEL_REPORT_COLORS.paleGreen;
 
 function createSheetStyle(params: {
   align?: "left" | "center" | "right";
@@ -1393,6 +1384,7 @@ function createSheetStyle(params: {
 const DETAIL_TITLE_STYLE = createSheetStyle({
   align: "center",
   bold: true,
+  fill: EXCEL_REPORT_COLORS.navy,
 });
 const DETAIL_HEADER_STYLE = createSheetStyle({
   align: "center",
@@ -1425,15 +1417,14 @@ const DETAIL_TOTAL_LEFT_STYLE = createSheetStyle({
   wrapText: true,
 });
 
-function getDetailCategoryFillHex(index: number) {
-  return DETAIL_SHEET_CATEGORY_FILLS[index % DETAIL_SHEET_CATEGORY_FILLS.length] ??
-    rgbFillToHex([0.9, 0.9, 0.9]);
+function getDetailCategoryFillHex(category: string) {
+  return getExpenseCategoryExcelColor(category);
 }
 
-function createDetailCategoryStyle(index: number, align: "center" | "right") {
+function createDetailCategoryStyle(category: string, align: "center" | "right") {
   return createSheetStyle({
     align,
-    fill: getDetailCategoryFillHex(index),
+    fill: getDetailCategoryFillHex(category),
     wrapText: true,
   });
 }
@@ -1497,7 +1488,7 @@ function createDetailReportSheet(params: {
         ? createSheetStyle({
             align: "center",
             bold: true,
-            fill: getDetailCategoryFillHex(col - categoryStartCol),
+            fill: getDetailCategoryFillHex(categoryOptions[col - categoryStartCol]?.value ?? ""),
             wrapText: true,
           })
         : DETAIL_HEADER_STYLE;
@@ -1506,7 +1497,7 @@ function createDetailReportSheet(params: {
         ? createSheetStyle({
             align: "center",
             bold: true,
-            fill: getDetailCategoryFillHex(col - categoryStartCol),
+            fill: getDetailCategoryFillHex(categoryOptions[col - categoryStartCol]?.value ?? ""),
             wrapText: true,
           })
         : DETAIL_HEADER_STYLE;
@@ -1581,7 +1572,7 @@ function createDetailReportSheet(params: {
 
   categoryOptions.forEach((category, index) => {
     const col = categoryStartCol + index;
-    const fill = getDetailCategoryFillHex(index);
+    const fill = getDetailCategoryFillHex(category.value);
     const headerStyle = createSheetStyle({
       align: "center",
       bold: true,
@@ -1633,6 +1624,7 @@ function createDetailReportSheet(params: {
 
   let rowPointer = 3;
   let rowNo = 1;
+  const subtotalRows: number[] = [];
   for (const [monthKey, monthRows] of groupedByMonth.entries()) {
     const monthTotals = createEmptyCategoryTotals(categoryOptions);
     let monthTotal = 0;
@@ -1703,7 +1695,7 @@ function createDetailReportSheet(params: {
           row: rowPointer,
           col: categoryStartCol + index,
           value,
-          style: createDetailCategoryStyle(index, "right"),
+          style: createDetailCategoryStyle(category.value, "right"),
           numberFormat: currencyFormat,
         });
       });
@@ -1723,6 +1715,7 @@ function createDetailReportSheet(params: {
       rowNo += 1;
     }
 
+    subtotalRows.push(rowPointer);
     for (let col = 0; col <= lastCol; col += 1) {
       const style = col === 0 ? DETAIL_TOTAL_LEFT_STYLE : DETAIL_TOTAL_STYLE;
       setWorksheetCell({
@@ -1789,6 +1782,50 @@ function createDetailReportSheet(params: {
     { hpt: 26 },
     ...Array.from({ length: Math.max(0, rowPointer - 3) }, () => ({ hpt: 20 })),
   ];
+
+  styleExcelTitleRow(sheet, titleRow, 0, lastCol, 15);
+  const categoryHeaderFills = Object.fromEntries(
+    categoryOptions.map((category, index) => [
+      categoryStartCol + index,
+      getDetailCategoryFillHex(category.value),
+    ]),
+  );
+  styleExcelHeaderRow(sheet, topHeaderRow, 0, lastCol, {
+    fills: categoryHeaderFills,
+    totalColumn: totalCol,
+  });
+  styleExcelHeaderRow(sheet, bottomHeaderRow, 0, lastCol, {
+    fills: categoryHeaderFills,
+    totalColumn: totalCol,
+  });
+  styleExcelDataRows(sheet, {
+    startRow: 3,
+    endRow: Math.max(3, rowPointer - 1),
+    firstColumn: 0,
+    lastColumn: lastCol,
+    columns: [
+      { column: 0, format: "integer", align: "center" },
+      { column: 1, align: "left", wrapText: true },
+      { column: 2, align: "center" },
+      { column: 3, align: "left", wrapText: true },
+      { column: 4, format: "decimal", align: "center" },
+      { column: 5, align: "center", wrapText: true },
+      { column: 6, align: "left", wrapText: true },
+      { column: 7, format: "currency", align: "right" },
+      ...categoryOptions.map((category, index) => ({
+        column: categoryStartCol + index,
+        format: "currency" as const,
+        align: "right" as const,
+        fill: getDetailCategoryFillHex(category.value),
+      })),
+      { column: totalCol, format: "currency", align: "right", fill: EXCEL_REPORT_COLORS.paleGreen },
+    ],
+    totalRows: subtotalRows,
+  });
+  setExcelRowHeight(sheet, titleRow, 30);
+  setExcelRowHeight(sheet, topHeaderRow, 34);
+  setExcelRowHeight(sheet, bottomHeaderRow, 28);
+  setExcelPrintLayout(sheet, "landscape");
 
   return sheet;
 }

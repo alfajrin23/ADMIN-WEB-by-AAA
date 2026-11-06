@@ -36,6 +36,35 @@ type ProjectRecapExpenseListProps = {
   searchText?: string;
 };
 
+function formatContractValueInput(value: string) {
+  const digits = value.replace(/\D/g, "");
+  return digits ? BigInt(digits).toLocaleString("id-ID") : "";
+}
+
+function ContractValueInput({ contractValue }: { contractValue: number | null }) {
+  const [value, setValue] = useState(() =>
+    formatContractValueInput(contractValue === null ? "" : String(contractValue)),
+  );
+
+  return (
+    <div className="relative">
+      <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm font-bold text-slate-900">
+        Rp
+      </span>
+      <input
+        type="text"
+        inputMode="numeric"
+        value={value}
+        onChange={(event) => setValue(formatContractValueInput(event.currentTarget.value))}
+        placeholder="Masukkan nilai kontrak"
+        aria-label="Nilai kontrak dalam rupiah"
+        className="w-full pl-10 font-bold text-slate-900"
+      />
+      <input type="hidden" name="contract_value" value={value.replace(/\D/g, "")} />
+    </div>
+  );
+}
+
 const ProjectRecapChartsLazy = dynamic(
   () => import("@/components/project-recap-charts").then((module) => module.ProjectRecapCharts),
   {
@@ -331,17 +360,9 @@ export function ProjectRecapExpenseList({
             <form action={updateProjectContractValueAction} className="mt-2 space-y-2">
               <input type="hidden" name="project_id" value={projectId} />
               <input type="hidden" name="return_to" value={contractValueReturnTo} />
-              <label className="sr-only" htmlFor="project-contract-value">Nilai kontrak dalam rupiah</label>
-              <input
-                id="project-contract-value"
-                name="contract_value"
-                type="number"
-                min="0"
-                step="1"
-                inputMode="numeric"
-                defaultValue={contractValue ?? ""}
-                placeholder="Masukkan nilai kontrak"
-                className="w-full"
+              <ContractValueInput
+                key={contractValue ?? "empty"}
+                contractValue={contractValue}
               />
               <button type="submit" className="button-secondary button-xs">
                 Simpan Nilai Kontrak

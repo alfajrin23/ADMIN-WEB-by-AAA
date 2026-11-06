@@ -94,6 +94,10 @@ textarea {
   accent-color: var(--primary-600);
 }
 
+.contract-value-input {
+  padding-left: 3rem;
+}
+
 input:focus,
 select:focus,
 textarea:focus {

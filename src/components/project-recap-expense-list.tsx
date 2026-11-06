@@ -58,7 +58,7 @@ function ContractValueInput({ contractValue }: { contractValue: number | null })
         onChange={(event) => setValue(formatContractValueInput(event.currentTarget.value))}
         placeholder="Masukkan nilai kontrak"
         aria-label="Nilai kontrak dalam rupiah"
-        className="w-full pl-10 font-bold text-slate-900"
+        className="w-full contract-value-input font-bold text-slate-900"
       />
       <input type="hidden" name="contract_value" value={value.replace(/\D/g, "")} />
     </div>

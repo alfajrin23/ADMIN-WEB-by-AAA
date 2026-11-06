@@ -355,7 +355,7 @@ export function ProjectRecapExpenseList({
           )}
         </div>
         <div className="rounded-xl border border-indigo-100 bg-white p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Keseluruhan COS</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Keseluruhan COST</p>
           <p className="mt-2 text-lg font-bold text-slate-900">{formatCurrency(totalOverallCos)}</p>
           <p className="mt-1 text-[11px] text-slate-500">Akumulasi seluruh transaksi biaya project.</p>
         </div>
